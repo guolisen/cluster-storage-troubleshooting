@@ -1,0 +1,796 @@
+#!/usr/bin/env python3
+"""
+Kubernetes Volume I/O Error Troubleshooting Script
+
+This script uses LangGraph ReAct to diagnose and resolve volume I/O errors
+in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver.
+"""
+
+import os
+import sys
+import yaml
+import logging
+import asyncio
+import time
+import subprocess
+import json
+import paramiko
+from typing import Dict, List, Any, Optional, Tuple
+from kubernetes import client, config
+from kubernetes.client.rest import ApiException
+from langgraph.graph import StateGraph, MessagesState, START
+from langgraph.prebuilt import ToolNode, tools_condition
+from langchain.chat_models import init_chat_model
+
+# Global variables
+CONFIG_DATA = None
+INTERACTIVE_MODE = False
+SSH_CLIENTS = {}
+
+def load_config():
+    """Load configuration from config.yaml"""
+    try:
+        with open('config.yaml', 'r') as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        logging.error(f"Failed to load configuration: {e}")
+        sys.exit(1)
+
+def setup_logging(config_data):
+    """Configure logging based on configuration"""
+    log_file = config_data['logging']['file']
+    log_to_stdout = config_data['logging']['stdout']
+    
+    handlers = []
+    if log_file:
+        handlers.append(logging.FileHandler(log_file))
+    if log_to_stdout:
+        handlers.append(logging.StreamHandler())
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=handlers
+    )
+
+def init_kubernetes_client():
+    """Initialize Kubernetes client"""
+    try:
+        # Try to load in-cluster config first (when running inside a pod)
+        if 'KUBERNETES_SERVICE_HOST' in os.environ:
+            config.load_incluster_config()
+            logging.info("Using in-cluster Kubernetes configuration")
+        else:
+            # Fall back to kubeconfig file
+            config.load_kube_config()
+            logging.info("Using kubeconfig file for Kubernetes configuration")
+        
+        return client.CoreV1Api()
+    except Exception as e:
+        logging.error(f"Failed to initialize Kubernetes client: {e}")
+        sys.exit(1)
+
+def validate_command(command: str) -> bool:
+    """
+    Validate if a command is allowed based on configuration
+    
+    Args:
+        command: Command to validate
+        
+    Returns:
+        bool: True if command is allowed, False otherwise
+    """
+    global CONFIG_DATA
+    
+    # Check if command is explicitly disallowed
+    for disallowed in CONFIG_DATA['commands']['disallowed']:
+        if disallowed in command:
+            logging.warning(f"Command '{command}' contains disallowed pattern '{disallowed}'")
+            return False
+    
+    # Check if command is allowed
+    for allowed in CONFIG_DATA['commands']['allowed']:
+        if command.startswith(allowed):
+            return True
+    
+    logging.warning(f"Command '{command}' is not in the allowed list")
+    return False
+
+def prompt_for_approval(command: str, purpose: str) -> bool:
+    """
+    Prompt user for command approval in interactive mode
+    
+    Args:
+        command: Command to execute
+        purpose: Purpose of the command
+        
+    Returns:
+        bool: True if approved, False otherwise
+    """
+    print(f"\nProposed command: {command}")
+    print(f"Purpose: {purpose}")
+    response = input("Approve? (y/n): ").strip().lower()
+    return response == 'y' or response == 'yes'
+
+def execute_command(command: str, purpose: str) -> str:
+    """
+    Execute a command and return its output
+    
+    Args:
+        command: Command to execute
+        purpose: Purpose of the command
+        
+    Returns:
+        str: Command output
+    """
+    global CONFIG_DATA, INTERACTIVE_MODE
+    
+    # Validate command
+    if not validate_command(command):
+        return f"Error: Command '{command}' is not allowed"
+    
+    # Prompt for approval in interactive mode
+    if INTERACTIVE_MODE:
+        if not prompt_for_approval(command, purpose):
+            return "Command execution cancelled by user"
+    
+    # Execute command
+    try:
+        logging.info(f"Executing command: {command}")
+        result = subprocess.run(command, shell=True, check=True, 
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               universal_newlines=True)
+        output = result.stdout
+        logging.debug(f"Command output: {output}")
+        return output
+    except subprocess.CalledProcessError as e:
+        error_msg = f"Command failed with exit code {e.returncode}: {e.stderr}"
+        logging.error(error_msg)
+        return f"Error: {error_msg}"
+    except Exception as e:
+        error_msg = f"Failed to execute command: {str(e)}"
+        logging.error(error_msg)
+        return f"Error: {error_msg}"
+
+def get_ssh_client(node: str) -> Optional[paramiko.SSHClient]:
+    """
+    Get or create an SSH client for a node
+    
+    Args:
+        node: Node hostname
+        
+    Returns:
+        paramiko.SSHClient: SSH client or None if failed
+    """
+    global CONFIG_DATA, SSH_CLIENTS
+    
+    # Check if SSH is enabled
+    if not CONFIG_DATA['troubleshoot']['ssh']['enabled']:
+        logging.warning("SSH is disabled in configuration")
+        return None
+    
+    # Check if node is in allowed nodes
+    if node not in CONFIG_DATA['troubleshoot']['ssh']['nodes']:
+        logging.warning(f"Node '{node}' is not in the allowed SSH nodes list")
+        return None
+    
+    # Return existing client if available
+    if node in SSH_CLIENTS:
+        return SSH_CLIENTS[node]
+    
+    # Create new SSH client
+    ssh_config = CONFIG_DATA['troubleshoot']['ssh']
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    
+    # Try to connect with retries
+    retries = ssh_config['retries']
+    retry_backoff = ssh_config['retry_backoff_seconds']
+    
+    for attempt in range(retries + 1):
+        try:
+            client.connect(
+                node,
+                username=ssh_config['user'],
+                key_filename=ssh_config['key_path']
+            )
+            SSH_CLIENTS[node] = client
+            logging.info(f"SSH connection established to {node}")
+            return client
+        except Exception as e:
+            if attempt < retries:
+                wait_time = retry_backoff * (2 ** attempt)
+                logging.warning(f"SSH connection to {node} failed: {e}. Retrying in {wait_time} seconds (attempt {attempt+1}/{retries})")
+                time.sleep(wait_time)
+            else:
+                logging.error(f"SSH connection to {node} failed after {retries} attempts: {e}")
+                return None
+
+def ssh_execute(node: str, command: str, purpose: str) -> str:
+    """
+    Execute a command on a remote node via SSH
+    
+    Args:
+        node: Node hostname
+        command: Command to execute
+        purpose: Purpose of the command
+        
+    Returns:
+        str: Command output
+    """
+    global INTERACTIVE_MODE
+    
+    # Validate command
+    if not validate_command(command):
+        return f"Error: Command '{command}' is not allowed"
+    
+    # Prompt for approval in interactive mode
+    if INTERACTIVE_MODE:
+        ssh_command = f"ssh {node} '{command}'"
+        if not prompt_for_approval(ssh_command, purpose):
+            return "Command execution cancelled by user"
+    
+    # Get SSH client
+    client = get_ssh_client(node)
+    if not client:
+        return f"Error: Failed to establish SSH connection to {node}"
+    
+    # Execute command
+    try:
+        logging.info(f"Executing SSH command on {node}: {command}")
+        stdin, stdout, stderr = client.exec_command(command)
+        output = stdout.read().decode('utf-8')
+        error = stderr.read().decode('utf-8')
+        
+        if error:
+            logging.warning(f"SSH command produced errors: {error}")
+            return f"Output:\n{output}\n\nErrors:\n{error}"
+        
+        logging.debug(f"SSH command output: {output}")
+        return output
+    except Exception as e:
+        error_msg = f"Failed to execute SSH command: {str(e)}"
+        logging.error(error_msg)
+        return f"Error: {error_msg}"
+
+def close_ssh_connections():
+    """Close all SSH connections"""
+    global SSH_CLIENTS
+    
+    for node, client in SSH_CLIENTS.items():
+        try:
+            client.close()
+            logging.info(f"SSH connection to {node} closed")
+        except Exception as e:
+            logging.warning(f"Error closing SSH connection to {node}: {e}")
+    
+    SSH_CLIENTS = {}
+
+# Define tools for the LangGraph ReAct agent
+def define_tools(pod_name: str, namespace: str, volume_path: str) -> List[Dict[str, Any]]:
+    """
+    Define tools for the LangGraph ReAct agent
+    
+    Args:
+        pod_name: Name of the pod with the error
+        namespace: Namespace of the pod
+        volume_path: Path of the volume with I/O error
+        
+    Returns:
+        List[Dict[str, Any]]: List of tool definitions
+    """
+    tools = [
+        {
+            "name": "kubectl_get",
+            "description": "Get Kubernetes resources in YAML format",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "resource": {
+                        "type": "string",
+                        "description": "Resource type (e.g., pod, pvc, pv, drive, csibmnode, ac, lvg)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Resource name (optional)"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Resource namespace (optional)"
+                    }
+                },
+                "required": ["resource"]
+            },
+            "function": lambda resource, name=None, namespace=None: execute_command(
+                f"kubectl get {resource} {name or ''} {'-n ' + namespace if namespace else ''} -o yaml",
+                f"Get {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''} in YAML format"
+            )
+        },
+        {
+            "name": "kubectl_describe",
+            "description": "Describe Kubernetes resources",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "resource": {
+                        "type": "string",
+                        "description": "Resource type (e.g., pod, pvc, pv, node)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Resource name (optional)"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Resource namespace (optional)"
+                    }
+                },
+                "required": ["resource"]
+            },
+            "function": lambda resource, name=None, namespace=None: execute_command(
+                f"kubectl describe {resource} {name or ''} {'-n ' + namespace if namespace else ''}",
+                f"Describe {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''}"
+            )
+        },
+        {
+            "name": "kubectl_logs",
+            "description": "Get logs from a pod",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pod_name": {
+                        "type": "string",
+                        "description": "Pod name"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Pod namespace"
+                    },
+                    "container": {
+                        "type": "string",
+                        "description": "Container name (optional)"
+                    },
+                    "tail": {
+                        "type": "integer",
+                        "description": "Number of lines to show (optional)"
+                    }
+                },
+                "required": ["pod_name", "namespace"]
+            },
+            "function": lambda pod_name, namespace, container=None, tail=None: execute_command(
+                f"kubectl logs {pod_name} {'-c ' + container if container else ''} -n {namespace} {f'--tail={tail}' if tail else ''}",
+                f"Get logs from pod {namespace}/{pod_name} {f'container {container}' if container else ''}"
+            )
+        },
+        {
+            "name": "kubectl_exec",
+            "description": "Execute a command in a pod",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pod_name": {
+                        "type": "string",
+                        "description": "Pod name"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Pod namespace"
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Command to execute"
+                    }
+                },
+                "required": ["pod_name", "namespace", "command"]
+            },
+            "function": lambda pod_name, namespace, command: execute_command(
+                f"kubectl exec {pod_name} -n {namespace} -- {command}",
+                f"Execute command '{command}' in pod {namespace}/{pod_name}"
+            )
+        },
+        {
+            "name": "ssh_command",
+            "description": "Execute a command on a remote node via SSH",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node": {
+                        "type": "string",
+                        "description": "Node hostname"
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Command to execute"
+                    }
+                },
+                "required": ["node", "command"]
+            },
+            "function": lambda node, command: ssh_execute(
+                node,
+                command,
+                f"Execute command '{command}' on node {node}"
+            )
+        },
+        {
+            "name": "create_test_pod",
+            "description": "Create a test pod to validate storage functionality",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Pod name"
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Pod namespace"
+                    },
+                    "pvc_name": {
+                        "type": "string",
+                        "description": "PVC name to use or create"
+                    },
+                    "node_name": {
+                        "type": "string",
+                        "description": "Node name for pod scheduling"
+                    },
+                    "storage_class": {
+                        "type": "string",
+                        "description": "Storage class for new PVC (optional)"
+                    },
+                    "storage_size": {
+                        "type": "string",
+                        "description": "Storage size for new PVC (optional, e.g., '1Gi')"
+                    },
+                    "test_type": {
+                        "type": "string",
+                        "description": "Test type: 'read_write' or 'disk_speed'"
+                    }
+                },
+                "required": ["name", "namespace", "pvc_name", "node_name", "test_type"]
+            },
+            "function": lambda name, namespace, pvc_name, node_name, test_type, storage_class=None, storage_size=None: create_test_pod(
+                name, namespace, pvc_name, node_name, test_type, storage_class, storage_size
+            )
+        }
+    ]
+    
+    return tools
+
+def create_test_pod(name: str, namespace: str, pvc_name: str, node_name: str, 
+                   test_type: str, storage_class: Optional[str] = None, 
+                   storage_size: Optional[str] = None) -> str:
+    """
+    Create a test pod and optionally a PVC to validate storage functionality
+    
+    Args:
+        name: Pod name
+        namespace: Pod namespace
+        pvc_name: PVC name to use or create
+        node_name: Node name for pod scheduling
+        test_type: Test type ('read_write' or 'disk_speed')
+        storage_class: Storage class for new PVC (optional)
+        storage_size: Storage size for new PVC (optional)
+        
+    Returns:
+        str: Result of the operation
+    """
+    global INTERACTIVE_MODE
+    
+    # Check if we need to create a new PVC
+    create_pvc = storage_class is not None and storage_size is not None
+    
+    # Define PVC YAML if needed
+    if create_pvc:
+        pvc_yaml = f"""
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {pvc_name}
+  namespace: {namespace}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {storage_size}
+  storageClassName: {storage_class}
+"""
+    
+    # Define Pod YAML based on test type
+    if test_type == "read_write":
+        pod_yaml = f"""
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {name}
+  namespace: {namespace}
+spec:
+  containers:
+  - name: test-container
+    image: busybox
+    command: ["/bin/sh", "-c", "echo 'Test' > /mnt/test.txt && cat /mnt/test.txt && sleep 3600"]
+    volumeMounts:
+    - mountPath: "/mnt"
+      name: test-volume
+  volumes:
+  - name: test-volume
+    persistentVolumeClaim:
+      claimName: {pvc_name}
+  nodeName: {node_name}
+"""
+    elif test_type == "disk_speed":
+        pod_yaml = f"""
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {name}
+  namespace: {namespace}
+spec:
+  containers:
+  - name: test-container
+    image: busybox
+    command: ["/bin/sh", "-c", "dd if=/dev/zero of=/mnt/testfile bs=1M count=100 && echo 'Write OK' && dd if=/mnt/testfile of=/dev/null bs=1M && echo 'Read OK' && sleep 3600"]
+    volumeMounts:
+    - mountPath: "/mnt"
+      name: test-volume
+  volumes:
+  - name: test-volume
+    persistentVolumeClaim:
+      claimName: {pvc_name}
+  nodeName: {node_name}
+"""
+    else:
+        return f"Error: Invalid test type '{test_type}'"
+    
+    # Write YAML files
+    try:
+        if create_pvc:
+            with open(f"{pvc_name}.yaml", "w") as f:
+                f.write(pvc_yaml)
+        
+        with open(f"{name}.yaml", "w") as f:
+            f.write(pod_yaml)
+        
+        # Apply YAML files
+        result = ""
+        if create_pvc:
+            if INTERACTIVE_MODE:
+                if not prompt_for_approval(f"kubectl apply -f {pvc_name}.yaml", f"Create PVC {namespace}/{pvc_name}"):
+                    return "Operation cancelled by user"
+            
+            pvc_result = execute_command(f"kubectl apply -f {pvc_name}.yaml", f"Create PVC {namespace}/{pvc_name}")
+            result += f"PVC creation result:\n{pvc_result}\n\n"
+        
+        if INTERACTIVE_MODE:
+            if not prompt_for_approval(f"kubectl apply -f {name}.yaml", f"Create test pod {namespace}/{name}"):
+                return "Operation cancelled by user"
+        
+        pod_result = execute_command(f"kubectl apply -f {name}.yaml", f"Create test pod {namespace}/{name}")
+        result += f"Pod creation result:\n{pod_result}\n\n"
+        
+        # Wait for pod to start
+        result += "Waiting for pod to start...\n"
+        time.sleep(5)
+        
+        # Get pod status
+        pod_status = execute_command(f"kubectl get pod {name} -n {namespace}", f"Check status of pod {namespace}/{name}")
+        result += f"Pod status:\n{pod_status}\n\n"
+        
+        return result
+    except Exception as e:
+        error_msg = f"Failed to create test pod: {str(e)}"
+        logging.error(error_msg)
+        return f"Error: {error_msg}"
+
+def create_troubleshooting_graph(pod_name: str, namespace: str, volume_path: str):
+    """
+    Create a LangGraph ReAct graph for troubleshooting
+    
+    Args:
+        pod_name: Name of the pod with the error
+        namespace: Namespace of the pod
+        volume_path: Path of the volume with I/O error
+        
+    Returns:
+        StateGraph: LangGraph StateGraph
+    """
+    global CONFIG_DATA
+    
+    # Initialize language model
+    model = init_chat_model(
+        CONFIG_DATA['llm']['model'],
+        api_key=CONFIG_DATA['llm']['api_key'],
+        base_url=CONFIG_DATA['llm']['api_endpoint'],
+        temperature=CONFIG_DATA['llm']['temperature'],
+        max_tokens=CONFIG_DATA['llm']['max_tokens']
+    )
+    
+    # Get tools
+    tools = define_tools(pod_name, namespace, volume_path)
+    
+    # Define function to call the model
+    def call_model(state: MessagesState):
+        # Add system prompt with CSI Baremetal knowledge
+        system_message = {
+            "role": "system",
+            "content": """You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). Follow these strict guidelines for safe, reliable, and effective troubleshooting:
+
+1. **Safety and Security**:
+   - Only execute commands listed in `commands.allowed` in `config.yaml` (e.g., `kubectl get drive`, `smartctl -a`, `fio`).
+   - Never execute commands in `commands.disallowed` (e.g., `fsck`, `chmod`, `dd`, `kubectl delete pod`) unless explicitly enabled in `config.yaml` and approved by the user in interactive mode.
+   - Validate all commands for safety and relevance before execution.
+   - Log all SSH commands and outputs for auditing, using secure credential handling as specified in `config.yaml`.
+
+2. **Interactive Mode**:
+   - If `troubleshoot.interactive_mode` is `true` in `config.yaml`, prompt the user before executing any command or tool with: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)". Include a clear purpose (e.g., "Check drive health with kubectl get drive").
+   - If disabled, execute allowed commands automatically, respecting `config.yaml` restrictions.
+
+3. **Troubleshooting Process**:
+   - Use the LangGraph ReAct module to reason about volume I/O errors based on parameters: `PodName`, `PodNamespace`, and `VolumePath`.
+   - Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
+     a. **Confirm Issue**: Run `kubectl logs <pod-name> -n <namespace>` and `kubectl describe pod <pod-name> -n <namespace>` to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount").
+     b. **Verify Configurations**: Check Pod, PVC, and PV with `kubectl get pod/pvc/pv -o yaml`. Confirm PV uses local volume, valid disk path (e.g., `/dev/sda`), and correct `nodeAffinity`. Verify mount points with `kubectl exec <pod-name> -n <namespace> -- df -h` and `ls -ld <mount-path>`.
+     c. **Check CSI Baremetal Driver and Resources**:
+        - Identify driver: `kubectl get storageclass <storageclass-name> -o yaml` (e.g., `csi-baremetal-sc-ssd`).
+        - Verify driver pod: `kubectl get pods -n kube-system -l app=csi-baremetal` and `kubectl logs <driver-pod-name> -n kube-system`. Check for errors like "failed to mount".
+        - Confirm driver registration: `kubectl get csidrivers`.
+        - Check drive status: `kubectl get drive -o wide` and `kubectl get drive <drive-uuid> -o yaml`. Verify `Health: GOOD`, `Status: ONLINE`, `Usage: IN_USE`, and match `Path` (e.g., `/dev/sda`) with `VolumePath`.
+        - Map drive to node: `kubectl get csibmnode` to correlate `NodeId` with hostname/IP.
+        - Check AvailableCapacity: `kubectl get ac -o wide` to confirm size, storage class, and location (drive UUID).
+        - Check LogicalVolumeGroup: `kubectl get lvg` to verify `Health: GOOD` and associated drive UUIDs.
+     d. **Test Driver**: Create a test PVC/Pod using `csi-baremetal-sc-ssd` storage class (use provided YAML template). Check logs and events for read/write errors.
+     e. **Verify Node Health**: Run `kubectl describe node <node-name>` to ensure `Ready` state and no `DiskPressure`. Verify disk mounting via SSH: `mount | grep <disk-path>`.
+     f. **Check Permissions**: Verify file system permissions with `kubectl exec <pod-name> -n <namespace> -- ls -ld <mount-path>` and Pod `SecurityContext` settings.
+     g. **Inspect Control Plane**: Check `kube-controller-manager` and `kube-scheduler` logs for provisioning/scheduling issues.
+     h. **Test Hardware Disk**:
+        - Identify disk: `kubectl get pv -o yaml` and `kubectl get drive <drive-uuid> -o yaml` to confirm `Path`.
+        - Check health: `kubectl get drive <drive-uuid> -o yaml` and `ssh <node-name> sudo smartctl -a /dev/<disk-device>`. Verify `Health: GOOD`, zero `Reallocated_Sector_Ct` or `Current_Pending_Sector`.
+        - Test performance: `ssh <node-name> sudo fio --name=read_test --filename=/dev/<disk-device> --rw=read --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting`.
+        - Check file system (if unmounted): `ssh <node-name> sudo fsck /dev/<disk-device>` (requires approval).
+        - Test via Pod: Create a test Pod (use provided YAML) and check logs for "Write OK" and "Read OK".
+     i. **Propose Remediations**:
+        - Bad sectors: Recommend disk replacement if `kubectl get drive` or SMART shows `Health: BAD` or non-zero `Reallocated_Sector_Ct`.
+        - Performance issues: Suggest optimizing I/O scheduler or replacing disk if `fio` results show low IOPS (HDD: 100–200, SSD: thousands, NVMe: tens of thousands).
+        - File system corruption: Recommend `fsck` (if enabled/approved) after data backup.
+        - Driver issues: Suggest restarting CSI Baremetal driver pod (if enabled/approved) if logs indicate errors.
+   - Only propose remediations after analyzing diagnostic data. Ensure write/change commands (e.g., `fsck`, `kubectl delete pod`) are allowed and approved.
+
+4. **Error Handling**:
+   - Log all actions, command outputs, SSH results, and errors to the configured log file and stdout (if enabled).
+   - Handle Kubernetes API or SSH failures with retries as specified in `config.yaml`.
+   - If unresolved, provide a detailed report of findings (e.g., logs, drive status, SMART data, test results) and suggest manual intervention.
+
+5. **Constraints**:
+   - Restrict operations to the Kubernetes cluster and configured worker nodes; do not access external networks or resources.
+   - Do not modify cluster state (e.g., delete pods, change configurations) unless explicitly allowed and approved.
+   - Adhere to `troubleshoot.timeout_seconds` for the troubleshooting workflow.
+   - Always recommend data backup before suggesting write/change operations (e.g., `fsck`).
+
+6. **Output**:
+   - Provide clear, concise explanations of diagnostic steps, findings, and remediation proposals.
+   - In interactive mode, format prompts as: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)".
+   - Include performance benchmarks in reports (e.g., HDD: 100–200 IOPS, SSD: thousands, NVMe: tens of thousands).
+   - Log all outputs with timestamps and context for traceability.
+
+You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.
+"""
+        }
+        
+        if state["messages"] and state["messages"][0]["role"] != "system":
+            state["messages"] = [system_message] + state["messages"]
+        
+        # Call the model and bind tools
+        response = model.bind_tools(tools).invoke(state["messages"])
+        return {"messages": state["messages"] + [response]}
+    
+    # Build state graph
+    builder = StateGraph(MessagesState)
+    builder.add_node("call_model", call_model)
+    builder.add_node("tools", ToolNode(tools))
+    builder.add_edge(START, "call_model")
+    builder.add_conditional_edges(
+        "call_model",
+        tools_condition,
+        {
+            "tools": "tools",
+            "none": "end"
+        }
+    )
+    builder.add_edge("tools", "call_model")
+    graph = builder.compile()
+    
+    return graph
+
+async def troubleshoot(pod_name: str, namespace: str, volume_path: str):
+    """
+    Troubleshoot volume I/O error for a pod
+    
+    Args:
+        pod_name: Name of the pod with the error
+        namespace: Namespace of the pod
+        volume_path: Path of the volume with I/O error
+    """
+    global CONFIG_DATA, INTERACTIVE_MODE
+    
+    try:
+        # Initialize Kubernetes client
+        init_kubernetes_client()
+        
+        # Create troubleshooting graph
+        graph = create_troubleshooting_graph(pod_name, namespace, volume_path)
+        
+        # Initial query with problem details
+        query = f"Troubleshoot volume I/O error for pod {pod_name} in namespace {namespace} at volume path {volume_path}"
+        formatted_query = {"messages": [{"role": "user", "content": query}]}
+        
+        # Set timeout
+        timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
+        
+        # Run graph to process troubleshooting with timeout
+        try:
+            logging.info(f"Starting troubleshooting with timeout of {timeout_seconds} seconds")
+            response = await asyncio.wait_for(
+                graph.ainvoke(formatted_query),
+                timeout=timeout_seconds
+            )
+            
+            # Extract final answer
+            final_message = response["messages"][-1]["content"] if response["messages"] else "Failed to generate troubleshooting results"
+            
+            logging.info(f"Troubleshooting completed for pod {namespace}/{pod_name}, volume {volume_path}")
+            logging.info(f"Result: {final_message}")
+            
+            return final_message
+        except asyncio.TimeoutError:
+            error_msg = f"Troubleshooting timed out after {timeout_seconds} seconds"
+            logging.error(error_msg)
+            return f"Error: {error_msg}"
+    except Exception as e:
+        error_msg = f"Error during troubleshooting: {str(e)}"
+        logging.error(error_msg)
+        return f"Error: {error_msg}"
+    finally:
+        # Close SSH connections
+        close_ssh_connections()
+
+def main():
+    """Main function"""
+    global CONFIG_DATA, INTERACTIVE_MODE
+    
+    # Check command line arguments
+    if len(sys.argv) != 4:
+        print("Usage: python troubleshoot.py <pod_name> <namespace> <volume_path>")
+        sys.exit(1)
+    
+    pod_name = sys.argv[1]
+    namespace = sys.argv[2]
+    volume_path = sys.argv[3]
+    
+    # Load configuration
+    CONFIG_DATA = load_config()
+    
+    # Set up logging
+    setup_logging(CONFIG_DATA)
+    
+    # Set interactive mode
+    INTERACTIVE_MODE = CONFIG_DATA['troubleshoot']['interactive_mode']
+    
+    logging.info(f"Starting troubleshooting for pod {namespace}/{pod_name}, volume {volume_path}")
+    logging.info(f"Interactive mode: {INTERACTIVE_MODE}")
+    
+    # Run troubleshooting
+    try:
+        result = asyncio.run(troubleshoot(pod_name, namespace, volume_path))
+        print("\n=== Troubleshooting Results ===")
+        print(result)
+        print("==============================\n")
+    except KeyboardInterrupt:
+        logging.info("Troubleshooting stopped by user")
+        print("\nTroubleshooting stopped by user")
+    except Exception as e:
+        logging.error(f"Fatal error: {str(e)}")
+        print(f"\nFatal error: {str(e)}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

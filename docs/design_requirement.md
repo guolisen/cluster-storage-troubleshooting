@@ -357,8 +357,8 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
 
 ## Reference:
 react example python code:
-/root/drive-health-check/React_example.py
+/root/cluster-storage-troubleshooting/React_example.py
 CSI knowledge:
-/root/drive-health-check/CSI_knowledge.txt
+/root/cluster-storage-troubleshooting/CSI_knowledge.txt
 
 

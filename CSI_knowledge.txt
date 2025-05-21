@@ -1,4 +1,4 @@
-masternode1:~/drive-health-check # kubectl get drive -o wide
+masternode1:~/cluster-storage-troubleshooting # kubectl get drive -o wide
 NAME                                   SIZE           TYPE   HEALTH   STATUS   USAGE    SYSTEM   PATH       SERIAL NUMBER                      NODE                                   SLOT   SECURITY STATUS   ENCRYPTION CAPABLE   ENCRYPTION PROTOCOL
 2a96dfec-47db-449d-9789-0d81660c2c4d   299573968896   SSD    GOOD     ONLINE   IN_USE   true     /dev/sda   6000c293fbf5f0fa45686547adedc378   6e172f8c-9d8b-41ac-99cf-44dab5da25f6
 325a134d-2df4-44c9-b783-1f32e049b8cc   18360985190    SSD    GOOD     ONLINE   IN_USE            /dev/sdb   6000c2917b460b7685a49fa494ce5e31   0c94ee22-3ac7-4114-a7a2-3b572d8574fb
@@ -10,7 +10,7 @@ NAME                                   SIZE           TYPE   HEALTH   STATUS   U
 c9480c2e-6464-4dec-9df0-9178a6d64bc8   18360985190    SSD    GOOD     ONLINE   IN_USE            /dev/sda   6000c29de85cfbd23ca5711b64de0339   12725265-7733-4daf-8dd4-3aeb26cf7758
 d103ee31-b297-4044-b88d-4e2c205475ff   18360985190    SSD    GOOD     ONLINE   IN_USE            /dev/sdc   6000c299eecccb21a274a8219044634b   12725265-7733-4daf-8dd4-3aeb26cf7758
 d66388ed-9023-4e5c-8a92-76bb5fcf42aa   18360985190    SSD    GOOD     ONLINE   IN_USE            /dev/sdc   6000c29a133bb2ba996d2051a48c6699   0c94ee22-3ac7-4114-a7a2-3b572d8574fb
-masternode1:~/drive-health-check # kubectl get drive 2a96dfec-47db-449d-9789-0d81660c2c4d -o yaml
+masternode1:~/cluster-storage-troubleshooting # kubectl get drive 2a96dfec-47db-449d-9789-0d81660c2c4d -o yaml
 apiVersion: csi-baremetal.dell.com/v1
 kind: Drive
 metadata:
@@ -36,12 +36,12 @@ spec:
   UUID: 2a96dfec-47db-449d-9789-0d81660c2c4d
   Usage: IN_USE
   VID: VMware
-masternode1:~/drive-health-check # kubectl get csibmnode
+masternode1:~/cluster-storage-troubleshooting # kubectl get csibmnode
 NAME                                             UUID                                   HOSTNAME      NODE_IP
 csibmnode-0c94ee22-3ac7-4114-a7a2-3b572d8574fb   0c94ee22-3ac7-4114-a7a2-3b572d8574fb   workernode1   10.227.104.52
 csibmnode-12725265-7733-4daf-8dd4-3aeb26cf7758   12725265-7733-4daf-8dd4-3aeb26cf7758   workernode2   10.227.104.53
 csibmnode-6e172f8c-9d8b-41ac-99cf-44dab5da25f6   6e172f8c-9d8b-41ac-99cf-44dab5da25f6   masternode1   10.227.104.51
-masternode1:~/drive-health-check # kubectl get ac -o wide
+masternode1:~/cluster-storage-troubleshooting # kubectl get ac -o wide
 NAME                                   SIZE          STORAGE CLASS   LOCATION                               NODE
 232245fc-6681-4153-a653-917f8033fbbc   18360985190   SSD             d103ee31-b297-4044-b88d-4e2c205475ff   12725265-7733-4daf-8dd4-3aeb26cf7758
 33d8aa02-cd15-4e7f-a3c0-14c2c390fc48   18360985190   SSD             4fdcb98b-7beb-4811-b906-3d7da1f788b5   6e172f8c-9d8b-41ac-99cf-44dab5da25f6
@@ -51,9 +51,9 @@ NAME                                   SIZE          STORAGE CLASS   LOCATION   
 e5a66c43-ab1f-4b0d-9234-db2fc16220d6   18360985190   SSD             325a134d-2df4-44c9-b783-1f32e049b8cc   0c94ee22-3ac7-4114-a7a2-3b572d8574fb
 e9f6db0d-6033-4ce5-9467-670953ca33e8                 SSD             4ae92cbd-6fed-412a-a259-f627dac829c2   0c94ee22-3ac7-4114-a7a2-3b572d8574fb
 f5518290-c2d7-43a0-9046-72114455d659   18360985190   SSD             d66388ed-9023-4e5c-8a92-76bb5fcf42aa   0c94ee22-3ac7-4114-a7a2-3b572d8574fb
-masternode1:~/drive-health-check # kubectl get acr
+masternode1:~/cluster-storage-troubleshooting # kubectl get acr
 No resources found
-masternode1:~/drive-health-check # kubectl get sc
+masternode1:~/cluster-storage-troubleshooting # kubectl get sc
 NAME                             PROVISIONER                            RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
 csi-baremetal-sc (default)       csi-baremetal                          Delete          WaitForFirstConsumer   false                  451d
 csi-baremetal-sc-hdd             csi-baremetal                          Delete          WaitForFirstConsumer   false                  451d
@@ -67,7 +67,7 @@ csi-baremetal-sc-syslvg          csi-baremetal                          Delete  
 kvstore-controller-pv-storage    datadomain.io/no-provisioner           Delete          WaitForFirstConsumer   false                  450d
 local-path                       cluster.local/local-path-provisioner   Delete          WaitForFirstConsumer   true                   451d
 local-path-with-retention        cluster.local/local-path-provisioner   Retain          WaitForFirstConsumer   true                   451d
-masternode1:~/drive-health-check # kubectl get lvg
+masternode1:~/cluster-storage-troubleshooting # kubectl get lvg
 NAME                                   SIZE   HEALTH   LOCATIONS                                  NODE
 2ec53fb6-ca20-464e-bef6-2d87e2600d30          GOOD     ["8df35bc4-ab91-41db-8c61-589929e53754"]   12725265-7733-4daf-8dd4-3aeb26cf7758
 c15dd61c-e597-4392-bc5d-4c27b2d23a21          GOOD     ["2a96dfec-47db-449d-9789-0d81660c2c4d"]   6e172f8c-9d8b-41ac-99cf-44dab5da25f6

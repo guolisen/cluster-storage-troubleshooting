@@ -1,10 +1,10 @@
 # LLM Configuration
 llm:
-  model: "gpt4-o4-mini"
-  api_endpoint: "https://x.ai/api"
-  api_key: ''
+  model: "gpt-4o-mini-2024-07-18"
+  api_endpoint: "hhttps://api.openai.com/v1"
+  api_key: 'A'
   temperature: 0.7
-  max_tokens: 1000
+  max_tokens: 999999
 
 # Monitoring Configuration
 monitor:
@@ -19,12 +19,13 @@ troubleshoot:
   auto_fix: false  # Enable/disable auto-fix mode
   ssh:
     enabled: true
-    user: "admin"
-    key_path: "/path/to/ssh/key"
+    user: "root"
+    key_path: "~/.ssh/id_ed25519"
     nodes:
-      - "workernode1"
-      - "workernode2"
-      - "masternode1"
+      - "3x2sth3.cluster.local"
+      - "5w2sth3.cluster.local"
+      - "6d9w4k3.cluster.local"
+      - "hw2sth3.cluster.local"
     retries: 3
     retry_backoff_seconds: 5
 

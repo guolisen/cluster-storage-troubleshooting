@@ -667,8 +667,6 @@ spec:
                 logging.warning(f"Failed to delete temporary file {pod_filename_full_path}: {e}")
         # --- End of finally block ---
 
-tools = define_tools('pod_name', 'namespace', 'volume_path')
-
 def create_troubleshooting_graph(pod_name: str, namespace: str, volume_path: str, phase: str = "analysis"):
     """
     Create a LangGraph ReAct graph for troubleshooting

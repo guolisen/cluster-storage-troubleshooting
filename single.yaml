@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-nginx
+  labels:
+    app: test-nginx
+spec:
+  ports:
+  - port: 80
+    name: web
+  clusterIP: None
+  selector:
+    app: test-nginx
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: test-pod-1
+  labels:
+    app: test-nginx
+spec:
+  serviceName: "storop-nginx"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-nginx
+  template:
+    metadata:
+      labels:
+        stor-operator.dell.com/need-wait: all
+        app: test-nginx
+    spec:
+      containers:
+      - name: test-nginx
+        #image: dockerrepo:30500/storage-operator-image:0.402.0.605-1000000
+        #dockerrepo:30500/trustbridge-image:0.402.7.0-1155863
+        #image: dockerrepo:30500/nginx:1.25.3
+        #image: k8s.gcr.io/nginx-slim:0.8
+        image: guolisen/hotplug-test:1.2
+        command:
+          - /bin/sh
+          - "-c"
+          - "sleep 60m"
+        imagePullPolicy: Always
+        securityContext:
+          privileged: true
+        ports:
+        - containerPort: 80
+          name: test-pod-1
+        volumeMounts:
+        - name: www-1
+          mountPath: /usr/share/storop-nginx/html-1
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          privileged: false
+          readOnlyRootFilesystem: true
+          #runAsGroup: 65534
+          runAsNonRoot: false
+          #runAsUser: 65534
+          seccompProfile:
+            type: RuntimeDefault
+  volumeClaimTemplates:
+  - metadata:
+      name: www-1
+      labels:
+        app: test-nginx
+        stor-operator.dell.com/need-wait: "true"
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      volumeMode: Filesystem
+      resources:
+        requests:
+          storage: 3Gi
+      storageClassName: csi-baremetal-sc-nvme
+

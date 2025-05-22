@@ -72,7 +72,7 @@ def init_kubernetes_client():
 
 def validate_command(command: str) -> bool:
     """
-    Validate if a command is allowed based on configuration
+    Validate if a command is allowed based on configuration with prefix/wildcard matching
     
     Args:
         command: Command to validate
@@ -82,16 +82,31 @@ def validate_command(command: str) -> bool:
     """
     global CONFIG_DATA
     
-    # Check if command is explicitly disallowed
+    # Check if command is explicitly disallowed (exact match first, then prefix/wildcard)
     for disallowed in CONFIG_DATA['commands']['disallowed']:
-        if disallowed in command:
-            logging.warning(f"Command '{command}' contains disallowed pattern '{disallowed}'")
+        # Handle exact match
+        if disallowed == command:
+            logging.warning(f"Command '{command}' is explicitly disallowed")
             return False
+            
+        # Handle wildcards
+        if disallowed.endswith('*'):
+            prefix = disallowed[:-1]  # Remove the * character
+            if command.startswith(prefix):
+                logging.warning(f"Command '{command}' matches disallowed wildcard pattern '{disallowed}'")
+                return False
     
-    # Check if command is allowed
+    # Check if command is allowed (exact match first, then prefix/wildcard)
     for allowed in CONFIG_DATA['commands']['allowed']:
-        if command.startswith(allowed):
+        # Handle exact match
+        if allowed == command:
             return True
+            
+        # Handle wildcards
+        if allowed.endswith('*'):
+            prefix = allowed[:-1]  # Remove the * character
+            if command.startswith(prefix):
+                return True
     
     logging.warning(f"Command '{command}' is not in the allowed list")
     return False
@@ -582,7 +597,9 @@ spec:
         logging.error(error_msg)
         return f"Error: {error_msg}"
 
-def create_troubleshooting_graph(pod_name: str, namespace: str, volume_path: str):
+tools = define_tools('pod_name', 'namespace', 'volume_path')
+
+def create_troubleshooting_graph(pod_name: str, namespace: str, volume_path: str, phase: str = "analysis"):
     """
     Create a LangGraph ReAct graph for troubleshooting
     
@@ -590,6 +607,7 @@ def create_troubleshooting_graph(pod_name: str, namespace: str, volume_path: str
         pod_name: Name of the pod with the error
         namespace: Namespace of the pod
         volume_path: Path of the volume with I/O error
+        phase: Current troubleshooting phase ("analysis" or "remediation")
         
     Returns:
         StateGraph: LangGraph StateGraph
@@ -610,10 +628,36 @@ def create_troubleshooting_graph(pod_name: str, namespace: str, volume_path: str
     
     # Define function to call the model
     def call_model(state: MessagesState):
-        # Add system prompt with CSI Baremetal knowledge
+        # Add system prompt with CSI Baremetal knowledge and phase-specific guidance
+        phase_specific_guidance = ""
+        if phase == "analysis":
+            phase_specific_guidance = """
+You are currently in Phase 1 (Analysis). Your task is to:
+1. Diagnose the root cause of the volume I/O error
+2. Create a clear fix plan with step-by-step remediation actions
+3. Present your findings as "Root cause: <cause>" and "Fix plan: <plan>"
+4. DO NOT attempt to execute any remediation actions yet
+
+Focus only on diagnostics and analysis in this phase. The remediation actions will be executed in Phase 2 if approved.
+"""
+        elif phase == "remediation":
+            phase_specific_guidance = """
+You are currently in Phase 2 (Remediation). Your task is to:
+1. Execute the fix plan from Phase 1
+2. Implement remediation actions while respecting allowed/disallowed commands
+3. Verify that the issue is resolved after implementing fixes
+4. Report the final resolution status
+
+Focus on implementing the fix plan safely and effectively. Validate that each fix resolves the underlying issue.
+"""
+        
         system_message = {
             "role": "system",
-            "content": """You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). Follow these strict guidelines for safe, reliable, and effective troubleshooting:
+            "content": f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
+
+{phase_specific_guidance}
+
+Follow these strict guidelines for safe, reliable, and effective troubleshooting:
 
 1. **Safety and Security**:
    - Only execute commands listed in `commands.allowed` in `config.yaml` (e.g., `kubectl get drive`, `smartctl -a`, `fio`).
@@ -701,9 +745,130 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
     
     return graph
 
+async def run_analysis_phase(pod_name: str, namespace: str, volume_path: str) -> Tuple[str, str]:
+    """
+    Run Phase 1: Analysis to identify root cause and generate fix plan
+    
+    Args:
+        pod_name: Name of the pod with the error
+        namespace: Namespace of the pod
+        volume_path: Path of the volume with I/O error
+        
+    Returns:
+        Tuple[str, str]: Root cause and fix plan
+    """
+    global CONFIG_DATA
+    
+    try:
+        # Create troubleshooting graph for analysis phase
+        graph = create_troubleshooting_graph(pod_name, namespace, volume_path, phase="analysis")
+        
+        # Initial query with problem details for analysis phase
+        query = f"Phase 1 - Analysis: Identify the root cause of volume I/O error for pod {pod_name} in namespace {namespace} at volume path {volume_path}. Focus on diagnosis and root cause analysis ONLY. Do not attempt to fix the issue yet."
+        formatted_query = {"messages": [{"role": "user", "content": query}]}
+        
+        # Set timeout
+        timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
+        
+        # Run graph to process analysis with timeout
+        logging.info(f"Starting analysis phase with timeout of {timeout_seconds} seconds")
+        response = await asyncio.wait_for(
+            graph.ainvoke(formatted_query),
+            timeout=timeout_seconds
+        )
+        
+        # Extract analysis results
+        final_message = response["messages"][-1]["content"] if response["messages"] else "Failed to generate analysis results"
+        
+        # Parse root cause and fix plan from the analysis results
+        # This is a simple parsing logic and may need to be improved
+        root_cause = "Unknown"
+        fix_plan = "No specific fix plan generated"
+        
+        # Look for root cause and fix plan in the final message
+        if "Root cause:" in final_message:
+            parts = final_message.split("Root cause:", 1)
+            if len(parts) > 1:
+                root_cause_section = parts[1].strip()
+                if "Fix plan:" in root_cause_section:
+                    root_cause = root_cause_section.split("Fix plan:", 1)[0].strip()
+                    fix_plan = root_cause_section.split("Fix plan:", 1)[1].strip()
+                else:
+                    root_cause = root_cause_section
+        
+        logging.info(f"Analysis completed for pod {namespace}/{pod_name}, volume {volume_path}")
+        logging.info(f"Root cause: {root_cause}")
+        logging.info(f"Fix plan: {fix_plan}")
+        
+        return root_cause, fix_plan
+        
+    except asyncio.TimeoutError:
+        error_msg = f"Analysis phase timed out after {timeout_seconds} seconds"
+        logging.error(error_msg)
+        return f"Error: {error_msg}", "Timeout occurred during analysis"
+    except Exception as e:
+        error_msg = f"Error during analysis phase: {str(e)}"
+        logging.error(error_msg)
+        return f"Error: {error_msg}", "Error occurred during analysis"
+
+async def run_remediation_phase(pod_name: str, namespace: str, volume_path: str, root_cause: str, fix_plan: str) -> str:
+    """
+    Run Phase 2: Remediation to resolve the identified issue
+    
+    Args:
+        pod_name: Name of the pod with the error
+        namespace: Namespace of the pod
+        volume_path: Path of the volume with I/O error
+        root_cause: Identified root cause from analysis phase
+        fix_plan: Generated fix plan from analysis phase
+        
+    Returns:
+        str: Result of remediation
+    """
+    global CONFIG_DATA
+    
+    try:
+        # Create troubleshooting graph for remediation phase
+        graph = create_troubleshooting_graph(pod_name, namespace, volume_path, phase="remediation")
+        
+        # Initial query with problem details for remediation phase
+        query = f"""Phase 2 - Remediation: Resolve volume I/O error for pod {pod_name} in namespace {namespace} at volume path {volume_path}.
+Root cause: {root_cause}
+Fix plan: {fix_plan}
+
+Implement the fix plan while respecting allowed/disallowed commands. After implementing fixes, verify that the issue is resolved."""
+        formatted_query = {"messages": [{"role": "user", "content": query}]}
+        
+        # Set timeout
+        timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
+        
+        # Run graph to process remediation with timeout
+        logging.info(f"Starting remediation phase with timeout of {timeout_seconds} seconds")
+        response = await asyncio.wait_for(
+            graph.ainvoke(formatted_query),
+            timeout=timeout_seconds
+        )
+        
+        # Extract remediation results
+        final_message = response["messages"][-1]["content"] if response["messages"] else "Failed to generate remediation results"
+        
+        logging.info(f"Remediation completed for pod {namespace}/{pod_name}, volume {volume_path}")
+        logging.info(f"Result: {final_message}")
+        
+        return final_message
+        
+    except asyncio.TimeoutError:
+        error_msg = f"Remediation phase timed out after {timeout_seconds} seconds"
+        logging.error(error_msg)
+        return f"Error: {error_msg}"
+    except Exception as e:
+        error_msg = f"Error during remediation phase: {str(e)}"
+        logging.error(error_msg)
+        return f"Error: {error_msg}"
+
 async def troubleshoot(pod_name: str, namespace: str, volume_path: str):
     """
-    Troubleshoot volume I/O error for a pod
+    Two-phase troubleshooting process: Analysis and Remediation
     
     Args:
         pod_name: Name of the pod with the error
@@ -714,37 +879,39 @@ async def troubleshoot(pod_name: str, namespace: str, volume_path: str):
     
     try:
         # Initialize Kubernetes client
-        init_kubernetes_client()
+        #init_kubernetes_client()
         
-        # Create troubleshooting graph
-        graph = create_troubleshooting_graph(pod_name, namespace, volume_path)
+        # Phase 1: Analysis
+        logging.info("Starting Phase 1: Analysis")
+        root_cause, fix_plan = await run_analysis_phase(pod_name, namespace, volume_path)
         
-        # Initial query with problem details
-        query = f"Troubleshoot volume I/O error for pod {pod_name} in namespace {namespace} at volume path {volume_path}"
-        formatted_query = {"messages": [{"role": "user", "content": query}]}
+        # Check if analysis was successful
+        if root_cause.startswith("Error:"):
+            return f"Analysis phase failed: {root_cause}"
         
-        # Set timeout
-        timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
+        # Check if we should proceed to remediation
+        proceed_to_remediation = CONFIG_DATA['troubleshoot']['auto_fix']
         
-        # Run graph to process troubleshooting with timeout
-        try:
-            logging.info(f"Starting troubleshooting with timeout of {timeout_seconds} seconds")
-            response = await asyncio.wait_for(
-                graph.ainvoke(formatted_query),
-                timeout=timeout_seconds
-            )
+        if not proceed_to_remediation:
+            # Prompt user for confirmation to proceed to remediation
+            print("\n=== Analysis Results ===")
+            print(f"Root cause: {root_cause}")
+            print(f"Fix plan: {fix_plan}")
+            response = input("\nProceed to remediation phase? (y/n): ").strip().lower()
+            proceed_to_remediation = response == 'y' or response == 'yes'
+        
+        # Phase 2: Remediation (if approved)
+        if proceed_to_remediation:
+            logging.info("Starting Phase 2: Remediation")
+            result = await run_remediation_phase(pod_name, namespace, volume_path, root_cause, fix_plan)
             
-            # Extract final answer
-            final_message = response["messages"][-1]["content"] if response["messages"] else "Failed to generate troubleshooting results"
+            if result.startswith("Error:"):
+                return f"Remediation phase failed: {result}"
             
-            logging.info(f"Troubleshooting completed for pod {namespace}/{pod_name}, volume {volume_path}")
-            logging.info(f"Result: {final_message}")
-            
-            return final_message
-        except asyncio.TimeoutError:
-            error_msg = f"Troubleshooting timed out after {timeout_seconds} seconds"
-            logging.error(error_msg)
-            return f"Error: {error_msg}"
+            return result
+        else:
+            logging.info("Remediation phase skipped per user request")
+            return f"Analysis completed. Root cause: {root_cause}\nFix plan: {fix_plan}\nRemediation skipped per user request."
     except Exception as e:
         error_msg = f"Error during troubleshooting: {str(e)}"
         logging.error(error_msg)

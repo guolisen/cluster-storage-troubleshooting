@@ -16,6 +16,7 @@ monitor:
 troubleshoot:
   timeout_seconds: 300
   interactive_mode: true
+  auto_fix: false  # Enable/disable auto-fix mode
   ssh:
     enabled: true
     user: "admin"
@@ -27,43 +28,35 @@ troubleshoot:
     retries: 3
     retry_backoff_seconds: 5
 
-# Allowed Commands
+# Allowed Commands (supports prefix/wildcard)
 commands:
   allowed:
-    - "kubectl get pod"
-    - "kubectl describe pod"
-    - "kubectl logs"
-    - "kubectl get pvc"
-    - "kubectl get pv"
-    - "kubectl get storageclass"
-    - "kubectl get csidrivers"
-    - "kubectl get drive"
-    - "kubectl get csibmnode"
-    - "kubectl get ac"
-    - "kubectl get lvg"
-    - "kubectl top node"
-    - "kubectl describe node"
+    - "kubectl get *"
+    - "kubectl describe *"
+    - "kubectl logs *"
+    - "kubectl exec *"
+    - "kubectl top *"
     - "df -h"
     - "lsblk"
     - "cat /proc/mounts"
-    - "smartctl -a"
-    - "fio --name=read_test"
-    - "fio --name=write_test"
+    - "smartctl -a *"
+    - "fio --name=read_test *"
+    - "fio --name=write_test *"
     - "dmesg | grep -i disk"
     - "dmesg | grep -i error"
     - "dmesg | grep -i xfs"
-    - "journalctl -u kubelet"
+    - "journalctl -u kubelet *"
+    - "xfs_repair -n *"  # Diagnostic mode only
   disallowed:
-    - "fsck"
-    - "chmod"
-    - "chown"
-    - "dd"
-    - "mkfs"
-    - "rm"
-    - "kubectl delete pod"
-    - "kubectl delete pvc"
-    - "kubectl delete volume"
-    - "kubectl delete pv"
+    - "fsck *"
+    - "chmod *"
+    - "chown *"
+    - "dd *"
+    - "mkfs *"
+    - "rm *"
+    - "kubectl delete *"
+    - "kubectl apply *"
+    - "xfs_repair *"  # Disallow non-diagnostic xfs_repair
 
 # Logging Configuration
 logging:

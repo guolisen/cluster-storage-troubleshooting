@@ -117,6 +117,7 @@ def invoke_troubleshooting(pod_name, namespace, volume_path):
         # Use Popen to run the troubleshooting script in the background
         subprocess.Popen(cmd)
         logging.info(f"Troubleshooting workflow started for pod {namespace}/{pod_name}, volume {volume_path}")
+        logging.info(f"Two-phase process will run: Analysis followed by Remediation (if approved or auto_fix is enabled)")
     except Exception as e:
         logging.error(f"Failed to invoke troubleshooting: {e}")
 
@@ -136,6 +137,11 @@ def main():
     # Get monitoring interval
     interval = config_data['monitor']['interval_seconds']
     logging.info(f"Monitoring interval: {interval} seconds")
+    
+    # Log troubleshooting mode settings
+    interactive_mode = config_data['troubleshoot']['interactive_mode']
+    auto_fix = config_data['troubleshoot']['auto_fix']
+    logging.info(f"Troubleshooting settings: interactive_mode={interactive_mode}, auto_fix={auto_fix}")
     
     # Main monitoring loop
     try:

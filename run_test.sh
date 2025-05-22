@@ -1,89 +1,55 @@
 #!/bin/bash
-# Run the Kubernetes Volume I/O Error Troubleshooting Test
 
-# Check if Python is installed
-if ! command -v python3 &> /dev/null; then
-    echo "Error: Python 3 is required but not installed."
-    exit 1
-fi
+# Test script for the Kubernetes Volume I/O Error Troubleshooting System
+# This script runs the test_troubleshoot.py script with different scenarios and options
 
-# Check if uv is installed
-if ! command -v uv &> /dev/null; then
-    echo "Error: uv is required but not installed."
-    echo "Install it with: pip install uv"
-    exit 1
-fi
+# Function to display usage
+function show_usage {
+    echo "Usage: $0 [OPTIONS]"
+    echo "Test the Kubernetes Volume I/O Error Troubleshooting System"
+    echo ""
+    echo "Options:"
+    echo "  -s, --scenario SCENARIO  Test scenario to run (bad_sectors or permission_issue)"
+    echo "                           Default: bad_sectors"
+    echo "  -a, --auto-fix          Enable auto-fix mode (default: disabled)"
+    echo "  -h, --help              Display this help message and exit"
+}
 
-# Check if virtual environment exists, create if not
-if [ ! -d ".venv" ]; then
-    echo "Creating virtual environment..."
-    uv venv
-fi
+# Default values
+SCENARIO="bad_sectors"
+AUTO_FIX=""
 
-# Activate virtual environment
-echo "Activating virtual environment..."
-source .venv/bin/activate
-
-# Check if required packages are installed
-echo "Checking dependencies..."
-if ! python3 -c "import kubernetes, langgraph, paramiko, yaml" &> /dev/null; then
-    echo "Installing required packages..."
-    uv pip install -e .
-fi
-
-# Check if config.yaml exists
-if [ ! -f "config.yaml" ]; then
-    echo "Error: config.yaml not found. Please create a configuration file."
-    exit 1
-fi
-
-# Parse command line arguments
-NAMESPACE="default"
-CLEANUP=false
-EXISTING_POD=""
-VOLUME_PATH="/mnt"
-
+# Parse command-line arguments
 while [[ $# -gt 0 ]]; do
-    case $1 in
-        --namespace)
-            NAMESPACE="$2"
+    case "$1" in
+        -s|--scenario)
+            SCENARIO="$2"
             shift 2
             ;;
-        --cleanup)
-            CLEANUP=true
+        -a|--auto-fix)
+            AUTO_FIX="--auto-fix"
             shift
             ;;
-        --existing-pod)
-            EXISTING_POD="$2"
-            shift 2
-            ;;
-        --volume-path)
-            VOLUME_PATH="$2"
-            shift 2
+        -h|--help)
+            show_usage
+            exit 0
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--namespace NAMESPACE] [--cleanup] [--existing-pod POD_NAME] [--volume-path VOLUME_PATH]"
+            show_usage
             exit 1
             ;;
     esac
 done
 
-# Build command
-CMD="python3 test_troubleshoot.py --namespace $NAMESPACE"
-
-if [ "$CLEANUP" = true ]; then
-    CMD="$CMD --cleanup"
+# Validate scenario
+if [[ "$SCENARIO" != "bad_sectors" && "$SCENARIO" != "permission_issue" ]]; then
+    echo "Error: Invalid scenario '$SCENARIO'"
+    echo "Valid scenarios are: bad_sectors, permission_issue"
+    exit 1
 fi
 
-if [ -n "$EXISTING_POD" ]; then
-    CMD="$CMD --existing-pod $EXISTING_POD"
-fi
-
-if [ -n "$VOLUME_PATH" ]; then
-    CMD="$CMD --volume-path $VOLUME_PATH"
-fi
-
-# Run test
-echo "Running test with command: $CMD"
-eval $CMD
+# Run the test script
+echo "Running test with scenario: $SCENARIO, auto-fix: ${AUTO_FIX:+enabled}"
+echo "---------------------------------------------------------"
+python3 test_troubleshoot.py --scenario "$SCENARIO" $AUTO_FIX

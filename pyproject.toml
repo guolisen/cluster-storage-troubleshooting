@@ -25,6 +25,7 @@ classifiers = [
 ]
 dependencies = [
     "kubernetes",
+    "langchain>=0.3.25",
     "langgraph",
     "paramiko",
     "pyyaml",

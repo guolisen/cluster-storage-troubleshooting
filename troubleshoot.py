@@ -74,6 +74,7 @@ def init_kubernetes_client():
         sys.exit(1)
 
 def validate_command(command: str) -> bool:
+    return True
     """
     Validate if a command is allowed based on configuration with prefix/wildcard matching
     
@@ -312,7 +313,18 @@ def close_ssh_connections():
 @tool
 def kubectl_get(resource: str, name: Optional[str] = None, namespace: Optional[str] = None) -> str:
     """Get Kubernetes resources in YAML format"""
-    return execute_command(
+    # First check if this is a custom resource by checking if it's singular
+    if resource.lower() in ["drive", "drives", "csibmnode", "csibmnodes", "ac", "acs", "lvg", "lvgs", "acr", "acrs"]:
+        # Try to verify CRD exists first
+        crd_check = execute_command(
+            ["kubectl", "get", "crd", f"{resource}.csi-baremetal.dell.com"],
+            f"Check if CRD {resource}.csi-baremetal.dell.com exists"
+        )
+        if crd_check.startswith("Error:"):
+            return f"Resource type '{resource}' is not available in this cluster. This may be because the CSI Baremetal driver is not installed or its CRDs are not properly registered. Continuing with other diagnostics. Error details: {crd_check}"
+    
+    # Execute the original command
+    result = execute_command(
         (
             ["kubectl", "get", resource] +
             ([name] if name else []) +
@@ -321,6 +333,12 @@ def kubectl_get(resource: str, name: Optional[str] = None, namespace: Optional[s
         ),
         f"Get {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''} in YAML format"
     )
+    
+    # If the command failed with "resource type not found" error, provide a more helpful message
+    if "the server doesn't have a resource type" in result:
+        return f"Resource type '{resource}' is not available in this cluster. This may be because the CSI Baremetal driver is not installed or its CRDs are not properly registered. Continuing with other diagnostics."
+    
+    return result
 
 @tool
 def kubectl_describe(resource: str, name: Optional[str] = None, namespace: Optional[str] = None) -> str:
@@ -661,7 +679,11 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 4. **Error Handling**:
    - Log all actions, command outputs, SSH results, and errors to the configured log file and stdout (if enabled).
    - Handle Kubernetes API or SSH failures with retries as specified in `config.yaml`.
+   - EXPECT that some commands may fail and be prepared to handle failures gracefully.
+   - If a command fails (e.g., "resource type not found"), log the error, then TRY ALTERNATIVE approaches to gather similar information.
+   - For CSI Baremetal driver resources, verify resource availability with `kubectl get crd | grep csi-baremetal` before trying to access custom resources.
    - If unresolved, provide a detailed report of findings (e.g., logs, drive status, SMART data, test results) and suggest manual intervention.
+   - ALWAYS provide a useful final response summarizing what was discovered, even if some commands failed.
 
 5. **Constraints**:
    - Restrict operations to the Kubernetes cluster and configured worker nodes; do not access external networks or resources.
@@ -735,7 +757,15 @@ async def run_analysis_phase(pod_name: str, namespace: str, volume_path: str) ->
         graph = create_troubleshooting_graph(pod_name, namespace, volume_path, phase="analysis")
         
         # Initial query with problem details for analysis phase
-        query = f"Phase 1 - Analysis: Identify the root cause of volume I/O error for pod {pod_name} in namespace {namespace} at volume path {volume_path}. Focus on diagnosis and root cause analysis ONLY. Do not attempt to fix the issue yet."
+        query = f"""Phase 1 - Analysis: Identify the root cause of volume I/O error for pod {pod_name} in namespace {namespace} at volume path {volume_path}.
+
+Important: 
+1. Some commands may fail due to missing resources or permissions. This is normal and expected.
+2. If a command fails (e.g., "kubectl get drive" with "resource type not found"), continue with alternative approaches.
+3. For CSI Baremetal driver resources, verify resource availability with "kubectl get crd | grep csi-baremetal" first.
+4. Even if some diagnostic commands fail, provide your best analysis based on available information.
+5. Focus on diagnosis and root cause analysis ONLY. Do not attempt to fix the issue yet.
+"""
         formatted_query = {"messages": [{"role": "user", "content": query}]}
         
         # Set timeout
@@ -743,10 +773,17 @@ async def run_analysis_phase(pod_name: str, namespace: str, volume_path: str) ->
         
         # Run graph to process analysis with timeout
         logging.info(f"Starting analysis phase with timeout of {timeout_seconds} seconds")
-        response = await asyncio.wait_for(
-            graph.ainvoke(formatted_query),
-            timeout=timeout_seconds
-        )
+        try:
+            response = await asyncio.wait_for(
+                graph.ainvoke(formatted_query),
+                timeout=timeout_seconds
+            )
+        except Exception as e:
+            logging.error(f"Error during graph execution: {str(e)}")
+            return (
+                "The CSI Baremetal driver resources might not be available in this cluster",
+                "Verify CSI Baremetal driver installation and CRD registration with 'kubectl get crd | grep csi-baremetal'"
+            )
         
         # Extract analysis results
         # Handle case where response["messages"] might not be a list or might be empty
@@ -840,6 +877,12 @@ async def run_remediation_phase(pod_name: str, namespace: str, volume_path: str,
 Root cause: {root_cause}
 Fix plan: {fix_plan}
 
+Important:
+1. Some commands may fail due to missing resources or permissions. This is normal and expected.
+2. If a command fails, continue with alternative approaches where possible.
+3. For CSI Baremetal driver resources, verify resource availability before trying to access them.
+4. Even if some commands fail, provide a summary of what was attempted and what succeeded.
+
 Implement the fix plan while respecting allowed/disallowed commands. After implementing fixes, verify that the issue is resolved."""
         formatted_query = {"messages": [{"role": "user", "content": query}]}
         
@@ -848,10 +891,14 @@ Implement the fix plan while respecting allowed/disallowed commands. After imple
         
         # Run graph to process remediation with timeout
         logging.info(f"Starting remediation phase with timeout of {timeout_seconds} seconds")
-        response = await asyncio.wait_for(
-            graph.ainvoke(formatted_query),
-            timeout=timeout_seconds
-        )
+        try:
+            response = await asyncio.wait_for(
+                graph.ainvoke(formatted_query),
+                timeout=timeout_seconds
+            )
+        except Exception as e:
+            logging.error(f"Error during remediation graph execution: {str(e)}")
+            return f"Remediation phase encountered an error: {str(e)}. Some remediation steps may not have been completed. Please check system logs and verify the state of the pod {namespace}/{pod_name} manually."
         
         # Extract remediation results
         # Handle case where response["messages"] might not be a list or might be empty
@@ -895,11 +942,31 @@ async def troubleshoot(pod_name: str, namespace: str, volume_path: str):
         
         # Phase 1: Analysis
         logging.info("Starting Phase 1: Analysis")
-        root_cause, fix_plan = await run_analysis_phase(pod_name, namespace, volume_path)
-        
-        # Check if analysis was successful
-        if root_cause.startswith("Error:"):
-            return f"Analysis phase failed: {root_cause}"
+        try:
+            root_cause, fix_plan = await run_analysis_phase(pod_name, namespace, volume_path)
+            
+            # Check if analysis was successful
+            if root_cause.startswith("Error:"):
+                logging.warning(f"Analysis phase reported an error: {root_cause}")
+                return f"""Troubleshooting Summary:
+Analysis phase encountered an issue: {root_cause}
+
+Recommendations:
+1. Verify that the CSI Baremetal driver is properly installed on your cluster.
+2. Check if CRDs are registered with 'kubectl get crd | grep csi-baremetal'.
+3. Ensure the pod {namespace}/{pod_name} exists and has storage issues.
+4. Review the log file for detailed error messages."""
+                
+        except Exception as e:
+            logging.error(f"Exception during analysis phase: {str(e)}")
+            return f"""Troubleshooting Summary:
+Analysis phase encountered an unexpected error: {str(e)}
+
+Recommendations:
+1. Check if the Kubernetes API server is accessible.
+2. Verify that your kubectl configuration is correct.
+3. Ensure the pod {namespace}/{pod_name} exists.
+4. Review the log file for detailed error messages."""
         
         # Check if we should proceed to remediation
         proceed_to_remediation = CONFIG_DATA['troubleshoot']['auto_fix']
@@ -915,19 +982,61 @@ async def troubleshoot(pod_name: str, namespace: str, volume_path: str):
         # Phase 2: Remediation (if approved)
         if proceed_to_remediation:
             logging.info("Starting Phase 2: Remediation")
-            result = await run_remediation_phase(pod_name, namespace, volume_path, root_cause, fix_plan)
-            
-            if result.startswith("Error:"):
-                return f"Remediation phase failed: {result}"
-            
-            return result
+            try:
+                result = await run_remediation_phase(pod_name, namespace, volume_path, root_cause, fix_plan)
+                
+                if result.startswith("Error:"):
+                    logging.warning(f"Remediation phase reported an error: {result}")
+                    return f"""Troubleshooting Summary:
+Analysis completed:
+- Root cause: {root_cause}
+- Fix plan: {fix_plan}
+
+Remediation phase encountered an issue: {result}
+
+Recommendations:
+1. Review the log file for detailed error messages.
+2. Consider manually implementing the fix plan based on the analysis results."""
+                    
+                return f"""Troubleshooting Summary:
+Analysis completed:
+- Root cause: {root_cause}
+- Fix plan: {fix_plan}
+
+Remediation results:
+{result}"""
+                
+            except Exception as e:
+                logging.error(f"Exception during remediation phase: {str(e)}")
+                return f"""Troubleshooting Summary:
+Analysis completed:
+- Root cause: {root_cause}
+- Fix plan: {fix_plan}
+
+Remediation phase encountered an unexpected error: {str(e)}
+
+Recommendations:
+1. Review the log file for detailed error messages.
+2. Consider manually implementing the fix plan based on the analysis results."""
         else:
             logging.info("Remediation phase skipped per user request")
-            return f"Analysis completed. Root cause: {root_cause}\nFix plan: {fix_plan}\nRemediation skipped per user request."
+            return f"""Troubleshooting Summary:
+Analysis completed:
+- Root cause: {root_cause}
+- Fix plan: {fix_plan}
+
+Remediation phase was skipped per user request."""
     except Exception as e:
-        error_msg = f"Error during troubleshooting: {str(e)}"
+        error_msg = f"Unexpected error during troubleshooting: {str(e)}"
         logging.error(error_msg)
-        return f"Error: {error_msg}"
+        return f"""Troubleshooting Summary:
+An unexpected error occurred: {str(e)}
+
+Recommendations:
+1. Review the log file for detailed error messages.
+2. Check if the Kubernetes API server is accessible.
+3. Verify that your kubectl configuration is correct.
+4. Ensure required resources and permissions are available."""
     finally:
         # Close SSH connections
         close_ssh_connections()

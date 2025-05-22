@@ -15,6 +15,7 @@ import time
 import subprocess
 import json
 import paramiko
+import uuid
 from typing import Dict, List, Any, Optional, Tuple
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
@@ -82,6 +83,11 @@ def validate_command(command: str) -> bool:
     """
     global CONFIG_DATA
     
+    # Ensure command_to_validate is a string, as it's now just the executable
+    if not isinstance(command, str):
+        logging.error(f"Invalid type for command validation: {type(command)}. Expected string.")
+        return False
+
     # Check if command is explicitly disallowed (exact match first, then prefix/wildcard)
     for disallowed in CONFIG_DATA['commands']['disallowed']:
         # Handle exact match
@@ -111,28 +117,28 @@ def validate_command(command: str) -> bool:
     logging.warning(f"Command '{command}' is not in the allowed list")
     return False
 
-def prompt_for_approval(command: str, purpose: str) -> bool:
+def prompt_for_approval(command_display: str, purpose: str) -> bool:
     """
     Prompt user for command approval in interactive mode
     
     Args:
-        command: Command to execute
+        command_display: The command string to display to the user for approval
         purpose: Purpose of the command
         
     Returns:
         bool: True if approved, False otherwise
     """
-    print(f"\nProposed command: {command}")
+    print(f"\nProposed command: {command_display}")
     print(f"Purpose: {purpose}")
     response = input("Approve? (y/n): ").strip().lower()
     return response == 'y' or response == 'yes'
 
-def execute_command(command: str, purpose: str) -> str:
+def execute_command(command_list: List[str], purpose: str) -> str:
     """
     Execute a command and return its output
     
     Args:
-        command: Command to execute
+        command_list: Command to execute as a list of strings
         purpose: Purpose of the command
         
     Returns:
@@ -140,19 +146,26 @@ def execute_command(command: str, purpose: str) -> str:
     """
     global CONFIG_DATA, INTERACTIVE_MODE
     
+    if not command_list:
+        logging.error("execute_command received an empty command_list")
+        return "Error: Empty command list provided"
+
+    executable = command_list[0]
+    command_display_str = ' '.join(command_list) # For logging and prompting
+
     # Validate command
-    if not validate_command(command):
-        return f"Error: Command '{command}' is not allowed"
+    if not validate_command(executable):
+        return f"Error: Command executable '{executable}' is not allowed"
     
     # Prompt for approval in interactive mode
     if INTERACTIVE_MODE:
-        if not prompt_for_approval(command, purpose):
+        if not prompt_for_approval(command_display_str, purpose):
             return "Command execution cancelled by user"
     
     # Execute command
     try:
-        logging.info(f"Executing command: {command}")
-        result = subprocess.run(command, shell=True, check=True, 
+        logging.info(f"Executing command: {command_display_str}")
+        result = subprocess.run(command_list, shell=False, check=True, 
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                universal_newlines=True)
         output = result.stdout
@@ -162,8 +175,12 @@ def execute_command(command: str, purpose: str) -> str:
         error_msg = f"Command failed with exit code {e.returncode}: {e.stderr}"
         logging.error(error_msg)
         return f"Error: {error_msg}"
+    except FileNotFoundError:
+        error_msg = f"Command not found: {executable}"
+        logging.error(error_msg)
+        return f"Error: {error_msg}"
     except Exception as e:
-        error_msg = f"Failed to execute command: {str(e)}"
+        error_msg = f"Failed to execute command {command_display_str}: {str(e)}"
         logging.error(error_msg)
         return f"Error: {error_msg}"
 
@@ -196,7 +213,9 @@ def get_ssh_client(node: str) -> Optional[paramiko.SSHClient]:
     # Create new SSH client
     ssh_config = CONFIG_DATA['troubleshoot']['ssh']
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    # client.set_missing_host_key_policy(paramiko.AutoAddPolicy()) # Removed
+    client.load_system_host_keys()
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
     
     # Try to connect with retries
     retries = ssh_config['retries']
@@ -236,13 +255,18 @@ def ssh_execute(node: str, command: str, purpose: str) -> str:
     global INTERACTIVE_MODE
     
     # Validate command
-    if not validate_command(command):
-        return f"Error: Command '{command}' is not allowed"
-    
+    executable = ""
+    if command: # Ensure command is not an empty string
+        executable = command.split()[0]
+        if not validate_command(executable):
+            return f"Error: SSH command executable '{executable}' is not allowed"
+    else:
+        return "Error: Empty command provided for SSH execution"
+            
     # Prompt for approval in interactive mode
     if INTERACTIVE_MODE:
-        ssh_command = f"ssh {node} '{command}'"
-        if not prompt_for_approval(ssh_command, purpose):
+        ssh_command_display = f"ssh {node} '{command}'"
+        if not prompt_for_approval(ssh_command_display, purpose):
             return "Command execution cancelled by user"
     
     # Get SSH client
@@ -317,7 +341,12 @@ def define_tools(pod_name: str, namespace: str, volume_path: str) -> List[Dict[s
                 "required": ["resource"]
             },
             "function": lambda resource, name=None, namespace=None: execute_command(
-                f"kubectl get {resource} {name or ''} {'-n ' + namespace if namespace else ''} -o yaml",
+                (
+                    ["kubectl", "get", resource] +
+                    ([name] if name else []) +
+                    (["-n", namespace] if namespace else []) +
+                    ["-o", "yaml"]
+                ),
                 f"Get {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''} in YAML format"
             )
         },
@@ -343,7 +372,11 @@ def define_tools(pod_name: str, namespace: str, volume_path: str) -> List[Dict[s
                 "required": ["resource"]
             },
             "function": lambda resource, name=None, namespace=None: execute_command(
-                f"kubectl describe {resource} {name or ''} {'-n ' + namespace if namespace else ''}",
+                (
+                    ["kubectl", "describe", resource] +
+                    ([name] if name else []) +
+                    (["-n", namespace] if namespace else [])
+                ),
                 f"Describe {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''}"
             )
         },
@@ -373,7 +406,12 @@ def define_tools(pod_name: str, namespace: str, volume_path: str) -> List[Dict[s
                 "required": ["pod_name", "namespace"]
             },
             "function": lambda pod_name, namespace, container=None, tail=None: execute_command(
-                f"kubectl logs {pod_name} {'-c ' + container if container else ''} -n {namespace} {f'--tail={tail}' if tail else ''}",
+                (
+                    ["kubectl", "logs", pod_name] +
+                    (["-c", container] if container else []) +
+                    ["-n", namespace] +
+                    ([f"--tail={tail}"] if tail is not None else [])
+                ),
                 f"Get logs from pod {namespace}/{pod_name} {f'container {container}' if container else ''}"
             )
         },
@@ -399,7 +437,7 @@ def define_tools(pod_name: str, namespace: str, volume_path: str) -> List[Dict[s
                 "required": ["pod_name", "namespace", "command"]
             },
             "function": lambda pod_name, namespace, command: execute_command(
-                f"kubectl exec {pod_name} -n {namespace} -- {command}",
+                (["kubectl", "exec", pod_name, "-n", namespace, "--"] + shlex.split(command)),
                 f"Execute command '{command}' in pod {namespace}/{pod_name}"
             )
         },
@@ -491,11 +529,15 @@ def create_test_pod(name: str, namespace: str, pvc_name: str, node_name: str,
     """
     global INTERACTIVE_MODE
     
+    unique_suffix = str(uuid.uuid4().hex)[:8]
+    pvc_filename_full_path = None # Initialize to None
+    pod_filename_full_path = f"{name}-{unique_suffix}.yaml" # pod_filename is always generated
+
     # Check if we need to create a new PVC
     create_pvc = storage_class is not None and storage_size is not None
     
-    # Define PVC YAML if needed
     if create_pvc:
+        pvc_filename_full_path = f"{pvc_name}-{unique_suffix}.yaml"
         pvc_yaml = f"""
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -557,45 +599,73 @@ spec:
     else:
         return f"Error: Invalid test type '{test_type}'"
     
-    # Write YAML files
+    
     try:
-        if create_pvc:
-            with open(f"{pvc_name}.yaml", "w") as f:
+        # --- Start of try block ---
+        if create_pvc and pvc_filename_full_path:
+            logging.debug(f"Writing temporary PVC YAML to: {pvc_filename_full_path}")
+            with open(pvc_filename_full_path, "w") as f:
                 f.write(pvc_yaml)
         
-        with open(f"{name}.yaml", "w") as f:
+        logging.debug(f"Writing temporary Pod YAML to: {pod_filename_full_path}")
+        with open(pod_filename_full_path, "w") as f:
             f.write(pod_yaml)
         
         # Apply YAML files
         result = ""
-        if create_pvc:
+        if create_pvc and pvc_filename_full_path:
+            pvc_display_name = pvc_filename_full_path.split('/')[-1]
+            pvc_apply_cmd = ["kubectl", "apply", "-f", pvc_filename_full_path]
+            pvc_purpose = f"Create PVC {namespace}/{pvc_display_name}"
             if INTERACTIVE_MODE:
-                if not prompt_for_approval(f"kubectl apply -f {pvc_name}.yaml", f"Create PVC {namespace}/{pvc_name}"):
-                    return "Operation cancelled by user"
+                if not prompt_for_approval(' '.join(pvc_apply_cmd), pvc_purpose):
+                    return "Operation cancelled by user" # Cleanup will happen in finally
             
-            pvc_result = execute_command(f"kubectl apply -f {pvc_name}.yaml", f"Create PVC {namespace}/{pvc_name}")
+            pvc_result = execute_command(pvc_apply_cmd, pvc_purpose)
             result += f"PVC creation result:\n{pvc_result}\n\n"
         
+        pod_display_name = pod_filename_full_path.split('/')[-1]
+        pod_apply_cmd = ["kubectl", "apply", "-f", pod_filename_full_path]
+        pod_purpose = f"Create test pod {namespace}/{pod_display_name}"
         if INTERACTIVE_MODE:
-            if not prompt_for_approval(f"kubectl apply -f {name}.yaml", f"Create test pod {namespace}/{name}"):
-                return "Operation cancelled by user"
+            if not prompt_for_approval(' '.join(pod_apply_cmd), pod_purpose):
+                return "Operation cancelled by user" # Cleanup will happen in finally
         
-        pod_result = execute_command(f"kubectl apply -f {name}.yaml", f"Create test pod {namespace}/{name}")
+        pod_result = execute_command(pod_apply_cmd, pod_purpose)
         result += f"Pod creation result:\n{pod_result}\n\n"
         
         # Wait for pod to start
         result += "Waiting for pod to start...\n"
-        time.sleep(5)
+        time.sleep(5) # time module is imported
         
         # Get pod status
-        pod_status = execute_command(f"kubectl get pod {name} -n {namespace}", f"Check status of pod {namespace}/{name}")
+        pod_get_cmd = ["kubectl", "get", "pod", name, "-n", namespace]
+        pod_get_purpose = f"Check status of pod {namespace}/{name}"
+        pod_status = execute_command(pod_get_cmd, pod_get_purpose)
         result += f"Pod status:\n{pod_status}\n\n"
         
         return result
-    except Exception as e:
-        error_msg = f"Failed to create test pod: {str(e)}"
+        # --- End of try block ---
+    except Exception as e: # Catching broader exceptions during pod/PVC creation steps
+        error_msg = f"Failed during test pod/PVC creation or execution: {str(e)}"
         logging.error(error_msg)
-        return f"Error: {error_msg}"
+        return f"Error: {error_msg}" # The error string will be returned, and finally will execute
+    finally:
+        # --- Start of finally block ---
+        if pvc_filename_full_path and os.path.exists(pvc_filename_full_path):
+            try:
+                os.remove(pvc_filename_full_path)
+                logging.debug(f"Successfully deleted temporary file: {pvc_filename_full_path}")
+            except Exception as e:
+                logging.warning(f"Failed to delete temporary file {pvc_filename_full_path}: {e}")
+            
+        if os.path.exists(pod_filename_full_path): # pod_filename_full_path is always defined
+            try:
+                os.remove(pod_filename_full_path)
+                logging.debug(f"Successfully deleted temporary file: {pod_filename_full_path}")
+            except Exception as e:
+                logging.warning(f"Failed to delete temporary file {pod_filename_full_path}: {e}")
+        # --- End of finally block ---
 
 tools = define_tools('pod_name', 'namespace', 'volume_path')
 
@@ -633,10 +703,15 @@ def create_troubleshooting_graph(pod_name: str, namespace: str, volume_path: str
         if phase == "analysis":
             phase_specific_guidance = """
 You are currently in Phase 1 (Analysis). Your task is to:
-1. Diagnose the root cause of the volume I/O error
-2. Create a clear fix plan with step-by-step remediation actions
-3. Present your findings as "Root cause: <cause>" and "Fix plan: <plan>"
-4. DO NOT attempt to execute any remediation actions yet
+1. Diagnose the root cause of the volume I/O error.
+2. Create a clear fix plan with step-by-step remediation actions.
+3. Present your findings as a JSON object with two keys: "root_cause" and "fix_plan". For example:
+   {
+     "root_cause": "The disk is full due to excessive log files.",
+     "fix_plan": "Step 1: Identify large log files in volume X. Step 2: Archive and delete old log files. Step 3: Implement log rotation."
+   }
+4. Ensure this JSON object is the final part of your response.
+5. DO NOT attempt to execute any remediation actions yet.
 
 Focus only on diagnostics and analysis in this phase. The remediation actions will be executed in Phase 2 if approved.
 """
@@ -781,20 +856,45 @@ async def run_analysis_phase(pod_name: str, namespace: str, volume_path: str) ->
         final_message = response["messages"][-1]["content"] if response["messages"] else "Failed to generate analysis results"
         
         # Parse root cause and fix plan from the analysis results
-        # This is a simple parsing logic and may need to be improved
-        root_cause = "Unknown"
-        fix_plan = "No specific fix plan generated"
-        
-        # Look for root cause and fix plan in the final message
-        if "Root cause:" in final_message:
-            parts = final_message.split("Root cause:", 1)
-            if len(parts) > 1:
-                root_cause_section = parts[1].strip()
-                if "Fix plan:" in root_cause_section:
-                    root_cause = root_cause_section.split("Fix plan:", 1)[0].strip()
-                    fix_plan = root_cause_section.split("Fix plan:", 1)[1].strip()
-                else:
-                    root_cause = root_cause_section
+        final_message_content = final_message # Assuming final_message is the string content
+        root_cause = "Unknown" # Default value
+        fix_plan = "No specific fix plan generated" # Default value
+
+        try:
+            # Attempt to find and parse the JSON block
+            json_start_index = final_message_content.find('{')
+            # Ensure rfind starts search from where json_start_index was found, if found.
+            json_end_index = final_message_content.rfind('}', json_start_index if json_start_index != -1 else 0) + 1
+            
+            if json_start_index != -1 and json_end_index != -1 and json_start_index < json_end_index:
+                json_str = final_message_content[json_start_index:json_end_index]
+                parsed_json = json.loads(json_str)
+                root_cause = parsed_json.get("root_cause", "Unknown root cause (key 'root_cause' missing from JSON)")
+                fix_plan = parsed_json.get("fix_plan", "No fix plan provided (key 'fix_plan' missing from JSON)")
+                logging.info("Successfully parsed root cause and fix plan from LLM JSON output.")
+            else:
+                # This custom exception helps differentiate from json.loads actual decoding error
+                raise json.JSONDecodeError("No JSON object found in LLM output", final_message_content, 0)
+
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse LLM output as JSON: {e}. Content: '{final_message_content}'")
+            logging.info("Attempting fallback to string parsing for root cause and fix plan.")
+            # Fallback to old string parsing method
+            if "Root cause:" in final_message_content:
+                parts = final_message_content.split("Root cause:", 1)
+                if len(parts) > 1:
+                    root_cause_section = parts[1].strip()
+                    if "Fix plan:" in root_cause_section:
+                        root_cause = root_cause_section.split("Fix plan:", 1)[0].strip()
+                        fix_plan = root_cause_section.split("Fix plan:", 1)[1].strip()
+                    else:
+                        root_cause = root_cause_section
+                else: # Should not happen if "Root cause:" is in final_message_content
+                    root_cause = "Unknown (fallback parsing error after 'Root cause:' detected)"
+                    fix_plan = "Unknown (fallback parsing error after 'Root cause:' detected)"
+            else:
+                root_cause = "Unknown (Failed to parse LLM output, no JSON or 'Root cause:' keyword)"
+                fix_plan = "Unknown (Failed to parse LLM output, no JSON or 'Root cause:' keyword)"
         
         logging.info(f"Analysis completed for pod {namespace}/{pod_name}, volume {volume_path}")
         logging.info(f"Root cause: {root_cause}")

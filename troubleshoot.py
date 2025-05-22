@@ -16,11 +16,13 @@ import subprocess
 import json
 import paramiko
 import uuid
+import shlex # Added import for shlex
 from typing import Dict, List, Any, Optional, Tuple
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from langgraph.graph import StateGraph, MessagesState, START
 from langgraph.prebuilt import ToolNode, tools_condition
+from langchain_core.tools import tool # Changed import for @tool
 from langchain.chat_models import init_chat_model
 
 # Global variables
@@ -306,207 +308,91 @@ def close_ssh_connections():
     SSH_CLIENTS = {}
 
 # Define tools for the LangGraph ReAct agent
-def define_tools(pod_name: str, namespace: str, volume_path: str) -> List[Dict[str, Any]]:
+
+@tool
+def kubectl_get(resource: str, name: Optional[str] = None, namespace: Optional[str] = None) -> str:
+    """Get Kubernetes resources in YAML format"""
+    return execute_command(
+        (
+            ["kubectl", "get", resource] +
+            ([name] if name else []) +
+            (["-n", namespace] if namespace else []) +
+            ["-o", "yaml"]
+        ),
+        f"Get {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''} in YAML format"
+    )
+
+@tool
+def kubectl_describe(resource: str, name: Optional[str] = None, namespace: Optional[str] = None) -> str:
+    """Describe Kubernetes resources"""
+    return execute_command(
+        (
+            ["kubectl", "describe", resource] +
+            ([name] if name else []) +
+            (["-n", namespace] if namespace else [])
+        ),
+        f"Describe {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''}"
+    )
+
+@tool
+def kubectl_logs(pod_name: str, namespace: str, container: Optional[str] = None, tail: Optional[int] = None) -> str:
+    """Get logs from a pod"""
+    return execute_command(
+        (
+            ["kubectl", "logs", pod_name] +
+            (["-c", container] if container else []) +
+            ["-n", namespace] +
+            ([f"--tail={tail}"] if tail is not None else [])
+        ),
+        f"Get logs from pod {namespace}/{pod_name} {f'container {container}' if container else ''}"
+    )
+
+@tool
+def kubectl_exec(pod_name: str, namespace: str, command: str) -> str:
+    """Execute a command in a pod"""
+    return execute_command(
+        (["kubectl", "exec", pod_name, "-n", namespace, "--"] + shlex.split(command)),
+        f"Execute command '{command}' in pod {namespace}/{pod_name}"
+    )
+
+@tool
+def ssh_command(node: str, command: str) -> str:
+    """Execute a command on a remote node via SSH"""
+    return ssh_execute(
+        node,
+        command,
+        f"Execute command '{command}' on node {node}"
+    )
+
+@tool
+def create_test_pod_tool(name: str, namespace: str, pvc_name: str, node_name: str, test_type: str, storage_class: Optional[str] = None, storage_size: Optional[str] = None) -> str:
+    """Create a test pod to validate storage functionality"""
+    # Note: The original tool name was "create_test_pod".
+    # We append "_tool" to avoid conflict with the helper function `create_test_pod`
+    return create_test_pod(
+        name, namespace, pvc_name, node_name, test_type, storage_class, storage_size
+    )
+
+def define_tools(pod_name: str, namespace: str, volume_path: str) -> List[Any]: # Changed return type
     """
     Define tools for the LangGraph ReAct agent
     
     Args:
-        pod_name: Name of the pod with the error
-        namespace: Namespace of the pod
-        volume_path: Path of the volume with I/O error
+        pod_name: Name of the pod with the error (unused in this refactored version but kept for signature consistency)
+        namespace: Namespace of the pod (unused in this refactored version but kept for signature consistency)
+        volume_path: Path of the volume with I/O error (unused in this refactored version but kept for signature consistency)
         
     Returns:
-        List[Dict[str, Any]]: List of tool definitions
+        List[Any]: List of tool callables
     """
     tools = [
-        {
-            "name": "kubectl_get",
-            "description": "Get Kubernetes resources in YAML format",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "resource": {
-                        "type": "string",
-                        "description": "Resource type (e.g., pod, pvc, pv, drive, csibmnode, ac, lvg)"
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "Resource name (optional)"
-                    },
-                    "namespace": {
-                        "type": "string",
-                        "description": "Resource namespace (optional)"
-                    }
-                },
-                "required": ["resource"]
-            },
-            "function": lambda resource, name=None, namespace=None: execute_command(
-                (
-                    ["kubectl", "get", resource] +
-                    ([name] if name else []) +
-                    (["-n", namespace] if namespace else []) +
-                    ["-o", "yaml"]
-                ),
-                f"Get {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''} in YAML format"
-            )
-        },
-        {
-            "name": "kubectl_describe",
-            "description": "Describe Kubernetes resources",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "resource": {
-                        "type": "string",
-                        "description": "Resource type (e.g., pod, pvc, pv, node)"
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "Resource name (optional)"
-                    },
-                    "namespace": {
-                        "type": "string",
-                        "description": "Resource namespace (optional)"
-                    }
-                },
-                "required": ["resource"]
-            },
-            "function": lambda resource, name=None, namespace=None: execute_command(
-                (
-                    ["kubectl", "describe", resource] +
-                    ([name] if name else []) +
-                    (["-n", namespace] if namespace else [])
-                ),
-                f"Describe {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''}"
-            )
-        },
-        {
-            "name": "kubectl_logs",
-            "description": "Get logs from a pod",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pod_name": {
-                        "type": "string",
-                        "description": "Pod name"
-                    },
-                    "namespace": {
-                        "type": "string",
-                        "description": "Pod namespace"
-                    },
-                    "container": {
-                        "type": "string",
-                        "description": "Container name (optional)"
-                    },
-                    "tail": {
-                        "type": "integer",
-                        "description": "Number of lines to show (optional)"
-                    }
-                },
-                "required": ["pod_name", "namespace"]
-            },
-            "function": lambda pod_name, namespace, container=None, tail=None: execute_command(
-                (
-                    ["kubectl", "logs", pod_name] +
-                    (["-c", container] if container else []) +
-                    ["-n", namespace] +
-                    ([f"--tail={tail}"] if tail is not None else [])
-                ),
-                f"Get logs from pod {namespace}/{pod_name} {f'container {container}' if container else ''}"
-            )
-        },
-        {
-            "name": "kubectl_exec",
-            "description": "Execute a command in a pod",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pod_name": {
-                        "type": "string",
-                        "description": "Pod name"
-                    },
-                    "namespace": {
-                        "type": "string",
-                        "description": "Pod namespace"
-                    },
-                    "command": {
-                        "type": "string",
-                        "description": "Command to execute"
-                    }
-                },
-                "required": ["pod_name", "namespace", "command"]
-            },
-            "function": lambda pod_name, namespace, command: execute_command(
-                (["kubectl", "exec", pod_name, "-n", namespace, "--"] + shlex.split(command)),
-                f"Execute command '{command}' in pod {namespace}/{pod_name}"
-            )
-        },
-        {
-            "name": "ssh_command",
-            "description": "Execute a command on a remote node via SSH",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "node": {
-                        "type": "string",
-                        "description": "Node hostname"
-                    },
-                    "command": {
-                        "type": "string",
-                        "description": "Command to execute"
-                    }
-                },
-                "required": ["node", "command"]
-            },
-            "function": lambda node, command: ssh_execute(
-                node,
-                command,
-                f"Execute command '{command}' on node {node}"
-            )
-        },
-        {
-            "name": "create_test_pod",
-            "description": "Create a test pod to validate storage functionality",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Pod name"
-                    },
-                    "namespace": {
-                        "type": "string",
-                        "description": "Pod namespace"
-                    },
-                    "pvc_name": {
-                        "type": "string",
-                        "description": "PVC name to use or create"
-                    },
-                    "node_name": {
-                        "type": "string",
-                        "description": "Node name for pod scheduling"
-                    },
-                    "storage_class": {
-                        "type": "string",
-                        "description": "Storage class for new PVC (optional)"
-                    },
-                    "storage_size": {
-                        "type": "string",
-                        "description": "Storage size for new PVC (optional, e.g., '1Gi')"
-                    },
-                    "test_type": {
-                        "type": "string",
-                        "description": "Test type: 'read_write' or 'disk_speed'"
-                    }
-                },
-                "required": ["name", "namespace", "pvc_name", "node_name", "test_type"]
-            },
-            "function": lambda name, namespace, pvc_name, node_name, test_type, storage_class=None, storage_size=None: create_test_pod(
-                name, namespace, pvc_name, node_name, test_type, storage_class, storage_size
-            )
-        }
+        kubectl_get,
+        kubectl_describe,
+        kubectl_logs,
+        kubectl_exec,
+        ssh_command,
+        create_test_pod_tool 
     ]
-    
     return tools
 
 def create_test_pod(name: str, namespace: str, pvc_name: str, node_name: str, 

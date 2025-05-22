@@ -14,6 +14,9 @@ import asyncio
 import json
 import argparse
 from typing import Dict, Any
+from unittest.mock import patch
+from langchain_community.chat_models import FakeListChatModel
+from langchain_core.messages import AIMessage
 
 # Import the troubleshooting module
 import troubleshoot
@@ -550,5 +553,77 @@ def main():
         print(f"\nFatal error: {str(e)}")
         sys.exit(1)
 
+async def test_run_analysis_phase_with_mock_llm():
+    """
+    Tests the run_analysis_phase function with a mocked LLM
+    that returns a JSON response.
+    """
+    # 1. Setup scenario data
+    pod_name = "test-pod-json"
+    namespace = "test-ns-json"
+    volume_path = "/data-json"
+    
+    expected_root_cause = "Mocked: LLM analysis complete - disk is critically full."
+    expected_fix_plan = "Mocked: Step 1: Identify and delete large unnecessary files. Step 2: Consider resizing the volume or adding more storage."
+    llm_response_json_str = json.dumps({
+        "root_cause": expected_root_cause,
+        "fix_plan": expected_fix_plan
+    })
+
+    # 2. Setup mocks
+    # The scenario for MockKubernetesAPI might not be strictly relevant here
+    # as the LLM is mocked and we expect it to directly return the JSON,
+    # not necessarily call tools that MockKubernetesAPI would intercept for this specific test.
+    mock_kube_api = MockKubernetesAPI(scenario="bad_sectors") 
+    patch_troubleshoot_module(mock_kube_api) # Patches execute_command, ssh_execute, input
+
+    # Configure troubleshoot.CONFIG_DATA
+    # Using a minimal valid config for the test
+    troubleshoot.CONFIG_DATA = {
+        'llm': {'model': 'fake-model', 'api_key': 'fake', 'api_endpoint': 'fake', 'temperature': 0.1, 'max_tokens': 100},
+        'troubleshoot': {
+            'timeout_seconds': 30, 
+            'auto_fix': False, 
+            'interactive_mode': False, 
+            'ssh': {
+                'enabled': False, 
+                'nodes': [], 
+                'user': '', 
+                'key_path': '', 
+                'retries': 1, 
+                'retry_backoff_seconds': 1
+            }
+        },
+        'commands': { # Ensure some commands are allowed for the graph to be built, though not used by LLM here
+            'allowed': ["kubectl get *", "kubectl describe *", "kubectl logs *", "kubectl exec *"], 
+            'disallowed': ["rm *"]
+        },
+        'logging': {'file': 'test_troubleshoot.log', 'stdout': False} # Assuming logging is handled
+    }
+    troubleshoot.INTERACTIVE_MODE = False # Ensure non-interactive for tests
+
+    # 3. Patch init_chat_model to return FakeListChatModel
+    # FakeListChatModel expects a list of responses.
+    # For a direct answer from the LLM (not tool usage), this response string
+    # will be wrapped in an AIMessage by LangGraph, which is what run_analysis_phase expects.
+    fake_llm = FakeListChatModel(responses=[llm_response_json_str])
+
+    with patch('troubleshoot.init_chat_model', return_value=fake_llm) as mock_init_model:
+        # 4. Call the target function
+        logging.info("Calling run_analysis_phase with mocked LLM...")
+        actual_root_cause, actual_fix_plan = await troubleshoot.run_analysis_phase(pod_name, namespace, volume_path)
+        logging.info(f"Received root_cause: {actual_root_cause}, fix_plan: {actual_fix_plan}")
+
+        # 5. Assertions
+        assert mock_init_model.called, "troubleshoot.init_chat_model was not called"
+        assert actual_root_cause == expected_root_cause, f"Root cause mismatch. Expected: '{expected_root_cause}', Got: '{actual_root_cause}'"
+        assert actual_fix_plan == expected_fix_plan, f"Fix plan mismatch. Expected: '{expected_fix_plan}', Got: '{actual_fix_plan}'"
+    
+    logging.info("test_run_analysis_phase_with_mock_llm completed successfully.")
+
 if __name__ == "__main__":
-    main()
+    # main() # Keep original main for now
+    # For testing this specific new test case:
+    print("Running test_run_analysis_phase_with_mock_llm...")
+    asyncio.run(test_run_analysis_phase_with_mock_llm())
+    print("test_run_analysis_phase_with_mock_llm finished.")

@@ -136,13 +136,14 @@ def prompt_for_approval(command_display: str, purpose: str) -> bool:
     response = input("Approve? (y/n): ").strip().lower()
     return response == 'y' or response == 'yes'
 
-def execute_command(command_list: List[str], purpose: str) -> str:
+def execute_command(command_list: List[str], purpose: str, requires_approval: bool = True) -> str:
     """
     Execute a command and return its output
     
     Args:
         command_list: Command to execute as a list of strings
         purpose: Purpose of the command
+        requires_approval: Whether this command requires user approval in interactive mode
         
     Returns:
         str: Command output
@@ -156,12 +157,23 @@ def execute_command(command_list: List[str], purpose: str) -> str:
     executable = command_list[0]
     command_display_str = ' '.join(command_list) # For logging and prompting
 
-    # Validate command
-    if not validate_command(executable):
-        return f"Error: Command executable '{executable}' is not allowed"
+    # Check if command is explicitly disallowed
+    if CONFIG_DATA['commands']['disallowed']:
+        for disallowed in CONFIG_DATA['commands']['disallowed']:
+            # Handle exact match
+            if disallowed == executable:
+                logging.warning(f"Command '{executable}' is explicitly disallowed")
+                return f"Error: Command executable '{executable}' is not allowed"
+                
+            # Handle wildcards
+            if disallowed.endswith('*'):
+                prefix = disallowed[:-1]  # Remove the * character
+                if executable.startswith(prefix):
+                    logging.warning(f"Command '{executable}' matches disallowed wildcard pattern '{disallowed}'")
+                    return f"Error: Command executable '{executable}' is not allowed"
     
-    # Prompt for approval in interactive mode
-    if INTERACTIVE_MODE:
+    # Prompt for approval in interactive mode if required
+    if INTERACTIVE_MODE and requires_approval:
         if not prompt_for_approval(command_display_str, purpose):
             return "Command execution cancelled by user"
     
@@ -331,7 +343,8 @@ def kubectl_get(resource: str, name: Optional[str] = None, namespace: Optional[s
             (["-n", namespace] if namespace else []) +
             ["-o", "yaml"]
         ),
-        f"Get {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''} in YAML format"
+        f"Get {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''} in YAML format",
+        requires_approval=False
     )
     
     # If the command failed with "resource type not found" error, provide a more helpful message
@@ -349,7 +362,8 @@ def kubectl_describe(resource: str, name: Optional[str] = None, namespace: Optio
             ([name] if name else []) +
             (["-n", namespace] if namespace else [])
         ),
-        f"Describe {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''}"
+        f"Describe {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''}",
+        requires_approval=False
     )
 
 @tool
@@ -362,7 +376,8 @@ def kubectl_logs(pod_name: str, namespace: str, container: Optional[str] = None,
             ["-n", namespace] +
             ([f"--tail={tail}"] if tail is not None else [])
         ),
-        f"Get logs from pod {namespace}/{pod_name} {f'container {container}' if container else ''}"
+        f"Get logs from pod {namespace}/{pod_name} {f'container {container}' if container else ''}",
+        requires_approval=False
     )
 
 @tool
@@ -370,7 +385,142 @@ def kubectl_exec(pod_name: str, namespace: str, command: str) -> str:
     """Execute a command in a pod"""
     return execute_command(
         (["kubectl", "exec", pod_name, "-n", namespace, "--"] + shlex.split(command)),
-        f"Execute command '{command}' in pod {namespace}/{pod_name}"
+        f"Execute command '{command}' in pod {namespace}/{pod_name}",
+        requires_approval=False
+    )
+
+@tool
+def kubectl_top(resource_type: str, name: Optional[str] = None, namespace: Optional[str] = None) -> str:
+    """Get resource usage metrics using kubectl top command"""
+    return execute_command(
+        (
+            ["kubectl", "top", resource_type] +
+            ([name] if name else []) +
+            (["-n", namespace] if namespace else [])
+        ),
+        f"Get resource metrics for {resource_type} {name or 'all'} {f'in namespace {namespace}' if namespace else ''}",
+        requires_approval=False
+    )
+
+@tool
+def kubectl_cp(source: str, destination: str, container: Optional[str] = None, namespace: Optional[str] = None) -> str:
+    """Copy files between pod and local filesystem using kubectl cp command"""
+    cmd = ["kubectl", "cp"]
+    if namespace:
+        cmd.extend(["-n", namespace])
+    if container:
+        cmd.extend(["-c", container])
+    cmd.extend([source, destination])
+    
+    return execute_command(
+        cmd,
+        f"Copy files between {source} and {destination}",
+        requires_approval=False
+    )
+
+@tool
+def df_h() -> str:
+    """Show disk space usage with human-readable sizes"""
+    return execute_command(
+        ["df", "-h"],
+        "Show disk space usage with human-readable sizes",
+        requires_approval=False
+    )
+
+@tool
+def lsblk() -> str:
+    """List information about block devices"""
+    return execute_command(
+        ["lsblk"],
+        "List information about block devices",
+        requires_approval=False
+    )
+
+@tool
+def cat_proc_mounts() -> str:
+    """Display mounted file systems from /proc/mounts"""
+    return execute_command(
+        ["cat", "/proc/mounts"],
+        "Display mounted file systems from /proc/mounts",
+        requires_approval=False
+    )
+
+@tool
+def smartctl_a(device_path: str) -> str:
+    """Run SMART check on the specified device"""
+    return execute_command(
+        ["smartctl", "-a", device_path],
+        f"Run SMART check on device {device_path}",
+        requires_approval=False
+    )
+
+@tool
+def fio_read_test(params: str) -> str:
+    """Run FIO read test with the specified parameters"""
+    cmd = ["fio", "--name=read_test"] + shlex.split(params)
+    return execute_command(
+        cmd,
+        f"Run FIO read performance test with parameters: {params}",
+        requires_approval=False
+    )
+
+@tool
+def fio_write_test(params: str) -> str:
+    """Run FIO write test with the specified parameters"""
+    cmd = ["fio", "--name=write_test"] + shlex.split(params)
+    return execute_command(
+        cmd,
+        f"Run FIO write performance test with parameters: {params}",
+        requires_approval=False
+    )
+
+@tool
+def dmesg_grep_disk() -> str:
+    """Get disk-related kernel messages from dmesg"""
+    return execute_command(
+        ["sh", "-c", "dmesg | grep -i disk"],
+        "Get disk-related kernel messages from dmesg",
+        requires_approval=False
+    )
+
+@tool
+def dmesg_grep_error() -> str:
+    """Get error-related kernel messages from dmesg"""
+    return execute_command(
+        ["sh", "-c", "dmesg | grep -i error"],
+        "Get error-related kernel messages from dmesg",
+        requires_approval=False
+    )
+
+@tool
+def dmesg_grep_xfs() -> str:
+    """Get XFS-related kernel messages from dmesg"""
+    return execute_command(
+        ["sh", "-c", "dmesg | grep -i xfs"],
+        "Get XFS-related kernel messages from dmesg",
+        requires_approval=False
+    )
+
+@tool
+def journalctl_kubelet(params: str = "") -> str:
+    """Get kubelet logs from journalctl"""
+    cmd = ["journalctl", "-u", "kubelet"]
+    if params:
+        cmd.extend(shlex.split(params))
+    
+    return execute_command(
+        cmd,
+        f"Get kubelet logs from journalctl with parameters: {params if params else 'none'}",
+        requires_approval=False
+    )
+
+@tool
+def xfs_repair_n(device_path: str) -> str:
+    """Run XFS repair in diagnostic mode (no changes)"""
+    return execute_command(
+        ["xfs_repair", "-n", device_path],
+        f"Run XFS repair in diagnostic mode on {device_path}",
+        requires_approval=False
     )
 
 @tool
@@ -404,12 +554,28 @@ def define_tools(pod_name: str, namespace: str, volume_path: str) -> List[Any]: 
         List[Any]: List of tool callables
     """
     tools = [
+        # Original tools
         kubectl_get,
         kubectl_describe,
         kubectl_logs,
         kubectl_exec,
         ssh_command,
-        create_test_pod_tool 
+        create_test_pod_tool,
+        
+        # New tools converted from allowed commands
+        kubectl_top,
+        kubectl_cp,
+        df_h,
+        lsblk,
+        cat_proc_mounts,
+        smartctl_a,
+        fio_read_test,
+        fio_write_test,
+        dmesg_grep_disk,
+        dmesg_grep_error,
+        dmesg_grep_xfs,
+        journalctl_kubelet,
+        xfs_repair_n
     ]
     return tools
 

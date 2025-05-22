@@ -5,8 +5,8 @@ llm:
   #api_endpoint: "https://api.openai.com/v1"
   #api_key: 'sk-proj-VKq9nXwA'
   api_endpoint: "https://api.zhizengzeng.com/v1"
-  api_key: ""
-  temperature: 0.7
+  api_key: "skccf39bc"
+  temperature: 0
   max_tokens: 32768
 
 # Monitoring Configuration
@@ -18,39 +18,19 @@ monitor:
 # Troubleshooting Configuration
 troubleshoot:
   timeout_seconds: 300
-  interactive_mode: true
+  interactive_mode: false
   auto_fix: false  # Enable/disable auto-fix mode
   ssh:
     enabled: true
     user: "root"
     key_path: "~/.ssh/id_ed25519"
     nodes:
-      - "3x2sth3.cluster.local"
-      - "5w2sth3.cluster.local"
-      - "6d9w4k3.cluster.local"
-      - "hw2sth3.cluster.local"
+      - "kind-control-plane"
     retries: 3
     retry_backoff_seconds: 5
 
-# Allowed Commands (supports prefix/wildcard)
+# Commands not allowed to be executed
 commands:
-  allowed:
-    - "kubectl get *"
-    - "kubectl describe *"
-    - "kubectl logs *"
-    - "kubectl exec *"
-    - "kubectl top *"
-    - "df -h"
-    - "lsblk"
-    - "cat /proc/mounts"
-    - "smartctl -a *"
-    - "fio --name=read_test *"
-    - "fio --name=write_test *"
-    - "dmesg | grep -i disk"
-    - "dmesg | grep -i error"
-    - "dmesg | grep -i xfs"
-    - "journalctl -u kubelet *"
-    - "xfs_repair -n *"  # Diagnostic mode only
   disallowed:
     - "fsck *"
     - "chmod *"

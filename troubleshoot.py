@@ -679,8 +679,20 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
 """
         }
         
-        if state["messages"] and state["messages"][0]["role"] != "system":
-            state["messages"] = [system_message] + state["messages"]
+        # Handle case where state["messages"] might be a HumanMessage object (not subscriptable)
+        # Check if state["messages"] exists and is a list before trying to access elements
+        if state["messages"]:
+            # Check if state["messages"] is a list
+            if isinstance(state["messages"], list):
+                # If it's a list and the first message is not a system message, add the system message
+                if state["messages"][0].type != "system":
+                    state["messages"] = [system_message] + state["messages"]
+            else:
+                # If it's not a list (likely a HumanMessage object), convert to a list with system message first
+                state["messages"] = [system_message, state["messages"]]
+        else:
+            # If state["messages"] is empty or None, initialize with just the system message
+            state["messages"] = [system_message]
         
         # Call the model and bind tools
         response = model.bind_tools(tools).invoke(state["messages"])
@@ -737,7 +749,15 @@ async def run_analysis_phase(pod_name: str, namespace: str, volume_path: str) ->
         )
         
         # Extract analysis results
-        final_message = response["messages"][-1]["content"] if response["messages"] else "Failed to generate analysis results"
+        # Handle case where response["messages"] might not be a list or might be empty
+        if response["messages"]:
+            if isinstance(response["messages"], list):
+                final_message = response["messages"][-1]["content"]
+            else:
+                # If it's not a list (e.g., a single message object), try to get content directly
+                final_message = response["messages"].get("content", "Failed to extract content from non-list messages")
+        else:
+            final_message = "Failed to generate analysis results"
         
         # Parse root cause and fix plan from the analysis results
         final_message_content = final_message # Assuming final_message is the string content
@@ -834,7 +854,15 @@ Implement the fix plan while respecting allowed/disallowed commands. After imple
         )
         
         # Extract remediation results
-        final_message = response["messages"][-1]["content"] if response["messages"] else "Failed to generate remediation results"
+        # Handle case where response["messages"] might not be a list or might be empty
+        if response["messages"]:
+            if isinstance(response["messages"], list):
+                final_message = response["messages"][-1]["content"]
+            else:
+                # If it's not a list (e.g., a single message object), try to get content directly
+                final_message = response["messages"].get("content", "Failed to extract content from non-list messages")
+        else:
+            final_message = "Failed to generate remediation results"
         
         logging.info(f"Remediation completed for pod {namespace}/{pod_name}, volume {volume_path}")
         logging.info(f"Result: {final_message}")

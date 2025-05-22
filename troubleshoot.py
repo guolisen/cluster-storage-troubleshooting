@@ -20,7 +20,7 @@ import shlex # Added import for shlex
 from typing import Dict, List, Any, Optional, Tuple
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from langgraph.graph import StateGraph, MessagesState, START
+from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.tools import tool # Changed import for @tool
 from langchain.chat_models import init_chat_model
@@ -696,7 +696,7 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         tools_condition,
         {
             "tools": "tools",
-            "none": "end"
+            "none": END
         }
     )
     builder.add_edge("tools", "call_model")

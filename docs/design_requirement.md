@@ -8,6 +8,9 @@ This Python-based troubleshooting system uses the LangGraph ReAct module to moni
 ### General Requirements
 - **Deployment Environment**: Runs on the Kubernetes master node (host).
 - **Language and Framework**: Python 3.8+ with LangGraph ReAct module for agent-based troubleshooting.
+- **Troubleshooting Modes**:
+  - **Standard Mode**: Traditional two-phase approach focusing on a single root cause
+  - **Comprehensive Mode**: Advanced multi-layer analysis that collects all issues before analysis
 - **Tool Integration**:
   - Executes Linux commands (e.g., `kubectl`, `df`, `lsblk`, `smartctl`, `fio`) to gather cluster and system information.
   - Uses SSH to run diagnostic commands on worker nodes hosting the affected disks.
@@ -19,6 +22,7 @@ This Python-based troubleshooting system uses the LangGraph ReAct module to moni
     - Allowed and disallowed commands (e.g., diagnostic vs. write operations).
     - SSH connection settings (e.g., credentials, target nodes).
     - Interactive mode enable/disable flag.
+    - Troubleshooting mode selection ("standard" or "comprehensive").
     - Default disablement of write/change commands (e.g., `chmod`, `fsck`, `dd`).
 - **Interactive Mode**:
   - When enabled in `config.yaml`, prompts the user for permission before executing any command or tool, providing a description of the command’s purpose.
@@ -350,15 +354,60 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
    - In interactive mode, prompts: "Proposed command: kubectl delete pod app-1 -n default. Purpose: Restart pod to attempt volume remount. Approve? (y/n)".
    - If unresolved, reports: "Bad sectors detected on /dev/sda (UUID: 2a96dfec-47db-449d-9789-0d81660c2c4d). Recommend disk replacement after data backup."
 
+### Workflow 3: Comprehensive Troubleshooting Workflow
+- **Script Files**: 
+  - `issue_collector.py`: Collects all issues across different layers
+  - `knowledge_graph.py`: Models relationships between issues
+  - `run_comprehensive_mode.py`: Orchestrates the comprehensive analysis
+  - `run_comprehensive_troubleshoot.sh`: Shell script to run comprehensive mode
+- **Purpose**: Collects all issues across Kubernetes, Linux, and Storage layers before performing holistic analysis to identify multiple root causes and their relationships.
+- **Parameters** (minimum):
+  - `PodName`: Name of the pod with the error.
+  - `PodNamespace`: Namespace of the pod.
+  - `VolumePath`: Path of the volume experiencing I/O errors.
+  - `--output/-o`: Output format (text or JSON, optional)
+  - `--output-file/-f`: Output file path (optional)
+- **Functionality**:
+  - Systematically collects all issues across all three layers
+  - Builds a knowledge graph to model relationships between issues
+  - Uses both graph analysis and LLM to identify primary and contributing causes
+  - Provides a comprehensive fix plan addressing all related issues
+  - Includes verification steps to ensure all issues are resolved
+- **Issue Collection Process**:
+  1. **Kubernetes Layer Collection**:
+     - Examines pod logs, events, status, PVC/PV configuration
+     - Checks CSI driver status, drive resources, node conditions
+     - Verifies control plane components and scheduling
+  2. **Linux Layer Collection**:
+     - Examines kernel logs, dmesg output
+     - Checks filesystem state, mount options, disk space
+     - Verifies inode usage, disk pressure, I/O scheduler settings
+  3. **Storage Layer Collection**:
+     - Examines SMART data, disk health, sector counts
+     - Performs I/O performance tests with FIO
+     - Verifies hardware controller status, NVMe error logs
+- **Knowledge Graph Analysis**:
+  - Nodes represent individual issues with metadata
+  - Edges represent relationships between issues (causes, related_to)
+  - Applies domain knowledge patterns to infer causal relationships
+  - Identifies root causes with confidence scores
+- **Dependencies**:
+  - Same as the standard troubleshooting workflow
+  - Additionally requires knowledge of graph algorithms and pattern matching
+- **Error Handling**:
+  - More robust error handling as multiple approaches are used for data collection
+  - Graceful degradation if certain commands or resources are unavailable
+  - Ability to produce partial analysis when complete data cannot be collected
+
 ## Future Enhancements
 - Support for automated AvailableCapacity (AC) and LogicalVolumeGroup (LVG) diagnostics.
 - Integration with Prometheus for real-time disk metrics.
 - Automated remediation for common CSI Baremetal issues (e.g., stale mounts) with strict safeguards.
+- Knowledge graph visualization for complex troubleshooting scenarios.
+- Automated pattern learning from previous troubleshooting sessions.
 
 ## Reference:
 react example python code:
 /root/cluster-storage-troubleshooting/React_example.py
 CSI knowledge:
 /root/cluster-storage-troubleshooting/CSI_knowledge.txt
-
-

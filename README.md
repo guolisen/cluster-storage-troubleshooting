@@ -2,6 +2,8 @@
 
 A Python-based system for monitoring and resolving volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver.
 
+**Now with Comprehensive Mode for holistic multi-layer analysis!**
+
 ## Overview
 
 This system consists of two main components:
@@ -112,6 +114,31 @@ logging:
   stdout: true
 ```
 
+## Troubleshooting Modes
+
+The system supports two troubleshooting modes:
+
+### Standard Mode (Default)
+- Focuses on identifying a single root cause
+- Two-phase approach: Analysis followed by Remediation
+- Quick and efficient for straightforward issues
+- Uses the original diagnostic workflow
+
+### Comprehensive Mode (New)
+- Collects ALL issues across Kubernetes, Linux, and Storage layers before analysis
+- Builds a knowledge graph to model relationships between issues
+- Identifies primary root causes and contributing factors
+- Provides a holistic fix plan addressing all related issues
+- Includes verification steps to ensure complete resolution
+- Ideal for complex scenarios with multiple interrelated issues
+
+You can select the mode in `config.yaml`:
+
+```yaml
+troubleshoot:
+  mode: "standard"  # Options: "standard" or "comprehensive"
+```
+
 ## Usage
 
 ### Monitoring Workflow
@@ -134,7 +161,9 @@ This will:
 
 ### Troubleshooting Workflow
 
-You can run the troubleshooting workflow directly:
+#### Standard Mode
+
+You can run the standard troubleshooting workflow directly:
 
 ```bash
 python3 troubleshoot.py <pod_name> <namespace> <volume_path>
@@ -150,6 +179,35 @@ This will:
 1. Diagnose the volume I/O error using the LangGraph ReAct agent
 2. Follow a structured diagnostic process for CSI Baremetal-managed disks
 3. Propose remediation actions based on findings
+
+#### Comprehensive Mode
+
+To run the comprehensive troubleshooting workflow:
+
+```bash
+# Using the convenience script:
+./run_comprehensive_troubleshoot.sh <pod_name> <namespace> <volume_path> [options]
+
+# Or directly:
+python3 troubleshoot.py <pod_name> <namespace> <volume_path> --mode comprehensive
+```
+
+Options for `run_comprehensive_troubleshoot.sh`:
+- `--output/-o FORMAT`: Output format - "text" (default) or "json"
+- `--output-file/-f FILE`: Write output to specified file
+
+For example:
+
+```bash
+./run_comprehensive_troubleshoot.sh database-0 app /var/lib/mysql --output json --output-file report.json
+```
+
+This will:
+1. Collect ALL issues across Kubernetes, Linux, and Storage layers
+2. Build a knowledge graph to model relationships between issues
+3. Identify primary and contributing root causes
+4. Provide a comprehensive fix plan addressing all related issues
+5. Include verification steps to ensure all issues are resolved
 
 ### Testing
 

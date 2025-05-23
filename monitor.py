@@ -111,13 +111,26 @@ def invoke_troubleshooting(pod_name, namespace, volume_path):
         volume_path: Path of the volume with I/O error
     """
     try:
-        cmd = ["python3", "troubleshoot.py", pod_name, namespace, volume_path]
-        logging.info(f"Invoking troubleshooting: {' '.join(cmd)}")
+        # Determine troubleshooting mode from config
+        config_data = load_config()
+        mode = config_data.get("troubleshoot", {}).get("mode", "standard")
         
-        # Use Popen to run the troubleshooting script in the background
-        subprocess.Popen(cmd)
-        logging.info(f"Troubleshooting workflow started for pod {namespace}/{pod_name}, volume {volume_path}")
-        logging.info(f"Two-phase process will run: Analysis followed by Remediation (if approved or auto_fix is enabled)")
+        if mode == "comprehensive":
+            cmd = ["python3", "troubleshoot.py", pod_name, namespace, volume_path, "--mode", "comprehensive"]
+            logging.info(f"Invoking comprehensive troubleshooting: {' '.join(cmd)}")
+            
+            # Use Popen to run the troubleshooting script in the background
+            subprocess.Popen(cmd)
+            logging.info(f"Comprehensive troubleshooting workflow started for pod {namespace}/{pod_name}, volume {volume_path}")
+            logging.info(f"This will collect all issues across all layers before analyzing root causes")
+        else:
+            cmd = ["python3", "troubleshoot.py", pod_name, namespace, volume_path]
+            logging.info(f"Invoking standard troubleshooting: {' '.join(cmd)}")
+            
+            # Use Popen to run the troubleshooting script in the background
+            subprocess.Popen(cmd)
+            logging.info(f"Standard troubleshooting workflow started for pod {namespace}/{pod_name}, volume {volume_path}")
+            logging.info(f"Two-phase process will run: Analysis followed by Remediation (if approved or auto_fix is enabled)")
     except Exception as e:
         logging.error(f"Failed to invoke troubleshooting: {e}")
 

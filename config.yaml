@@ -20,6 +20,7 @@ troubleshoot:
   timeout_seconds: 300
   interactive_mode: false
   auto_fix: false  # Enable/disable auto-fix mode
+  mode: "standard" # Options: "standard" or "comprehensive"
   ssh:
     enabled: true
     user: "root"

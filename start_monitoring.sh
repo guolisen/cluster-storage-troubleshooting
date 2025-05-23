@@ -12,5 +12,13 @@ if [ ! -f "config.yaml" ]; then
     exit 1
 fi
 
+# Check and display current troubleshooting mode
+MODE=$(grep "mode:" config.yaml | awk -F'"' '{print $2}')
+if [ -z "$MODE" ]; then
+    MODE="standard"
+fi
+echo "Troubleshooting mode: $MODE"
+echo "To change mode, edit config.yaml and set troubleshoot.mode to 'standard' or 'comprehensive'"
+
 # Start the monitoring script
 python3 monitor.py

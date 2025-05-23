@@ -17,6 +17,7 @@ import json
 import paramiko
 import uuid
 import shlex # Added import for shlex
+import argparse
 from typing import Dict, List, Any, Optional, Tuple
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
@@ -1091,7 +1092,41 @@ Implement the fix plan while respecting allowed/disallowed commands. After imple
         logging.error(error_msg)
         return f"Error: {error_msg}"
 
-async def troubleshoot(pod_name: str, namespace: str, volume_path: str):
+async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volume_path: str):
+    """
+    Run comprehensive troubleshooting that collects all issues before performing analysis
+    
+    Args:
+        pod_name: Name of the pod with the error
+        namespace: Namespace of the pod
+        volume_path: Path of the volume with I/O error
+        
+    Returns:
+        str: Comprehensive troubleshooting results
+    """
+    try:
+        # Import here to avoid circular imports
+        from run_comprehensive_mode import run_comprehensive_mode, format_report_for_display
+        
+        logging.info(f"Starting comprehensive troubleshooting for pod {namespace}/{pod_name}, volume {volume_path}")
+        
+        # Run comprehensive mode
+        report = await run_comprehensive_mode(pod_name, namespace, volume_path)
+        
+        # Format report for display
+        result = format_report_for_display(report)
+        
+        return result
+    except ImportError:
+        logging.error("Failed to import comprehensive mode modules")
+        return """Comprehensive troubleshooting is not available.
+Please ensure that issue_collector.py, knowledge_graph.py, and run_comprehensive_mode.py are present."""
+    except Exception as e:
+        error_msg = f"Error during comprehensive troubleshooting: {str(e)}"
+        logging.error(error_msg)
+        return f"Error: {error_msg}"
+
+async def troubleshoot(pod_name: str, namespace: str, volume_path: str, mode: str = "standard"):
     """
     Two-phase troubleshooting process: Analysis and Remediation
     
@@ -1099,8 +1134,16 @@ async def troubleshoot(pod_name: str, namespace: str, volume_path: str):
         pod_name: Name of the pod with the error
         namespace: Namespace of the pod
         volume_path: Path of the volume with I/O error
+        mode: Troubleshooting mode: "standard" or "comprehensive"
+        
+    Returns:
+        str: Troubleshooting results
     """
     global CONFIG_DATA, INTERACTIVE_MODE
+    
+    # Use comprehensive mode if requested
+    if mode == "comprehensive":
+        return await run_comprehensive_troubleshooting(pod_name, namespace, volume_path)
     
     try:
         # Initialize Kubernetes client
@@ -1211,14 +1254,19 @@ def main():
     """Main function"""
     global CONFIG_DATA, INTERACTIVE_MODE
     
-    # Check command line arguments
-    if len(sys.argv) != 4:
-        print("Usage: python troubleshoot.py <pod_name> <namespace> <volume_path>")
-        sys.exit(1)
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Kubernetes volume troubleshooting script")
+    parser.add_argument("pod_name", help="Name of the pod with the error")
+    parser.add_argument("namespace", help="Namespace of the pod")
+    parser.add_argument("volume_path", help="Path of the volume with I/O error")
+    parser.add_argument("--mode", "-m", choices=["standard", "comprehensive"], 
+                        default="standard", help="Troubleshooting mode")
+    args = parser.parse_args()
     
-    pod_name = sys.argv[1]
-    namespace = sys.argv[2]
-    volume_path = sys.argv[3]
+    pod_name = args.pod_name
+    namespace = args.namespace
+    volume_path = args.volume_path
+    mode = args.mode
     
     # Load configuration
     CONFIG_DATA = load_config()
@@ -1229,12 +1277,12 @@ def main():
     # Set interactive mode
     INTERACTIVE_MODE = CONFIG_DATA['troubleshoot']['interactive_mode']
     
-    logging.info(f"Starting troubleshooting for pod {namespace}/{pod_name}, volume {volume_path}")
+    logging.info(f"Starting troubleshooting for pod {namespace}/{pod_name}, volume {volume_path} in {mode} mode")
     logging.info(f"Interactive mode: {INTERACTIVE_MODE}")
     
     # Run troubleshooting
     try:
-        result = asyncio.run(troubleshoot(pod_name, namespace, volume_path))
+        result = asyncio.run(troubleshoot(pod_name, namespace, volume_path, mode))
         print("\n=== Troubleshooting Results ===")
         print(result)
         print("==============================\n")

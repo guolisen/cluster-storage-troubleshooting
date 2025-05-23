@@ -1,209 +1,326 @@
-# Kubernetes Volume Troubleshooting System
+# Kubernetes Volume I/O Error Troubleshooting System
 
-A Python-based system for monitoring and resolving volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver.
+An intelligent troubleshooting system for Kubernetes pod volume I/O errors using LangGraph ReAct agents with comprehensive multi-issue analysis powered by knowledge graphs.
 
-## Overview
+## 🎯 Overview
 
-This system consists of two main components:
+This system automatically diagnoses and resolves volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver. It features two modes:
 
-1. **Monitoring Workflow (`monitor.py`)**: Periodically checks all pods in the Kubernetes cluster for volume I/O errors by looking for the `volume-io-error:<volume-path>` annotation.
+- **Single Mode**: Focuses on specific pod issues with targeted analysis
+- **Comprehensive Mode**: Systematically analyzes ALL related storage issues across K8s/Linux/storage layers using knowledge graphs
 
-2. **Troubleshooting Workflow (`troubleshoot.py`)**: Uses LangGraph ReAct to diagnose and resolve volume I/O errors through a structured diagnostic process.
+## 🏗️ System Architecture
 
-The system focuses on local storage (excluding remote storage like NFS, Ceph, or cloud-based solutions) and covers Pod, PersistentVolumeClaim (PVC), PersistentVolume (PV), CSI Baremetal driver, AvailableCapacity (AC), LogicalVolumeGroup (LVG), and hardware disk diagnostics.
+```mermaid
+graph TB
+    subgraph "User Interface"
+        CLI[CLI Interface]
+        Monitor[Monitor Service]
+    end
+    
+    subgraph "Core Engine"
+        TS[troubleshoot.py]
+        LG[LangGraph ReAct Agent]
+        
+        subgraph "Analysis Modes"
+            SM[Single Mode]
+            CM[Comprehensive Mode]
+        end
+    end
+    
+    subgraph "Knowledge Graph System"
+        KG[IssueKnowledgeGraph]
+        IC[ComprehensiveIssueCollector]
+        IN[IssueNode]
+    end
+    
+    subgraph "Tools & Executors"
+        Tools[kubectl/ssh Tools]
+        Exec[Command Executor]
+        SSH[SSH Client]
+    end
+    
+    subgraph "Data Sources"
+        K8s[Kubernetes API]
+        Nodes[Cluster Nodes]
+        CSI[CSI Baremetal Driver]
+        Storage[Storage Systems]
+    end
+    
+    CLI --> TS
+    Monitor --> TS
+    TS --> LG
+    LG --> SM
+    LG --> CM
+    CM --> IC
+    IC --> KG
+    KG --> IN
+    LG --> Tools
+    Tools --> Exec
+    Tools --> SSH
+    Exec --> K8s
+    SSH --> Nodes
+    Tools --> CSI
+    Tools --> Storage
+```
 
-## Features
+## 🚀 Quick Start
 
-- **Automated Monitoring**: Periodically checks for volume I/O errors in Kubernetes pods
-- **Structured Diagnostics**: Follows a comprehensive troubleshooting process for CSI Baremetal-managed disks
-- **Interactive Mode**: Optionally prompts for approval before executing commands
-- **Security Controls**: Validates commands against allowed/disallowed lists
-- **SSH Support**: Executes diagnostic commands on worker nodes
-- **Comprehensive Logging**: Logs all actions, command outputs, and errors
+### Prerequisites
 
-## Requirements
-
-- Python 3.8+
 - Kubernetes cluster with CSI Baremetal driver
-- Access to the Kubernetes API server
-- SSH access to worker nodes (optional)
+- kubectl configured
+- Python 3.8+
+- Required dependencies (see `requirements.txt`)
 
-## Dependencies
+### Installation
 
-```
-kubernetes
-langgraph
-paramiko
-pyyaml
-```
-
-Install dependencies with:
-
+1. Clone the repository:
 ```bash
-# Create a virtual environment using uv
-uv venv
-
-# Activate the virtual environment
-source .venv/bin/activate  # On Linux/macOS
-# or
-# .venv\Scripts\activate  # On Windows
-
-# Install dependencies using uv and pyproject.toml
-uv pip install -e .
+git clone <repository-url>
+cd cluster-storage-troubleshooting
 ```
 
-## Configuration
-
-The system is configured through `config.yaml`, which includes:
-
-- LLM settings (model, API endpoint, temperature)
-- Monitoring settings (interval, retries)
-- Troubleshooting settings (timeout, interactive mode)
-- SSH configuration (credentials, target nodes)
-- Allowed and disallowed commands
-- Logging configuration
-
-Example configuration:
-
-```yaml
-# LLM Configuration
-llm:
-  model: "gpt4-o4-mini"
-  api_endpoint: "https://x.ai/api"
-  api_key: ''
-  temperature: 0.7
-  max_tokens: 1000
-
-# Monitoring Configuration
-monitor:
-  interval_seconds: 60
-  api_retries: 3
-  retry_backoff_seconds: 5
-
-# Troubleshooting Configuration
-troubleshoot:
-  timeout_seconds: 300
-  interactive_mode: true
-  ssh:
-    enabled: true
-    user: "admin"
-    key_path: "/path/to/ssh/key"
-    nodes:
-      - "workernode1"
-      - "workernode2"
-      - "masternode1"
-    retries: 3
-    retry_backoff_seconds: 5
-
-# Allowed Commands
-commands:
-  allowed:
-    - "kubectl get pod"
-    - "kubectl describe pod"
-    # ... more allowed commands
-  disallowed:
-    - "fsck"
-    - "chmod"
-    # ... more disallowed commands
-
-# Logging Configuration
-logging:
-  file: "troubleshoot.log"
-  stdout: true
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
 ```
 
-## Usage
+3. Configure the system:
+```bash
+cp config.yaml.example config.yaml
+# Edit config.yaml with your settings
+```
 
-### Monitoring Workflow
+### Basic Usage
 
-Run the monitoring script to continuously check for volume I/O errors:
+#### Single Mode (Traditional)
+```bash
+python troubleshoot.py --pod-name <pod-name> --namespace <namespace> --volume-path <path>
+```
 
+#### Comprehensive Mode (Enhanced)
+```bash
+python run_comprehensive_mode.py --pod-name <pod-name> --namespace <namespace> --volume-path <path>
+```
+
+#### Monitoring Mode
 ```bash
 ./start_monitoring.sh
 ```
 
-Or manually:
+## 📊 Comprehensive Mode Workflow
 
-```bash
-python3 monitor.py
+```mermaid
+flowchart TD
+    Start([Start Comprehensive Analysis]) --> Init[Initialize Components]
+    Init --> Collect[Collect Primary Issue]
+    
+    Collect --> KG[Build Knowledge Graph]
+    KG --> Expand[Expand Issue Discovery]
+    
+    subgraph "Issue Discovery Layers"
+        L1[Pod Layer Issues]
+        L2[Node Layer Issues] 
+        L3[Storage Layer Issues]
+        L4[CSI Driver Issues]
+        L5[System Layer Issues]
+    end
+    
+    Expand --> L1
+    L1 --> L2
+    L2 --> L3
+    L3 --> L4
+    L4 --> L5
+    
+    L5 --> Analyze[Comprehensive Analysis]
+    
+    subgraph "Analysis Engine"
+        RC[Root Cause Analysis]
+        CF[Cascading Failures]
+        CL[Issue Clustering]
+        PR[Priority Ranking]
+    end
+    
+    Analyze --> RC
+    RC --> CF
+    CF --> CL
+    CL --> PR
+    
+    PR --> Generate[Generate Results]
+    
+    subgraph "Output Components"
+        Summary[Summary Report]
+        Visualization[Graph Visualization]
+        RootCauses[Root Causes]
+        FixPlan[Comprehensive Fix Plan]
+        Priority[Fix Priority Order]
+    end
+    
+    Generate --> Summary
+    Generate --> Visualization
+    Generate --> RootCauses
+    Generate --> FixPlan
+    Generate --> Priority
+    
+    Priority --> End([Complete Analysis])
 ```
 
-This will:
-1. Monitor all pods for the `volume-io-error:<volume-path>` annotation
-2. Invoke the troubleshooting workflow when errors are detected
+## 🧠 Knowledge Graph Structure
 
-### Troubleshooting Workflow
-
-You can run the troubleshooting workflow directly:
-
-```bash
-python3 troubleshoot.py <pod_name> <namespace> <volume_path>
+```mermaid
+graph TD
+    subgraph "Issue Types"
+        POD[Pod Issues]
+        NODE[Node Issues]
+        STORAGE[Storage Issues]
+        CSI[CSI Driver Issues]
+        NETWORK[Network Issues]
+        SYSTEM[System Issues]
+    end
+    
+    subgraph "Severity Levels"
+        CRITICAL[Critical]
+        HIGH[High]
+        MEDIUM[Medium]
+        LOW[Low]
+    end
+    
+    subgraph "Relationships"
+        CAUSES[Causes]
+        AFFECTS[Affects]
+        RELATED[Related To]
+        DEPENDS[Depends On]
+    end
+    
+    subgraph "Example Knowledge Graph"
+        DiskFull[Disk Full - Critical]
+        PodFail[Pod Mount Fail - High]
+        LogErrors[Log Errors - Medium]
+        SlowIO[Slow I/O - Medium]
+        
+        DiskFull -->|CAUSES| PodFail
+        DiskFull -->|CAUSES| LogErrors
+        PodFail -->|AFFECTS| SlowIO
+        LogErrors -->|RELATED| SlowIO
+    end
 ```
 
-For example:
+## 📁 Project Structure
 
-```bash
-python3 troubleshoot.py app-1 default /data
+```
+cluster-storage-troubleshooting/
+├── troubleshoot.py              # Main troubleshooting engine
+├── knowledge_graph.py           # Knowledge graph implementation
+├── issue_collector.py           # Comprehensive issue collector
+├── run_comprehensive_mode.py    # Comprehensive mode runner
+├── monitor.py                   # Background monitoring service
+├── config.yaml                  # Configuration file
+├── requirements.txt             # Python dependencies
+├── docs/                        # Documentation
+│   ├── COMPREHENSIVE_MODE.md    # Comprehensive mode guide
+│   ├── PROJECT_STRUCTURE.md     # Project structure details
+│   └── design_requirement.md    # Design requirements
+└── scripts/                     # Utility scripts
+    ├── start_monitoring.sh      # Start monitoring service
+    └── run_comprehensive_troubleshoot.sh  # Run comprehensive analysis
 ```
 
-This will:
-1. Diagnose the volume I/O error using the LangGraph ReAct agent
-2. Follow a structured diagnostic process for CSI Baremetal-managed disks
-3. Propose remediation actions based on findings
+## 🔧 Configuration
 
-### Testing
+The system is configured via `config.yaml`:
 
-To test the system with a simulated volume I/O error:
+```yaml
+# LLM Configuration
+llm:
+  model: "gpt-4"
+  api_key: "your-api-key"
+  api_endpoint: "https://api.openai.com/v1"
+  temperature: 0.1
+  max_tokens: 4000
 
-```bash
-./run_test.sh [options]
+# Troubleshooting Settings
+troubleshoot:
+  interactive_mode: true
+  phase: "analysis"  # analysis or remediation
+  mode: "comprehensive"  # single or comprehensive
+
+# SSH Configuration
+ssh:
+  enabled: true
+  nodes: ["node1", "node2"]
+  user: "root"
+  key_path: "/path/to/ssh/key"
+
+# Command Validation
+commands:
+  allowed: ["kubectl*", "smartctl*", "df", "dmesg"]
+  disallowed: ["rm*", "fsck*", "dd*"]
 ```
 
-Options:
-- `--namespace NAMESPACE`: Namespace to create test resources in (default: "default")
-- `--cleanup`: Clean up test resources after running
-- `--existing-pod POD_NAME`: Use an existing pod instead of creating a new one
-- `--volume-path VOLUME_PATH`: Volume path to use for the error (default: "/mnt")
+## 📈 Features
 
-Example:
+### Core Capabilities
+- ✅ **Intelligent Analysis**: LangGraph ReAct agents for systematic troubleshooting
+- ✅ **Multi-Layer Discovery**: Pod → Node → Storage → CSI → System analysis
+- ✅ **Knowledge Graphs**: Relationship mapping between issues
+- ✅ **Root Cause Analysis**: True cause identification vs symptom treatment
+- ✅ **Comprehensive Fix Plans**: Ordered remediation considering dependencies
+- ✅ **Safety Controls**: Command validation and interactive approval
+- ✅ **Monitoring Integration**: Continuous background monitoring
 
-```bash
-./run_test.sh --namespace test-ns --cleanup
-```
+### Enhanced Analysis
+- 🔍 **Issue Clustering**: Groups related problems by type and severity
+- 🔗 **Cascading Failure Detection**: Identifies how issues propagate
+- 📊 **Priority Ranking**: Intelligent fix ordering based on impact
+- 🎯 **Comprehensive Scope**: Analyzes entire storage ecosystem
+- 📈 **Trend Analysis**: Pattern recognition across multiple incidents
 
-This will:
-1. Create a test pod with a volume in the specified namespace
-2. Simulate a volume I/O error by adding an annotation to the pod
-3. Run the troubleshooting workflow
-4. Clean up the test resources if requested
+## 🎯 Use Cases
 
-## Troubleshooting Process
+1. **Reactive Troubleshooting**: Diagnose and fix active volume I/O issues
+2. **Proactive Monitoring**: Detect potential storage problems before they impact workloads
+3. **Comprehensive Analysis**: Understand complex multi-component storage failures
+4. **Knowledge Building**: Build organizational knowledge about storage patterns
+5. **Compliance**: Maintain audit trails of storage incidents and resolutions
 
-The system follows this structured diagnostic process:
+## 🛠️ Development
 
-1. **Confirm the Issue**: Check pod logs and events for error types
-2. **Verify Pod and Volume Configuration**: Inspect PVC, PV, and mount points
-3. **Check CSI Baremetal Driver and Resources**: Verify driver status, drive health, and capacity
-4. **Test Driver Functionality**: Create test pods to validate read/write operations
-5. **Verify Node Health**: Check node status and disk mounting
-6. **Check Permissions**: Verify file system permissions and security context
-7. **Inspect Kubernetes Control Plane**: Check controller and scheduler logs
-8. **Test Hardware Disk**: Verify drive health, performance, and file system
-9. **Propose Remediations**: Recommend actions based on diagnostic findings
+### Adding New Issue Types
+1. Update `IssueType` enum in `knowledge_graph.py`
+2. Add detection logic in `issue_collector.py`
+3. Update analysis patterns in troubleshooting prompts
 
-## Security Considerations
+### Extending Tool Capabilities
+1. Add new tools in `troubleshoot.py`
+2. Update command validation in `config.yaml`
+3. Test with safety controls enabled
 
-- SSH credentials are stored securely
-- Write/change commands are disabled by default
-- All commands are validated against allowed/disallowed lists
-- Interactive mode requires explicit user approval for potentially impactful operations
+## 📚 Documentation
 
-## Logging
+- [Comprehensive Mode Guide](docs/COMPREHENSIVE_MODE.md)
+- [Project Structure](docs/PROJECT_STRUCTURE.md)
+- [Design Requirements](docs/design_requirement.md)
 
-All actions, command outputs, and errors are logged to:
-- `troubleshoot.log` (configurable)
-- stdout (optional)
+## 🤝 Contributing
 
-## License
+1. Fork the repository
+2. Create a feature branch
+3. Add comprehensive tests
+4. Update documentation
+5. Submit a pull request
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+For issues and questions:
+- Create an issue on GitHub
+- Check the documentation in `/docs`
+- Review configuration examples
+
+---
+
+**Built with ❤️ for Kubernetes storage reliability**

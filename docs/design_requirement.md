@@ -1,205 +1,187 @@
-# Kubernetes Volume Troubleshooting Project Requirements
+# Design Requirements Document
 
-## Project Overview
-This Python-based troubleshooting system uses the LangGraph ReAct module to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver. Deployed on the Kubernetes master node, it consists of two workflows: a monitoring workflow to detect volume I/O errors via pod annotations and a troubleshooting workflow to diagnose and resolve these errors. The system integrates Linux tools, supports SSH for worker node interactions, and uses a configuration file for customizable settings, including an interactive mode for user approval before executing commands. The troubleshooting process focuses on local storage (excluding remote storage like NFS, Ceph, or cloud-based solutions) and covers Pod, PersistentVolumeClaim (PVC), PersistentVolume (PV), CSI Baremetal driver, AvailableCapacity (AC), LogicalVolumeGroup (LVG), and hardware disk diagnostics.
+This document outlines the design requirements and architectural decisions for the Kubernetes Volume I/O Error Troubleshooting System with comprehensive mode capabilities.
 
-## Functional Requirements
+## 🎯 System Overview
+
+### Vision Statement
+Create an intelligent, comprehensive troubleshooting system that can analyze ALL related storage issues across Kubernetes/Linux/storage layers, identify root causes, understand issue relationships, and provide actionable fix plans.
+
+### Mission
+Transform storage troubleshooting from reactive single-issue resolution to proactive ecosystem-wide analysis using knowledge graphs and AI-powered reasoning.
+
+### Project Evolution
+- **Previous Design**: Single-issue focused troubleshooting ("meet one issue → give final response")
+- **Current Design**: Comprehensive multi-issue analysis using knowledge graphs ("collect ALL related issues → build relationships → comprehensive analysis")
+
+## 📋 Functional Requirements
+
+### FR-1: Dual Mode Operation
+
+```mermaid
+graph LR
+    subgraph "Operation Modes"
+        Single[Single Mode<br/>- Focused analysis<br/>- Specific pod issues<br/>- Fast resolution]
+        
+        Comprehensive[Comprehensive Mode<br/>- Ecosystem analysis<br/>- Multi-layer discovery<br/>- Knowledge graphs]
+    end
+    
+    User[User] --> Choice{Choose Mode}
+    Choice -->|Quick Fix| Single
+    Choice -->|Deep Analysis| Comprehensive
+```
+
+**Requirements**:
+- **FR-1.1**: Support traditional single-issue troubleshooting mode
+- **FR-1.2**: Provide comprehensive multi-issue analysis mode
+- **FR-1.3**: Allow mode selection via CLI parameters
+- **FR-1.4**: Maintain backward compatibility with existing usage
+
+### FR-2: Comprehensive Issue Discovery
+
+```mermaid
+flowchart TD
+    Start[Initial Issue] --> Discover[Issue Discovery Engine]
+    
+    subgraph "Discovery Layers"
+        Discover --> Pod[Pod Layer<br/>- Pod status/events<br/>- Container logs<br/>- Volume mounts<br/>- Resource limits]
+        
+        Discover --> Node[Node Layer<br/>- Node conditions<br/>- Kubelet status<br/>- System resources<br/>- Mount points]
+        
+        Discover --> Storage[Storage Layer<br/>- Physical drives<br/>- File systems<br/>- I/O performance<br/>- SMART status]
+        
+        Discover --> CSI[CSI Driver Layer<br/>- Controller status<br/>- Node driver<br/>- Volume attachments<br/>- Storage classes]
+        
+        Discover --> System[System Layer<br/>- Kernel messages<br/>- System services<br/>- Network connectivity<br/>- Security policies]
+    end
+    
+    Pod --> Graph[Knowledge Graph]
+    Node --> Graph
+    Storage --> Graph
+    CSI --> Graph
+    System --> Graph
+```
+
+**Requirements**:
+- **FR-2.1**: Discover issues across all infrastructure layers systematically
+- **FR-2.2**: Build relationships between discovered issues
+- **FR-2.3**: Classify issues by type, severity, and impact
+- **FR-2.4**: Support configurable discovery depth and scope
+
+### FR-3: Knowledge Graph Engine
+
+```mermaid
+graph TD
+    subgraph "Knowledge Graph Components"
+        Issues[Issue Nodes<br/>- Type classification<br/>- Severity levels<br/>- Resource context<br/>- Timestamps]
+        
+        Relations[Relationships<br/>- CAUSES<br/>- AFFECTS<br/>- RELATED_TO<br/>- DEPENDS_ON]
+        
+        Analysis[Analysis Engine<br/>- Root cause identification<br/>- Cascading failure detection<br/>- Issue clustering<br/>- Priority ranking]
+    end
+    
+    Issues --> Relations
+    Relations --> Analysis
+    Analysis --> Results[Comprehensive Results]
+```
+
+**Requirements**:
+- **FR-3.1**: Model issues as nodes with rich metadata
+- **FR-3.2**: Support multiple relationship types between issues
+- **FR-3.3**: Implement graph traversal algorithms for analysis
+- **FR-3.4**: Generate visual representations of issue relationships
+
+### FR-4: Comprehensive Analysis Algorithms
+
+```mermaid
+flowchart TD
+    Graph[Knowledge Graph] --> RootCause[Root Cause Analysis]
+    Graph --> Cascading[Cascading Failure Detection]
+    Graph --> Clustering[Issue Clustering]
+    
+    subgraph "Root Cause Logic"
+        RootCause --> Check1{Has Incoming<br/>CAUSES edges?}
+        Check1 -->|No| Primary[Primary Root Cause]
+        Check1 -->|Yes| Secondary[Secondary Root Cause]
+    end
+    
+    subgraph "Cascade Analysis"
+        Cascading --> Paths[Find Impact Paths]
+        Paths --> Score[Calculate Impact Scores]
+    end
+    
+    subgraph "Clustering Logic"
+        Clustering --> Group[Group by Similarity]
+        Group --> Pattern[Identify Patterns]
+    end
+    
+    Primary --> Priority[Priority Ranking]
+    Secondary --> Priority
+    Score --> Priority
+    Pattern --> Priority
+    
+    Priority --> Plan[Comprehensive Fix Plan]
+```
+
+**Requirements**:
+- **FR-4.1**: Identify true root causes vs symptoms
+- **FR-4.2**: Map cascading failure patterns
+- **FR-4.3**: Group related issues into clusters
+- **FR-4.4**: Generate prioritized fix plans considering dependencies
+
+## 🔧 Technical Requirements
 
 ### General Requirements
-- **Deployment Environment**: Runs on the Kubernetes master node (host).
-- **Language and Framework**: Python 3.8+ with LangGraph ReAct module for agent-based troubleshooting.
-- **Tool Integration**:
-  - Executes Linux commands (e.g., `kubectl`, `df`, `lsblk`, `smartctl`, `fio`) to gather cluster and system information.
-  - Uses SSH to run diagnostic commands on worker nodes hosting the affected disks.
-  - Supports CSI Baremetal-specific commands (e.g., `kubectl get drive`, `kubectl get csibmnode`, `kubectl get ac`, `kubectl get lvg`) to inspect drive and capacity details.
-  - All commands (read-only and write/change operations) are defined in a configuration file (`config.yaml`) with allow/deny permissions.
-- **Configuration File**:
-  - A YAML configuration file (`config.yaml`) defines:
-    - LLM settings (e.g., model, API endpoint, temperature).
-    - Allowed and disallowed commands (e.g., diagnostic vs. write operations).
-    - SSH connection settings (e.g., credentials, target nodes).
-    - Interactive mode enable/disable flag.
-    - Default disablement of write/change commands (e.g., `chmod`, `fsck`, `dd`).
-- **Interactive Mode**:
-  - When enabled in `config.yaml`, prompts the user for permission before executing any command or tool, providing a description of the command’s purpose.
-  - If disabled, executes allowed commands automatically, respecting `config.yaml` restrictions.
-- **Security**:
-  - Write/change commands (e.g., `fsck`, `chmod`, `dd`) are disabled by default in `config.yaml`.
-  - Only commands explicitly listed in `commands.allowed` can be executed.
-  - SSH commands are logged for auditing, with credentials stored securely (e.g., encrypted or via environment variables).
+- **Deployment Environment**: Runs on the Kubernetes master node (host)
+- **Language and Framework**: Python 3.8+ with LangGraph ReAct module for agent-based troubleshooting
+- **New Components**:
+  - `knowledge_graph.py`: Knowledge graph implementation
+  - `issue_collector.py`: Comprehensive issue collector
+  - `run_comprehensive_mode.py`: Comprehensive mode runner
 
-### Workflow 1: Monitoring Workflow
-- **Script File**: `monitor.py`
-- **Purpose**: Periodically monitors all pods in the Kubernetes cluster for volume I/O errors by checking pod annotations.
-- **Functionality**:
-  - Queries pod annotations using the Kubernetes Python client (`kubernetes.client`).
-  - Detects the annotation `volume-io-error:<volume-path>` indicating a volume I/O error.
-  - Invokes the troubleshooting workflow (`troubleshoot.py`) with parameters:
-    - `PodName`: Name of the affected pod.
-    - `PodNamespace`: Namespace of the affected pod.
-    - `VolumePath`: Volume path from the annotation.
-  - Monitoring interval is configurable in `config.yaml` (default: 60 seconds).
-- **Dependencies**:
-  - Kubernetes Python client (`kubernetes`).
-  - YAML parser (`pyyaml`).
-- **Error Handling**:
-  - Logs errors for unreachable Kubernetes API or malformed annotations.
-  - Retries failed API calls with exponential backoff (configurable in `config.yaml`).
+### Tool Integration
+- Executes Linux commands (e.g., `kubectl`, `df`, `lsblk`, `smartctl`, `fio`) to gather cluster and system information
+- Uses SSH to run diagnostic commands on worker nodes hosting the affected disks
+- Supports CSI Baremetal-specific commands (e.g., `kubectl get drive`, `kubectl get csibmnode`, `kubectl get ac`, `kubectl get lvg`) to inspect drive and capacity details
+- All commands (read-only and write/change operations) are defined in a configuration file (`config.yaml`) with allow/deny permissions
 
-### Workflow 2: Troubleshooting Workflow
-- **Script File**: `troubleshoot.py`
-- **Purpose**: Uses LangGraph ReAct module to diagnose and resolve volume I/O errors for a specified pod and volume, focusing on local HDD/SSD/NVMe disks managed by the CSI Baremetal driver.
-- **Parameters** (minimum):
-  - `PodName`: Name of the pod with the error.
-  - `PodNamespace`: Namespace of the pod.
-  - `VolumePath`: Path of the volume experiencing I/O errors.
-- **Functionality**:
-  - Implements a LangGraph ReAct agent to reason through diagnostic steps and propose remediations, following the enhanced troubleshooting process below.
-  - Uses tools to gather information (e.g., `kubectl logs`, `kubectl describe`, `df -h`, `lsblk`, `smartctl`, `kubectl get drive`, SSH commands to worker nodes).
-  - In interactive mode, prompts the user to approve each command or remediation action.
-  - Write/change commands (e.g., `fsck`, `chmod`) require explicit user approval and must be enabled in `config.yaml`.
-- **Troubleshooting Process** (enhanced with CSI Baremetal driver knowledge):
-  1. **Confirm the Issue**:
-     - Run `kubectl logs <pod-name> -n <namespace>` and `kubectl describe pod <pod-name> -n <namespace>` to identify error types (e.g., "Input/Output Error", "Permission Denied", "FailedMount").
-     - Check for messages indicating disk or driver issues.
-  2. **Verify Pod and Volume Configuration**:
-     - Inspect configurations with `kubectl get pod/pvc/pv <name> -n <namespace> -o yaml`.
-     - Confirm PV uses local volume type and points to a valid disk path (e.g., `/dev/sda`, `/dev/nvme0n1`).
-     - Verify `nodeAffinity` in PV matches the correct node.
-     - Check mount points: `kubectl exec <pod-name> -n <namespace> -- df -h` and `ls -ld <mount-path>`.
-  3. **Check CSI Baremetal Driver and Resources**:
-     - Identify driver: `kubectl get storageclass <storageclass-name> -o yaml` (e.g., `csi-baremetal-sc-ssd`).
-     - Verify driver pod status: `kubectl get pods -n kube-system -l app=csi-baremetal` and `kubectl logs <driver-pod-name> -n kube-system`.
-     - Check CSI driver registration: `kubectl get csidrivers`.
-     - Inspect drive details: `kubectl get drive -o wide` and `kubectl get drive <drive-uuid> -o yaml` to verify `Health: GOOD`, `Status: ONLINE`, and `Usage: IN_USE`.
-     - Map drive to node: `kubectl get csibmnode` to correlate `NodeId` with node hostname and IP.
-     - Check AvailableCapacity (AC): `kubectl get ac -o wide` to confirm size, storage class, and location (drive UUID).
-     - Check LogicalVolumeGroup (LVG): `kubectl get lvg` to verify `Health: GOOD` and associated drive UUIDs.
-  4. **Test Driver Functionality**:
-     - Create a test PVC and Pod to validate read/write operations:
-       ```yaml
-       apiVersion: v1
-       kind: PersistentVolumeClaim
-       metadata:
-         name: test-pvc
-         namespace: <namespace>
-       spec:
-         accessModes:
-           - ReadWriteOnce
-         resources:
-           requests:
-             storage: 1Gi
-         storageClassName: csi-baremetal-sc-ssd
-       ---
-       apiVersion: v1
-       kind: Pod
-       metadata:
-         name: test-pod
-         namespace: <namespace>
-       spec:
-         containers:
-         - name: test-container
-           image: busybox
-           command: ["/bin/sh", "-c", "echo 'Test' > /mnt/test.txt && cat /mnt/test.txt && sleep 3600"]
-           volumeMounts:
-           - mountPath: "/mnt"
-             name: test-volume
-         volumes:
-         - name: test-volume
-           persistentVolumeClaim:
-             claimName: test-pvc
-         nodeName: <node-name>
-       ```
-     - Apply and check: `kubectl apply -f test-pod.yaml` and `kubectl logs test-pod -n <namespace>`.
-     - Verify successful read/write operations and check events for errors.
-  5. **Verify Node Health**:
-     - Check node status: `kubectl get nodes` and `kubectl describe node <node-name>`.
-     - Confirm node is in `Ready` state with no `DiskPressure` condition.
-     - Verify disk mounting via SSH: `mount | grep <disk-path>`.
-  6. **Check Permissions**:
-     - Verify file system permissions: `kubectl exec <pod-name> -n <namespace> -- ls -ld <mount-path>`.
-     - Check Pod `SecurityContext` for UID/GID or `fsGroup` settings.
-  7. **Inspect Kubernetes Control Plane**:
-     - Check logs: `kubectl logs <kube-controller-manager-pod> -n kube-system` and `kubectl logs <kube-scheduler-pod> -n kube-system`.
-     - Look for errors related to PVC binding or volume attachment.
-  8. **Test Hardware Disk**:
-     - Identify disk device: `kubectl get pv <pv-name> -o yaml` and `kubectl get drive <drive-uuid> -o yaml` to confirm `Path` (e.g., `/dev/sda`).
-     - Verify drive health: `kubectl get drive <drive-uuid> -o yaml` and `ssh <node-name> sudo smartctl -a /dev/<disk-device>`.
-     - Check SMART data for `Health: GOOD`, zero `Reallocated_Sector_Ct`, or `Current_Pending_Sector`.
-     - Test performance: `ssh <node-name> sudo fio --name=read_test --filename=/dev/<disk-device> --rw=read --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting`.
-     - Check file system (if unmounted): `ssh <node-name> sudo fsck /dev/<disk-device>` (requires approval).
-     - Test disk via Pod:
-       ```yaml
-       apiVersion: v1
-       kind: Pod
-       metadata:
-         name: disk-test-pod
-         namespace: <namespace>
-       spec:
-         containers:
-         - name: test-container
-           image: busybox
-           command: ["/bin/sh", "-c", "dd if=/dev/zero of=/mnt/testfile bs=1M count=100 && echo 'Write OK' && dd if=/mnt/testfile of=/dev/null bs=1M && echo 'Read OK' && sleep 3600"]
-           volumeMounts:
-           - mountPath: "/mnt"
-             name: test-volume
-         volumes:
-         - name: test-volume
-           persistentVolumeClaim:
-             claimName: <pvc-name>
-         nodeName: <node-name>
-       ```
-     - Apply and check: `kubectl apply -f disk-test-pod.yaml` and `kubectl logs disk-test-pod -n <namespace>`.
-  9. **Propose Remediations**:
-     - Bad sectors: Recommend disk replacement if SMART or `kubectl get drive` shows issues (e.g., `Health: BAD`).
-     - Performance issues: Suggest optimizing I/O scheduler or replacing disk if `fio` results show low IOPS.
-     - File system corruption: Recommend `fsck` (if enabled/approved) after data backup.
-     - Driver issues: Restart CSI Baremetal driver pod if logs indicate errors (requires approval).
-- **Dependencies**:
-  - LangGraph ReAct module (`langgraph`).
-  - Kubernetes Python client (`kubernetes`).
-  - Paramiko for SSH (`paramiko`).
-  - YAML parser (`pyyaml`).
-- **Error Handling**:
-  - Logs all actions, including tool outputs, SSH results, and user interactions.
-  - Handles SSH and API failures with retries (configurable in `config.yaml`).
-  - Falls back to reporting findings if issues cannot be resolved.
+### Configuration File Enhancement
 
-## Non-Functional Requirements
-- **Performance**:
-  - Monitoring workflow minimizes API calls to avoid overloading the Kubernetes API server.
-  - Troubleshooting workflow completes within 5 minutes (configurable timeout in `config.yaml`).
-- **Scalability**:
-  - Handles clusters with up to 1000 pods.
-  - Configurable monitoring intervals and retry policies.
-- **Security**:
-  - SSH credentials stored securely (e.g., encrypted or via environment variables).
-  - Commands validated against `config.yaml` allow/deny lists.
-  - Write/change commands disabled by default.
-- **Logging**:
-  - Logs to `troubleshoot.log` and optionally stdout (configurable).
-  - Log format: `%(asctime)s - %(levelname)s - %(message)s`.
-
-## Configuration File Example (`config.yaml`)
 ```yaml
+# Enhanced Configuration for Comprehensive Mode
+comprehensive_mode:
+  # Maximum issues to collect per layer
+  max_issues_per_layer: 20
+  
+  # Analysis depth (1-5, higher = more thorough)
+  analysis_depth: 3
+  
+  # Enable specific analysis types
+  enable_cascading_analysis: true
+  enable_clustering: true
+  enable_trend_analysis: false
+  
+  # Relationship detection sensitivity
+  relationship_threshold: 0.7
+  
+  # Output format options
+  include_graph_visualization: true
+  include_detailed_logs: false
+  max_root_causes_displayed: 5
+
 # LLM Configuration
 llm:
-  model: "gpt4-o4-mini"
-  api_endpoint: "https://x.ai/api"
+  model: "gpt-4"
+  api_endpoint: "https://api.openai.com/v1"
   api_key: ''
-  temperature: 0.7
-  max_tokens: 1000
-
-# Monitoring Configuration
-monitor:
-  interval_seconds: 60
-  api_retries: 3
-  retry_backoff_seconds: 5
+  temperature: 0.1
+  max_tokens: 4000
 
 # Troubleshooting Configuration
 troubleshoot:
   timeout_seconds: 300
   interactive_mode: true
+  mode: "comprehensive"  # single or comprehensive
   ssh:
     enabled: true
     user: "admin"
@@ -211,154 +193,425 @@ troubleshoot:
     retries: 3
     retry_backoff_seconds: 5
 
-# Allowed Commands
+# Command Validation
 commands:
   allowed:
-    - "kubectl get pod"
-    - "kubectl describe pod"
-    - "kubectl logs"
-    - "kubectl get pvc"
-    - "kubectl get pv"
-    - "kubectl get storageclass"
-    - "kubectl get csidrivers"
-    - "kubectl get drive"
-    - "kubectl get csibmnode"
-    - "kubectl get ac"
-    - "kubectl get lvg"
-    - "kubectl top node"
-    - "kubectl describe node"
-    - "df -h"
+    - "kubectl*"
+    - "smartctl*"
+    - "df"
+    - "dmesg"
     - "lsblk"
-    - "cat /proc/mounts"
-    - "smartctl -a"
-    - "fio --name=read_test"
-    - "fio --name=write_test"
-    - "dmesg | grep -i disk"
-    - "dmesg | grep -i error"
-	- "dmesg | grep -i xfs"
-    - "journalctl -u kubelet"
+    - "fio*"
   disallowed:
-    - "fsck"
-    - "chmod"
-    - "chown"
-    - "dd"
-    - "mkfs"
-    - "rm"
-    - "kubectl delete pod"
-
-# Logging Configuration
-logging:
-  file: "troubleshoot.log"
-  stdout: true
+    - "fsck*"
+    - "rm*"
+    - "dd*"
+    - "mkfs*"
 ```
 
-## Global Health Check Instruction (System Prompt for LLM)
-You can use langchain hub to get an react prompt plus following prompt.
-The enhanced system prompt incorporates CSI Baremetal driver-specific diagnostics to ensure structured, safe, and effective troubleshooting for local HDD/SSD/NVMe disks:
+## 🏗️ System Architecture
 
-**System knowledge Prompt example**:
-```
-You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). Follow these strict guidelines for safe, reliable, and effective troubleshooting:
+### Comprehensive Mode Architecture
 
-1. **Safety and Security**:
-   - Only execute commands listed in `commands.allowed` in `config.yaml` (e.g., `kubectl get drive`, `smartctl -a`, `fio`).
-   - Never execute commands in `commands.disallowed` (e.g., `fsck`, `chmod`, `dd`, `kubectl delete pod`) unless explicitly enabled in `config.yaml` and approved by the user in interactive mode.
-   - Validate all commands for safety and relevance before execution.
-   - Log all SSH commands and outputs for auditing, using secure credential handling as specified in `config.yaml`.
-
-2. **Interactive Mode**:
-   - If `troubleshoot.interactive_mode` is `true` in `config.yaml`, prompt the user before executing any command or tool with: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)". Include a clear purpose (e.g., "Check drive health with kubectl get drive").
-   - If disabled, execute allowed commands automatically, respecting `config.yaml` restrictions.
-
-3. **Troubleshooting Process**:
-   - Use the LangGraph ReAct module to reason about volume I/O errors based on parameters: `PodName`, `PodNamespace`, and `VolumePath`.
-   - Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
-     a. **Confirm Issue**: Run `kubectl logs <pod-name> -n <namespace>` and `kubectl describe pod <pod-name> -n <namespace>` to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount").
-     b. **Verify Configurations**: Check Pod, PVC, and PV with `kubectl get pod/pvc/pv -o yaml`. Confirm PV uses local volume, valid disk path (e.g., `/dev/sda`), and correct `nodeAffinity`. Verify mount points with `kubectl exec <pod-name> -n <namespace> -- df -h` and `ls -ld <mount-path>`.
-     c. **Check CSI Baremetal Driver and Resources**:
-        - Identify driver: `kubectl get storageclass <storageclass-name> -o yaml` (e.g., `csi-baremetal-sc-ssd`).
-        - Verify driver pod: `kubectl get pods -n kube-system -l app=csi-baremetal` and `kubectl logs <driver-pod-name> -n kube-system`. Check for errors like "failed to mount".
-        - Confirm driver registration: `kubectl get csidrivers`.
-        - Check drive status: `kubectl get drive -o wide` and `kubectl get drive <drive-uuid> -o yaml`. Verify `Health: GOOD`, `Status: ONLINE`, `Usage: IN_USE`, and match `Path` (e.g., `/dev/sda`) with `VolumePath`.
-        - Map drive to node: `kubectl get csibmnode` to correlate `NodeId` with hostname/IP.
-        - Check AvailableCapacity: `kubectl get ac -o wide` to confirm size, storage class, and location (drive UUID).
-        - Check LogicalVolumeGroup: `kubectl get lvg` to verify `Health: GOOD` and associated drive UUIDs.
-     d. **Test Driver**: Create a test PVC/Pod using `csi-baremetal-sc-ssd` storage class (use provided YAML template). Check logs and events for read/write errors.
-     e. **Verify Node Health**: Run `kubectl describe node <node-name>` to ensure `Ready` state and no `DiskPressure`. Verify disk mounting via SSH: `mount | grep <disk-path>`.
-     f. **Check Permissions**: Verify file system permissions with `kubectl exec <pod-name> -n <namespace> -- ls -ld <mount-path>` and Pod `SecurityContext` settings.
-     g. **Inspect Control Plane**: Check `kube-controller-manager` and `kube-scheduler` logs for provisioning/scheduling issues.
-     h. **Test Hardware Disk**:
-        - Identify disk: `kubectl get pv -o yaml` and `kubectl get drive <drive-uuid> -o yaml` to confirm `Path`.
-        - Check health: `kubectl get drive <drive-uuid> -o yaml` and `ssh <node-name> sudo smartctl -a /dev/<disk-device>`. Verify `Health: GOOD`, zero `Reallocated_Sector_Ct` or `Current_Pending_Sector`.
-        - Test performance: `ssh <node-name> sudo fio --name=read_test --filename=/dev/<disk-device> --rw=read --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting`.
-        - Check file system (if unmounted): `ssh <node-name> sudo fsck /dev/<disk-device>` (requires approval).
-        - Test via Pod: Create a test Pod (use provided YAML) and check logs for "Write OK" and "Read OK".
-     i. **Propose Remediations**:
-        - Bad sectors: Recommend disk replacement if `kubectl get drive` or SMART shows `Health: BAD` or non-zero `Reallocated_Sector_Ct`.
-        - Performance issues: Suggest optimizing I/O scheduler or replacing disk if `fio` results show low IOPS (HDD: 100–200, SSD: thousands, NVMe: tens of thousands).
-        - File system corruption: Recommend `fsck` (if enabled/approved) after data backup.
-        - Driver issues: Suggest restarting CSI Baremetal driver pod (if enabled/approved) if logs indicate errors.
-   - Only propose remediations after analyzing diagnostic data. Ensure write/change commands (e.g., `fsck`, `kubectl delete pod`) are allowed and approved.
-
-4. **Error Handling**:
-   - Log all actions, command outputs, SSH results, and errors to the configured log file and stdout (if enabled).
-   - Handle Kubernetes API or SSH failures with retries as specified in `config.yaml`.
-   - If unresolved, provide a detailed report of findings (e.g., logs, drive status, SMART data, test results) and suggest manual intervention.
-
-5. **Constraints**:
-   - Restrict operations to the Kubernetes cluster and configured worker nodes; do not access external networks or resources.
-   - Do not modify cluster state (e.g., delete pods, change configurations) unless explicitly allowed and approved.
-   - Adhere to `troubleshoot.timeout_seconds` for the troubleshooting workflow.
-   - Always recommend data backup before suggesting write/change operations (e.g., `fsck`).
-
-6. **Output**:
-   - Provide clear, concise explanations of diagnostic steps, findings, and remediation proposals.
-   - In interactive mode, format prompts as: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)".
-   - Include performance benchmarks in reports (e.g., HDD: 100–200 IOPS, SSD: thousands, NVMe: tens of thousands).
-   - Log all outputs with timestamps and context for traceability.
-
-You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.
+```mermaid
+graph TB
+    subgraph "User Interface Layer"
+        CLI[CLI Interface]
+        Monitor[Monitor Service]
+    end
+    
+    subgraph "Core Engine Layer"
+        TS[troubleshoot.py<br/>Main Engine]
+        LG[LangGraph ReAct Agent]
+        
+        subgraph "Mode Selection"
+            SM[Single Mode<br/>Traditional Analysis]
+            CM[Comprehensive Mode<br/>Multi-Issue Analysis]
+        end
+    end
+    
+    subgraph "Knowledge Graph Layer"
+        KG[IssueKnowledgeGraph<br/>Graph Management]
+        IC[ComprehensiveIssueCollector<br/>Multi-Layer Discovery]
+        AN[Analysis Engine<br/>Root Cause & Clustering]
+    end
+    
+    subgraph "Tool Execution Layer"
+        Tools[Tool Suite<br/>kubectl/ssh/diagnostics]
+        Exec[Command Executor<br/>Validation & Security]
+        SSH[SSH Client Manager<br/>Remote Execution]
+    end
+    
+    subgraph "Data Sources"
+        K8s[Kubernetes API<br/>Cluster State]
+        Nodes[Worker Nodes<br/>System Diagnostics]
+        CSI[CSI Baremetal Driver<br/>Storage Resources]
+    end
+    
+    CLI --> TS
+    Monitor --> TS
+    TS --> LG
+    LG --> SM
+    LG --> CM
+    CM --> IC
+    IC --> KG
+    KG --> AN
+    LG --> Tools
+    Tools --> Exec
+    Tools --> SSH
+    Exec --> K8s
+    SSH --> Nodes
+    Tools --> CSI
 ```
 
-## Technical Requirements
-- **Dependencies**:
-  - Python packages: `kubernetes`, `langgraph`, `paramiko`, `pyyaml`.
-  - Install via: `pip install kubernetes langgraph paramiko pyyaml`.
-- **Kubernetes Access**:
-  - Master node requires a valid `kubeconfig` or in-cluster configuration.
-  - Service account with permissions to read pod metadata, annotations, PVCs, PVs, nodes, control plane logs, and CSI Baremetal resources (`drive`, `csibmnode`, `ac`, `lvg`).
-- **SSH Setup**:
-  - SSH private key accessible on the master node.
-  - Worker nodes (`workernode1`, `workernode2`, `masternode1`) must allow SSH access for the configured user.
-- **Logging**:
-  - Uses Python’s `logging` module for file and stdout output.
-  - Log format: `%(asctime)s - %(levelname)s - %(message)s`.
+### Data Flow Architecture
 
-## Example Workflow Execution
-1. **Monitoring Workflow**:
-   - `monitor.py` runs every 60 seconds, querying pod annotations.
-   - Detects `volume-io-error:/data` on pod `app-1` in namespace `default`.
-   - Invokes `troubleshoot.py app-1 default /data`.
+```mermaid
+flowchart TD
+    Input[User Input<br/>Pod/Namespace/Volume] --> Mode{Select Mode}
+    
+    Mode -->|Single| SingleFlow[Single Mode Flow]
+    Mode -->|Comprehensive| CompFlow[Comprehensive Mode Flow]
+    
+    subgraph "Single Mode"
+        SingleFlow --> SA[Single Analysis]
+        SA --> SR[Single Results]
+    end
+    
+    subgraph "Comprehensive Mode"
+        CompFlow --> Init[Initialize Collector]
+        Init --> Discovery[Multi-Layer Discovery]
+        
+        subgraph "Discovery Process"
+            Discovery --> L1[Pod Layer Issues]
+            Discovery --> L2[Node Layer Issues]
+            Discovery --> L3[Storage Layer Issues]
+            Discovery --> L4[CSI Layer Issues]
+            Discovery --> L5[System Layer Issues]
+        end
+        
+        L1 --> BuildGraph[Build Knowledge Graph]
+        L2 --> BuildGraph
+        L3 --> BuildGraph
+        L4 --> BuildGraph
+        L5 --> BuildGraph
+        
+        BuildGraph --> Analyze[Comprehensive Analysis]
+        
+        subgraph "Analysis Types"
+            Analyze --> RC[Root Cause Analysis]
+            Analyze --> CF[Cascading Failures]
+            Analyze --> CL[Issue Clustering]
+            Analyze --> PR[Priority Ranking]
+        end
+        
+        RC --> Format[Format Results]
+        CF --> Format
+        CL --> Format
+        PR --> Format
+        
+        Format --> CR[Comprehensive Results]
+    end
+    
+    SR --> Output[Display Output]
+    CR --> Output
+```
 
-2. **Troubleshooting Workflow**:
-   - ReAct agent runs `kubectl logs app-1 -n default` and detects "Input/Output Error."
-   - Verifies PV/PVC configuration and identifies disk path `/dev/sda`.
-   - Runs `kubectl get drive -o wide` and finds drive UUID `2a96dfec-47db-449d-9789-0d81660c2c4d` with `Path: /dev/sda`, `Health: GOOD`.
-   - Uses `kubectl get csibmnode` to map drive to `masternode1`.
-   - Checks `kubectl get ac` and `kubectl get lvg` to confirm capacity and volume group health.
-   - Uses SSH to run `smartctl -a /dev/sda` on `masternode1`, finding non-zero `Reallocated_Sector_Ct`.
-   - In interactive mode, prompts: "Proposed command: kubectl delete pod app-1 -n default. Purpose: Restart pod to attempt volume remount. Approve? (y/n)".
-   - If unresolved, reports: "Bad sectors detected on /dev/sda (UUID: 2a96dfec-47db-449d-9789-0d81660c2c4d). Recommend disk replacement after data backup."
+## 🔄 Workflow Specifications
 
-## Future Enhancements
-- Support for automated AvailableCapacity (AC) and LogicalVolumeGroup (LVG) diagnostics.
-- Integration with Prometheus for real-time disk metrics.
-- Automated remediation for common CSI Baremetal issues (e.g., stale mounts) with strict safeguards.
+### Workflow 1: Monitoring Workflow
+- **Script File**: `monitor.py`
+- **Purpose**: Periodically monitors all pods in the Kubernetes cluster for volume I/O errors
+- **Enhanced Functionality**:
+  - Detects annotation `volume-io-error:<volume-path>` indicating a volume I/O error
+  - Can trigger either single or comprehensive mode based on configuration
+  - Supports batch processing of multiple detected issues
+  - Integrates with comprehensive analysis for pattern detection
 
-## Reference:
-react example python code:
-/root/cluster-storage-troubleshooting/React_example.py
-CSI knowledge:
-/root/cluster-storage-troubleshooting/CSI_knowledge.txt
+### Workflow 2: Single Mode Troubleshooting
+- **Script File**: `troubleshoot.py` (single mode)
+- **Purpose**: Traditional single-issue focused troubleshooting
+- **Process**: Follows existing troubleshooting steps for focused analysis
 
+### Workflow 3: Comprehensive Mode Troubleshooting
+- **Script File**: `run_comprehensive_mode.py`
+- **Purpose**: Multi-issue ecosystem-wide analysis using knowledge graphs
 
+```mermaid
+flowchart TD
+    Start([Start Comprehensive Analysis]) --> Init[Initialize Components]
+    Init --> Collect[Collect Primary Issue]
+    
+    Collect --> KGBuild[Build Initial Knowledge Graph]
+    KGBuild --> Expand[Expand Issue Discovery]
+    
+    subgraph "Layer-by-Layer Discovery"
+        Expand --> PodDiscover[Pod Layer Discovery<br/>- Status & events<br/>- Logs & mounts<br/>- Resource constraints]
+        
+        PodDiscover --> NodeDiscover[Node Layer Discovery<br/>- Node conditions<br/>- System resources<br/>- Mount points<br/>- Kubelet status]
+        
+        NodeDiscover --> StorageDiscover[Storage Layer Discovery<br/>- Drive health<br/>- File systems<br/>- I/O performance<br/>- SMART data]
+        
+        StorageDiscover --> CSIDiscover[CSI Layer Discovery<br/>- Driver status<br/>- Volume attachments<br/>- Storage classes<br/>- AC/LVG health]
+        
+        CSIDiscover --> SystemDiscover[System Layer Discovery<br/>- Kernel messages<br/>- System services<br/>- Network issues<br/>- Security policies]
+    end
+    
+    SystemDiscover --> Relationships[Build Issue Relationships]
+    Relationships --> Analysis[Comprehensive Analysis]
+    
+    subgraph "Analysis Engine"
+        Analysis --> RootCause[Root Cause Identification]
+        Analysis --> Cascading[Cascading Failure Detection]
+        Analysis --> Clustering[Issue Clustering]
+        Analysis --> Priority[Priority Ranking]
+    end
+    
+    RootCause --> Results[Generate Comprehensive Results]
+    Cascading --> Results
+    Clustering --> Results
+    Priority --> Results
+    
+    Results --> Output[Format & Display Output]
+    Output --> End([Complete Analysis])
+```
+
+## 🧠 Enhanced System Prompts
+
+### Comprehensive Mode System Prompt
+
+```
+You are an AI assistant powering a comprehensive Kubernetes volume troubleshooting system using LangGraph ReAct and knowledge graphs. Your role is to systematically analyze ALL related storage issues across Kubernetes/Linux/storage layers, build issue relationships, and provide comprehensive root cause analysis and fix plans.
+
+COMPREHENSIVE MODE INSTRUCTIONS:
+
+1. **Multi-Layer Issue Discovery**:
+   - Systematically collect issues from Pod, Node, Storage, CSI, and System layers
+   - Use the ComprehensiveIssueCollector to discover related problems
+   - Build a knowledge graph of all discovered issues and their relationships
+
+2. **Knowledge Graph Analysis**:
+   - Classify issues by type (POD_*, NODE_*, STORAGE_*, CSI_*, SYSTEM_*)
+   - Assign severity levels (CRITICAL, HIGH, MEDIUM, LOW)
+   - Establish relationships (CAUSES, AFFECTS, RELATED_TO, DEPENDS_ON)
+   - Identify root causes vs symptoms through graph traversal
+
+3. **Comprehensive Analysis Process**:
+   a. Root Cause Identification: Find issues with no incoming CAUSES relationships
+   b. Cascading Failure Detection: Map how root causes propagate through the system
+   c. Issue Clustering: Group related issues by type, node, timing, or symptoms
+   d. Priority Ranking: Order fixes by impact, dependencies, and feasibility
+
+4. **Enhanced Output Requirements**:
+   - Provide summary statistics (total issues, severity breakdown, primary issue)
+   - Include knowledge graph visualization
+   - List root causes ordered by impact
+   - Show cascading failure patterns
+   - Present issue clusters with dominant types
+   - Generate comprehensive root cause analysis narrative
+   - Provide comprehensive fix plan with priority order
+
+5. **Safety and Validation**:
+   - All existing safety requirements apply
+   - Enhanced validation for comprehensive scope
+   - Interactive approval for any write/change operations
+   - Comprehensive logging of all discovery and analysis steps
+
+You must collect ALL related storage issues, analyze their relationships comprehensively, and provide holistic solutions rather than addressing isolated symptoms.
+```
+
+## 📊 Performance Requirements
+
+### Performance Characteristics
+
+```mermaid
+graph TD
+    subgraph "Performance Comparison"
+        Single[Single Mode<br/>Duration: 30-120s<br/>Memory: ~50MB<br/>API Calls: ~20-50]
+        
+        Comprehensive[Comprehensive Mode<br/>Duration: 120-300s<br/>Memory: ~200MB<br/>API Calls: ~100-500]
+    end
+    
+    subgraph "Optimization Targets"
+        Parallel[Parallel Discovery<br/>Multi-threaded collection]
+        Cache[Intelligent Caching<br/>Reduce redundant calls]
+        Filter[Smart Filtering<br/>Relevant issues only]
+    end
+```
+
+**Requirements**:
+- Single mode: Complete within 2 minutes
+- Comprehensive mode: Complete within 5 minutes
+- Memory usage: < 500MB peak
+- API rate limiting: Respect cluster limits
+- Concurrent analysis: Support up to 3 simultaneous comprehensive analyses
+
+## 🔒 Security Requirements
+
+### Enhanced Security Architecture
+
+```mermaid
+graph TD
+    subgraph "Security Layers"
+        CommandVal[Command Validation<br/>Enhanced for comprehensive scope]
+        DataAccess[Data Access Control<br/>Multi-layer permissions]
+        GraphSec[Knowledge Graph Security<br/>Sensitive data handling]
+        OutputSec[Output Security<br/>Information disclosure control]
+    end
+    
+    subgraph "Security Controls"
+        CommandVal --> AllowList[Enhanced Allow Lists]
+        CommandVal --> Validation[Comprehensive Validation]
+        
+        DataAccess --> RBAC[Kubernetes RBAC]
+        DataAccess --> NodeAuth[Node Authentication]
+        
+        GraphSec --> Encryption[Data Encryption]
+        GraphSec --> Anonymization[Data Anonymization]
+        
+        OutputSec --> Filtering[Sensitive Data Filtering]
+        OutputSec --> Audit[Comprehensive Audit Logs]
+    end
+```
+
+## 🧪 Testing Requirements
+
+### Comprehensive Testing Strategy
+
+```mermaid
+graph TD
+    subgraph "Test Categories"
+        Unit[Unit Tests<br/>Individual components]
+        Integration[Integration Tests<br/>Layer interactions]
+        E2E[End-to-End Tests<br/>Complete workflows]
+        Performance[Performance Tests<br/>Scale and timing]
+        Security[Security Tests<br/>Attack scenarios]
+    end
+    
+    subgraph "Comprehensive Mode Tests"
+        Unit --> KGTests[Knowledge Graph Tests]
+        Unit --> CollectorTests[Issue Collector Tests]
+        Unit --> AnalysisTests[Analysis Algorithm Tests]
+        
+        Integration --> LayerTests[Multi-Layer Integration]
+        Integration --> RelationTests[Relationship Building]
+        
+        E2E --> ScenarioTests[Failure Scenario Tests]
+        E2E --> WorkflowTests[Complete Workflow Tests]
+        
+        Performance --> ScaleTests[Large Cluster Tests]
+        Performance --> TimingTests[Analysis Timing Tests]
+        
+        Security --> ValidationTests[Command Validation Tests]
+        Security --> AccessTests[Access Control Tests]
+    end
+```
+
+## 📈 Success Metrics
+
+### Key Performance Indicators
+
+```mermaid
+graph LR
+    subgraph "Effectiveness Metrics"
+        Accuracy[Root Cause Accuracy<br/>Target: >90%]
+        Coverage[Issue Coverage<br/>Target: >95%]
+        Resolution[Resolution Rate<br/>Target: >80%]
+    end
+    
+    subgraph "Efficiency Metrics"
+        Speed[Analysis Speed<br/>Target: <5min]
+        Resources[Resource Usage<br/>Target: <500MB]
+        Automation[Automation Rate<br/>Target: >70%]
+    end
+    
+    subgraph "Quality Metrics"
+        FalsePos[False Positives<br/>Target: <5%]
+        Completeness[Analysis Completeness<br/>Target: >95%]
+        Usability[User Satisfaction<br/>Target: >8/10]
+    end
+```
+
+## 🚀 Deployment Strategy
+
+### Deployment Architecture
+
+```mermaid
+graph TD
+    subgraph "Deployment Options"
+        Standalone[Standalone CLI<br/>Direct execution<br/>Manual invocation]
+        
+        InCluster[In-Cluster Pod<br/>Kubernetes deployment<br/>Service integration]
+        
+        Operator[Kubernetes Operator<br/>Custom resource management<br/>Automated operations]
+        
+        Service[Microservice<br/>REST API<br/>Web interface]
+    end
+    
+    subgraph "Integration Patterns"
+        Monitoring[Monitoring Integration<br/>Prometheus/Grafana]
+        Alerting[Alerting Integration<br/>AlertManager/PagerDuty]
+        CI_CD[CI/CD Integration<br/>Automated testing]
+        Documentation[Documentation<br/>Knowledge base]
+    end
+```
+
+## 📝 Documentation Requirements
+
+### Documentation Structure
+
+```mermaid
+graph TD
+    UserDocs[User Documentation] --> QuickStart[Quick Start Guide]
+    UserDocs --> CompGuide[Comprehensive Mode Guide]
+    UserDocs --> Troubleshooting[Troubleshooting Guide]
+    
+    DevDocs[Developer Documentation] --> Architecture[Architecture Guide]
+    DevDocs --> API[API Reference]
+    DevDocs --> Contributing[Contributing Guide]
+    
+    OperatorDocs[Operator Documentation] --> Deployment[Deployment Guide]
+    OperatorDocs --> Configuration[Configuration Reference]
+    OperatorDocs --> Monitoring[Monitoring Guide]
+```
+
+## 🔮 Future Enhancements
+
+### Roadmap
+
+```mermaid
+timeline
+    title Enhancement Roadmap
+    
+    Phase 1 : Core Comprehensive Mode
+            : Knowledge Graph Engine
+            : Multi-Layer Discovery
+            : Basic Analysis Algorithms
+    
+    Phase 2 : Advanced Analytics
+            : Machine Learning Integration
+            : Predictive Analysis
+            : Trend Detection
+    
+    Phase 3 : Automation & Integration
+            : Automated Remediation
+            : External System Integration
+            : Advanced Visualization
+    
+    Phase 4 : Enterprise Features
+            : Multi-Cluster Support
+            : Advanced Security
+            : Compliance Reporting
+```
+
+### Planned Features
+- **ML-Enhanced Analysis**: Machine learning for pattern recognition and prediction
+- **Automated Remediation**: Safe automated fixes for common issues
+- **Advanced Visualization**: Interactive knowledge graph exploration
+- **Multi-Cluster Support**: Cross-cluster issue correlation
+- **Integration APIs**: REST APIs for external system integration
+- **Compliance Reporting**: Automated compliance and audit reports
+
+---
+
+**This comprehensive design enables intelligent, systematic troubleshooting of complex storage issues across the entire Kubernetes infrastructure.**

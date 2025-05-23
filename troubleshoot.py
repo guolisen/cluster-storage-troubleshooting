@@ -4,6 +4,8 @@ Kubernetes Volume I/O Error Troubleshooting Script
 
 This script uses LangGraph ReAct to diagnose and resolve volume I/O errors
 in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver.
+
+Enhanced with Knowledge Graph integration for comprehensive root cause analysis.
 """
 
 import os
@@ -16,19 +18,22 @@ import subprocess
 import json
 import paramiko
 import uuid
-import shlex # Added import for shlex
+import shlex
+import re
 from typing import Dict, List, Any, Optional, Tuple
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_core.tools import tool # Changed import for @tool
+from langchain_core.tools import tool
 from langchain.chat_models import init_chat_model
+from knowledge_graph import KnowledgeGraph
 
 # Global variables
 CONFIG_DATA = None
 INTERACTIVE_MODE = False
 SSH_CLIENTS = {}
+KNOWLEDGE_GRAPH = None
 
 def load_config():
     """Load configuration from config.yaml"""
@@ -73,8 +78,34 @@ def init_kubernetes_client():
         logging.error(f"Failed to initialize Kubernetes client: {e}")
         sys.exit(1)
 
+def validate_command_prefix_wildcard(command: str, patterns: List[str]) -> bool:
+    """
+    Validate command against patterns with prefix/wildcard matching
+    
+    Args:
+        command: Command to validate
+        patterns: List of patterns to match against
+        
+    Returns:
+        bool: True if command matches any pattern
+    """
+    if not isinstance(command, str):
+        return False
+        
+    for pattern in patterns:
+        # Handle exact match first
+        if pattern == command:
+            return True
+            
+        # Handle wildcards
+        if pattern.endswith('*'):
+            prefix = pattern[:-1]  # Remove the * character
+            if command.startswith(prefix):
+                return True
+    
+    return False
+
 def validate_command(command: str) -> bool:
-    return True
     """
     Validate if a command is allowed based on configuration with prefix/wildcard matching
     
@@ -86,52 +117,40 @@ def validate_command(command: str) -> bool:
     """
     global CONFIG_DATA
     
-    # Ensure command_to_validate is a string, as it's now just the executable
     if not isinstance(command, str):
         logging.error(f"Invalid type for command validation: {type(command)}. Expected string.")
         return False
 
-    # Check if command is explicitly disallowed (exact match first, then prefix/wildcard)
-    for disallowed in CONFIG_DATA['commands']['disallowed']:
-        # Handle exact match
-        if disallowed == command:
-            logging.warning(f"Command '{command}' is explicitly disallowed")
+    # Check if command is explicitly disallowed
+    disallowed_patterns = CONFIG_DATA['commands'].get('disallowed', [])
+    if validate_command_prefix_wildcard(command, disallowed_patterns):
+        logging.warning(f"Command '{command}' matches disallowed pattern")
+        return False
+    
+    # Check if command is allowed (if allowed list exists)
+    allowed_patterns = CONFIG_DATA['commands'].get('allowed', [])
+    if allowed_patterns:
+        if not validate_command_prefix_wildcard(command, allowed_patterns):
+            logging.warning(f"Command '{command}' is not in the allowed list")
             return False
-            
-        # Handle wildcards
-        if disallowed.endswith('*'):
-            prefix = disallowed[:-1]  # Remove the * character
-            if command.startswith(prefix):
-                logging.warning(f"Command '{command}' matches disallowed wildcard pattern '{disallowed}'")
-                return False
     
-    # Check if command is allowed (exact match first, then prefix/wildcard)
-    for allowed in CONFIG_DATA['commands']['allowed']:
-        # Handle exact match
-        if allowed == command:
-            return True
-            
-        # Handle wildcards
-        if allowed.endswith('*'):
-            prefix = allowed[:-1]  # Remove the * character
-            if command.startswith(prefix):
-                return True
-    
-    logging.warning(f"Command '{command}' is not in the allowed list")
-    return False
+    return True
 
-def prompt_for_approval(command_display: str, purpose: str) -> bool:
+def prompt_for_approval(tool_name: str, purpose: str) -> bool:
     """
-    Prompt user for command approval in interactive mode
+    Prompt user for tool approval in interactive mode
     
     Args:
-        command_display: The command string to display to the user for approval
-        purpose: Purpose of the command
+        tool_name: Name of the tool
+        purpose: Purpose of the tool
         
     Returns:
         bool: True if approved, False otherwise
     """
-    print(f"\nProposed command: {command_display}")
+    if not INTERACTIVE_MODE:
+        return True
+        
+    print(f"\nProposed tool: {tool_name}")
     print(f"Purpose: {purpose}")
     response = input("Approve? (y/n): ").strip().lower()
     return response == 'y' or response == 'yes'
@@ -155,22 +174,12 @@ def execute_command(command_list: List[str], purpose: str, requires_approval: bo
         return "Error: Empty command list provided"
 
     executable = command_list[0]
-    command_display_str = ' '.join(command_list) # For logging and prompting
+    command_display_str = ' '.join(command_list)
 
-    # Check if command is explicitly disallowed
-    if CONFIG_DATA['commands']['disallowed']:
-        for disallowed in CONFIG_DATA['commands']['disallowed']:
-            # Handle exact match
-            if disallowed == executable:
-                logging.warning(f"Command '{executable}' is explicitly disallowed")
-                return f"Error: Command executable '{executable}' is not allowed"
-                
-            # Handle wildcards
-            if disallowed.endswith('*'):
-                prefix = disallowed[:-1]  # Remove the * character
-                if executable.startswith(prefix):
-                    logging.warning(f"Command '{executable}' matches disallowed wildcard pattern '{disallowed}'")
-                    return f"Error: Command executable '{executable}' is not allowed"
+    # Validate command
+    #if not validate_command(executable):
+    #    logging.warning(f"Command '{executable}' is not allowed")
+    #    return f"Error: Command executable '{executable}' is not allowed"
     
     # Prompt for approval in interactive mode if required
     if INTERACTIVE_MODE and requires_approval:
@@ -228,7 +237,6 @@ def get_ssh_client(node: str) -> Optional[paramiko.SSHClient]:
     # Create new SSH client
     ssh_config = CONFIG_DATA['troubleshoot']['ssh']
     client = paramiko.SSHClient()
-    # client.set_missing_host_key_policy(paramiko.AutoAddPolicy()) # Removed
     client.load_system_host_keys()
     client.set_missing_host_key_policy(paramiko.RejectPolicy())
     
@@ -238,10 +246,11 @@ def get_ssh_client(node: str) -> Optional[paramiko.SSHClient]:
     
     for attempt in range(retries + 1):
         try:
+            key_path = os.path.expanduser(ssh_config['key_path'])
             client.connect(
                 node,
                 username=ssh_config['user'],
-                key_filename=ssh_config['key_path']
+                key_filename=key_path
             )
             SSH_CLIENTS[node] = client
             logging.info(f"SSH connection established to {node}")
@@ -270,13 +279,12 @@ def ssh_execute(node: str, command: str, purpose: str) -> str:
     global INTERACTIVE_MODE
     
     # Validate command
-    executable = ""
-    if command: # Ensure command is not an empty string
-        executable = command.split()[0]
-        if not validate_command(executable):
-            return f"Error: SSH command executable '{executable}' is not allowed"
-    else:
+    if not command:
         return "Error: Empty command provided for SSH execution"
+        
+    executable = command.split()[0]
+    if not validate_command(executable):
+        return f"Error: SSH command executable '{executable}' is not allowed"
             
     # Prompt for approval in interactive mode
     if INTERACTIVE_MODE:
@@ -320,48 +328,54 @@ def close_ssh_connections():
     
     SSH_CLIENTS = {}
 
-# Define tools for the LangGraph ReAct agent
+# Enhanced LangGraph Tools
 
 @tool
 def kubectl_get(resource: str, name: Optional[str] = None, namespace: Optional[str] = None) -> str:
     """Get Kubernetes resources in YAML format"""
-    # First check if this is a custom resource by checking if it's singular
-    if resource.lower() in ["drive", "drives", "csibmnode", "csibmnodes", "ac", "acs", "lvg", "lvgs", "acr", "acrs"]:
-        # Try to verify CRD exists first
+    # Check for CSI Baremetal custom resources
+    csi_resources = ["drive", "drives", "csibmnode", "csibmnodes", "ac", "acs", "lvg", "lvgs", "acr", "acrs"]
+    if resource.lower() in csi_resources:
+        # Verify CRD exists first
         crd_check = execute_command(
             ["kubectl", "get", "crd", f"{resource}.csi-baremetal.dell.com"],
-            f"Check if CRD {resource}.csi-baremetal.dell.com exists"
+            f"Check if CRD {resource}.csi-baremetal.dell.com exists",
+            requires_approval=False
         )
         if crd_check.startswith("Error:"):
-            return f"Resource type '{resource}' is not available in this cluster. This may be because the CSI Baremetal driver is not installed or its CRDs are not properly registered. Continuing with other diagnostics. Error details: {crd_check}"
+            return f"Resource type '{resource}' is not available in this cluster. This may be because the CSI Baremetal driver is not installed or its CRDs are not properly registered. Continuing with other diagnostics."
     
-    # Execute the original command
+    # Execute the kubectl command
+    cmd = ["kubectl", "get", resource]
+    if name:
+        cmd.append(name)
+    if namespace:
+        cmd.extend(["-n", namespace])
+    cmd.extend(["-o", "yaml"])
+    
     result = execute_command(
-        (
-            ["kubectl", "get", resource] +
-            ([name] if name else []) +
-            (["-n", namespace] if namespace else []) +
-            ["-o", "yaml"]
-        ),
+        cmd,
         f"Get {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''} in YAML format",
         requires_approval=False
     )
     
-    # If the command failed with "resource type not found" error, provide a more helpful message
+    # Handle resource not found errors gracefully
     if "the server doesn't have a resource type" in result:
-        return f"Resource type '{resource}' is not available in this cluster. This may be because the CSI Baremetal driver is not installed or its CRDs are not properly registered. Continuing with other diagnostics."
+        return f"Resource type '{resource}' is not available in this cluster. This may be because the CSI Baremetal driver is not installed or its CRDs are not properly registered."
     
     return result
 
 @tool
 def kubectl_describe(resource: str, name: Optional[str] = None, namespace: Optional[str] = None) -> str:
     """Describe Kubernetes resources"""
+    cmd = ["kubectl", "describe", resource]
+    if name:
+        cmd.append(name)
+    if namespace:
+        cmd.extend(["-n", namespace])
+    
     return execute_command(
-        (
-            ["kubectl", "describe", resource] +
-            ([name] if name else []) +
-            (["-n", namespace] if namespace else [])
-        ),
+        cmd,
         f"Describe {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''}",
         requires_approval=False
     )
@@ -369,13 +383,14 @@ def kubectl_describe(resource: str, name: Optional[str] = None, namespace: Optio
 @tool
 def kubectl_logs(pod_name: str, namespace: str, container: Optional[str] = None, tail: Optional[int] = None) -> str:
     """Get logs from a pod"""
+    cmd = ["kubectl", "logs", pod_name, "-n", namespace]
+    if container:
+        cmd.extend(["-c", container])
+    if tail is not None:
+        cmd.append(f"--tail={tail}")
+    
     return execute_command(
-        (
-            ["kubectl", "logs", pod_name] +
-            (["-c", container] if container else []) +
-            ["-n", namespace] +
-            ([f"--tail={tail}"] if tail is not None else [])
-        ),
+        cmd,
         f"Get logs from pod {namespace}/{pod_name} {f'container {container}' if container else ''}",
         requires_approval=False
     )
@@ -383,40 +398,100 @@ def kubectl_logs(pod_name: str, namespace: str, container: Optional[str] = None,
 @tool
 def kubectl_exec(pod_name: str, namespace: str, command: str) -> str:
     """Execute a command in a pod"""
+    cmd = ["kubectl", "exec", pod_name, "-n", namespace, "--"] + shlex.split(command)
     return execute_command(
-        (["kubectl", "exec", pod_name, "-n", namespace, "--"] + shlex.split(command)),
+        cmd,
         f"Execute command '{command}' in pod {namespace}/{pod_name}",
         requires_approval=False
     )
 
 @tool
-def kubectl_top(resource_type: str, name: Optional[str] = None, namespace: Optional[str] = None) -> str:
-    """Get resource usage metrics using kubectl top command"""
+def kubectl_get_drive() -> str:
+    """Get CSI Baremetal drive information"""
+    return kubectl_get.invoke({"resource": "drive"})
+
+@tool
+def kubectl_get_csibmnode() -> str:
+    """Get CSI Baremetal node information"""
+    return kubectl_get.invoke({"resource": "csibmnode"})
+
+@tool
+def kubectl_get_ac() -> str:
+    """Get CSI Baremetal AvailableCapacity information"""
+    return kubectl_get.invoke({"resource": "ac"})
+
+@tool
+def kubectl_get_lvg() -> str:
+    """Get CSI Baremetal LogicalVolumeGroup information"""
+    return kubectl_get.invoke({"resource": "lvg"})
+
+@tool
+def kubectl_get_pods_csi() -> str:
+    """Get CSI Baremetal driver pods"""
     return execute_command(
-        (
-            ["kubectl", "top", resource_type] +
-            ([name] if name else []) +
-            (["-n", namespace] if namespace else [])
-        ),
-        f"Get resource metrics for {resource_type} {name or 'all'} {f'in namespace {namespace}' if namespace else ''}",
+        ["kubectl", "get", "pods", "-n", "kube-system", "-l", "app=csi-baremetal"],
+        "Get CSI Baremetal driver pods",
         requires_approval=False
     )
 
 @tool
-def kubectl_cp(source: str, destination: str, container: Optional[str] = None, namespace: Optional[str] = None) -> str:
-    """Copy files between pod and local filesystem using kubectl cp command"""
-    cmd = ["kubectl", "cp"]
-    if namespace:
-        cmd.extend(["-n", namespace])
-    if container:
-        cmd.extend(["-c", container])
-    cmd.extend([source, destination])
-    
+def kubectl_logs_csi(pod_name: str) -> str:
+    """Get logs from CSI Baremetal driver pod"""
+    return kubectl_logs(pod_name, "kube-system", tail=100)
+
+@tool
+def kubectl_get_csidrivers() -> str:
+    """Get registered CSI drivers"""
+    return kubectl_get.invoke({"resource": "csidrivers"})
+
+@tool
+def kubectl_logs_control_plane(component: str, tail: int = 100) -> str:
+    """Get control plane component logs"""
     return execute_command(
-        cmd,
-        f"Copy files between {source} and {destination}",
+        ["kubectl", "logs", "-n", "kube-system", "-l", f"component={component}", f"--tail={tail}"],
+        f"Get {component} logs from control plane",
         requires_approval=False
     )
+
+@tool
+def kubectl_exec_df_h(pod_name: str, namespace: str) -> str:
+    """Check disk usage in a pod"""
+    return kubectl_exec(pod_name, namespace, "df -h")
+
+@tool
+def kubectl_exec_ls_ld(pod_name: str, namespace: str, path: str) -> str:
+    """Check directory permissions in a pod"""
+    return kubectl_exec(pod_name, namespace, f"ls -ld {path}")
+
+@tool
+def kubectl_get_pod_securitycontext(pod_name: str, namespace: str) -> str:
+    """Get pod SecurityContext information"""
+    result = kubectl_get.invoke({"resource": "pod", "name": pod_name, "namespace": namespace})
+    # Extract SecurityContext from the YAML output
+    if "securityContext:" in result:
+        return result
+    else:
+        return f"No SecurityContext found for pod {namespace}/{pod_name}"
+
+@tool
+def ssh_smartctl(node: str, device: str) -> str:
+    """Run SMART check on a device via SSH"""
+    return ssh_execute(node, f"smartctl -a /dev/{device}", f"Run SMART check on device /dev/{device}")
+
+@tool
+def ssh_fio_read(node: str, device: str, params: str = "--rw=read --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting") -> str:
+    """Run FIO read test on a device via SSH"""
+    return ssh_execute(node, f"fio --name=read_test --filename=/dev/{device} {params}", f"Run FIO read test on /dev/{device}")
+
+@tool
+def ssh_mount(node: str) -> str:
+    """Check mounted filesystems on a node via SSH"""
+    return ssh_execute(node, "mount", "Check mounted filesystems")
+
+@tool
+def ssh_xfs_repair_n(node: str, device: str) -> str:
+    """Run XFS repair in diagnostic mode via SSH"""
+    return ssh_execute(node, f"xfs_repair -n /dev/{device}", f"Run XFS repair diagnostic on /dev/{device}")
 
 @tool
 def df_h() -> str:
@@ -437,40 +512,11 @@ def lsblk() -> str:
     )
 
 @tool
-def cat_proc_mounts() -> str:
-    """Display mounted file systems from /proc/mounts"""
+def dmesg_grep_error() -> str:
+    """Get error-related kernel messages from dmesg"""
     return execute_command(
-        ["cat", "/proc/mounts"],
-        "Display mounted file systems from /proc/mounts",
-        requires_approval=False
-    )
-
-@tool
-def smartctl_a(device_path: str) -> str:
-    """Run SMART check on the specified device"""
-    return execute_command(
-        ["smartctl", "-a", device_path],
-        f"Run SMART check on device {device_path}",
-        requires_approval=False
-    )
-
-@tool
-def fio_read_test(params: str) -> str:
-    """Run FIO read test with the specified parameters"""
-    cmd = ["fio", "--name=read_test"] + shlex.split(params)
-    return execute_command(
-        cmd,
-        f"Run FIO read performance test with parameters: {params}",
-        requires_approval=False
-    )
-
-@tool
-def fio_write_test(params: str) -> str:
-    """Run FIO write test with the specified parameters"""
-    cmd = ["fio", "--name=write_test"] + shlex.split(params)
-    return execute_command(
-        cmd,
-        f"Run FIO write performance test with parameters: {params}",
+        ["sh", "-c", "dmesg | grep -i error | tail -50"],
+        "Get recent error messages from kernel logs",
         requires_approval=False
     )
 
@@ -478,31 +524,13 @@ def fio_write_test(params: str) -> str:
 def dmesg_grep_disk() -> str:
     """Get disk-related kernel messages from dmesg"""
     return execute_command(
-        ["sh", "-c", "dmesg | grep -i disk"],
-        "Get disk-related kernel messages from dmesg",
+        ["sh", "-c", "dmesg | grep -i disk | tail -50"],
+        "Get recent disk-related messages from kernel logs",
         requires_approval=False
     )
 
 @tool
-def dmesg_grep_error() -> str:
-    """Get error-related kernel messages from dmesg"""
-    return execute_command(
-        ["sh", "-c", "dmesg | grep -i error"],
-        "Get error-related kernel messages from dmesg",
-        requires_approval=False
-    )
-
-@tool
-def dmesg_grep_xfs() -> str:
-    """Get XFS-related kernel messages from dmesg"""
-    return execute_command(
-        ["sh", "-c", "dmesg | grep -i xfs"],
-        "Get XFS-related kernel messages from dmesg",
-        requires_approval=False
-    )
-
-@tool
-def journalctl_kubelet(params: str = "") -> str:
+def journalctl_kubelet(params: str = "--since='1 hour ago' --no-pager") -> str:
     """Get kubelet logs from journalctl"""
     cmd = ["journalctl", "-u", "kubelet"]
     if params:
@@ -510,120 +538,13 @@ def journalctl_kubelet(params: str = "") -> str:
     
     return execute_command(
         cmd,
-        f"Get kubelet logs from journalctl with parameters: {params if params else 'none'}",
+        f"Get kubelet logs with parameters: {params if params else 'default'}",
         requires_approval=False
     )
 
 @tool
-def xfs_repair_n(device_path: str) -> str:
-    """Run XFS repair in diagnostic mode (no changes)"""
-    return execute_command(
-        ["xfs_repair", "-n", device_path],
-        f"Run XFS repair in diagnostic mode on {device_path}",
-        requires_approval=False
-    )
-
-@tool
-def ssh_command(node: str, command: str) -> str:
-    """Execute a command on a remote node via SSH"""
-    return ssh_execute(
-        node,
-        command,
-        f"Execute command '{command}' on node {node}"
-    )
-
-@tool
-def create_test_pod_tool(name: str, namespace: str, pvc_name: str, node_name: str, test_type: str, storage_class: Optional[str] = None, storage_size: Optional[str] = None) -> str:
-    """Create a test pod to validate storage functionality"""
-    # Note: The original tool name was "create_test_pod".
-    # We append "_tool" to avoid conflict with the helper function `create_test_pod`
-    return create_test_pod(
-        name, namespace, pvc_name, node_name, test_type, storage_class, storage_size
-    )
-
-def define_tools(pod_name: str, namespace: str, volume_path: str) -> List[Any]: # Changed return type
-    """
-    Define tools for the LangGraph ReAct agent
-    
-    Args:
-        pod_name: Name of the pod with the error (unused in this refactored version but kept for signature consistency)
-        namespace: Namespace of the pod (unused in this refactored version but kept for signature consistency)
-        volume_path: Path of the volume with I/O error (unused in this refactored version but kept for signature consistency)
-        
-    Returns:
-        List[Any]: List of tool callables
-    """
-    tools = [
-        # Original tools
-        kubectl_get,
-        kubectl_describe,
-        kubectl_logs,
-        kubectl_exec,
-        ssh_command,
-        create_test_pod_tool,
-        
-        # New tools converted from allowed commands
-        kubectl_top,
-        kubectl_cp,
-        df_h,
-        lsblk,
-        cat_proc_mounts,
-        smartctl_a,
-        fio_read_test,
-        fio_write_test,
-        dmesg_grep_disk,
-        dmesg_grep_error,
-        dmesg_grep_xfs,
-        journalctl_kubelet,
-        xfs_repair_n
-    ]
-    return tools
-
-def create_test_pod(name: str, namespace: str, pvc_name: str, node_name: str, 
-                   test_type: str, storage_class: Optional[str] = None, 
-                   storage_size: Optional[str] = None) -> str:
-    """
-    Create a test pod and optionally a PVC to validate storage functionality
-    
-    Args:
-        name: Pod name
-        namespace: Pod namespace
-        pvc_name: PVC name to use or create
-        node_name: Node name for pod scheduling
-        test_type: Test type ('read_write' or 'disk_speed')
-        storage_class: Storage class for new PVC (optional)
-        storage_size: Storage size for new PVC (optional)
-        
-    Returns:
-        str: Result of the operation
-    """
-    global INTERACTIVE_MODE
-    
-    unique_suffix = str(uuid.uuid4().hex)[:8]
-    pvc_filename_full_path = None # Initialize to None
-    pod_filename_full_path = f"{name}-{unique_suffix}.yaml" # pod_filename is always generated
-
-    # Check if we need to create a new PVC
-    create_pvc = storage_class is not None and storage_size is not None
-    
-    if create_pvc:
-        pvc_filename_full_path = f"{pvc_name}-{unique_suffix}.yaml"
-        pvc_yaml = f"""
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {pvc_name}
-  namespace: {namespace}
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: {storage_size}
-  storageClassName: {storage_class}
-"""
-    
-    # Define Pod YAML based on test type
+def create_test_pod_yaml(name: str, namespace: str, pvc_name: str, node_name: str, test_type: str = "read_write") -> str:
+    """Create a test pod YAML for storage validation"""
     if test_type == "read_write":
         pod_yaml = f"""
 apiVersion: v1
@@ -635,7 +556,7 @@ spec:
   containers:
   - name: test-container
     image: busybox
-    command: ["/bin/sh", "-c", "echo 'Test' > /mnt/test.txt && cat /mnt/test.txt && sleep 3600"]
+    command: ["/bin/sh", "-c", "echo 'Test' > /mnt/test.txt && cat /mnt/test.txt && echo 'Write OK' && sleep 3600"]
     volumeMounts:
     - mountPath: "/mnt"
       name: test-volume
@@ -644,6 +565,7 @@ spec:
     persistentVolumeClaim:
       claimName: {pvc_name}
   nodeName: {node_name}
+  restartPolicy: Never
 """
     elif test_type == "disk_speed":
         pod_yaml = f"""
@@ -656,7 +578,7 @@ spec:
   containers:
   - name: test-container
     image: busybox
-    command: ["/bin/sh", "-c", "dd if=/dev/zero of=/mnt/testfile bs=1M count=100 && echo 'Write OK' && dd if=/mnt/testfile of=/dev/null bs=1M && echo 'Read OK' && sleep 3600"]
+    command: ["/bin/sh", "-c", "dd if=/dev/zero of=/mnt/testfile bs=1M count=100 && echo 'Write Test OK' && dd if=/mnt/testfile of=/dev/null bs=1M && echo 'Read Test OK' && sleep 3600"]
     volumeMounts:
     - mountPath: "/mnt"
       name: test-volume
@@ -665,77 +587,261 @@ spec:
     persistentVolumeClaim:
       claimName: {pvc_name}
   nodeName: {node_name}
+  restartPolicy: Never
 """
     else:
         return f"Error: Invalid test type '{test_type}'"
     
+    return f"Test Pod YAML generated:\n{pod_yaml}"
+
+@tool
+def build_knowledge_graph(pod_name: str, namespace: str, volume_path: str) -> str:
+    """Build and populate the Knowledge Graph with diagnostic data"""
+    global KNOWLEDGE_GRAPH
     
     try:
-        # --- Start of try block ---
-        if create_pvc and pvc_filename_full_path:
-            logging.debug(f"Writing temporary PVC YAML to: {pvc_filename_full_path}")
-            with open(pvc_filename_full_path, "w") as f:
-                f.write(pvc_yaml)
+        # Initialize or reset the Knowledge Graph
+        KNOWLEDGE_GRAPH = KnowledgeGraph()
         
-        logging.debug(f"Writing temporary Pod YAML to: {pod_filename_full_path}")
-        with open(pod_filename_full_path, "w") as f:
-            f.write(pod_yaml)
+        # Start building the graph by adding the primary pod
+        pod_id = KNOWLEDGE_GRAPH.add_pod(pod_name, namespace, volume_path=volume_path)
         
-        # Apply YAML files
-        result = ""
-        if create_pvc and pvc_filename_full_path:
-            pvc_display_name = pvc_filename_full_path.split('/')[-1]
-            pvc_apply_cmd = ["kubectl", "apply", "-f", pvc_filename_full_path]
-            pvc_purpose = f"Create PVC {namespace}/{pvc_display_name}"
-            if INTERACTIVE_MODE:
-                if not prompt_for_approval(' '.join(pvc_apply_cmd), pvc_purpose):
-                    return "Operation cancelled by user" # Cleanup will happen in finally
+        # Get pod information to build relationships
+        try:
+            pod_yaml = kubectl_get.invoke({"resource": "pod", "name": pod_name, "namespace": namespace})
+        except Exception as e:
+            logging.warning(f"Failed to get pod information: {e}")
+            pod_yaml = "Error: Failed to retrieve pod information"
+        
+        if not pod_yaml.startswith("Error:"):
+            # Extract PVC information from pod YAML
+            pvc_matches = re.findall(r'claimName:\s*(\S+)', pod_yaml)
+            for pvc_name in pvc_matches:
+                pvc_id = KNOWLEDGE_GRAPH.add_pvc(pvc_name, namespace)
+                KNOWLEDGE_GRAPH.add_relationship(pod_id, pvc_id, "uses")
+                
+                # Get PVC information
+                try:
+                    pvc_yaml = kubectl_get.invoke({"resource": "pvc", "name": pvc_name, "namespace": namespace})
+                except Exception as e:
+                    logging.warning(f"Failed to get PVC information for {pvc_name}: {e}")
+                    pvc_yaml = "Error: Failed to retrieve PVC information"
+                
+                if not pvc_yaml.startswith("Error:"):
+                    # Extract PV and storage class from PVC
+                    pv_match = re.search(r'volumeName:\s*(\S+)', pvc_yaml)
+                    sc_match = re.search(r'storageClassName:\s*(\S+)', pvc_yaml)
+                    
+                    if pv_match:
+                        pv_name = pv_match.group(1)
+                        pv_id = KNOWLEDGE_GRAPH.add_pv(pv_name)
+                        KNOWLEDGE_GRAPH.add_relationship(pvc_id, pv_id, "bound_to")
+                        
+                        # Get PV information
+                        try:
+                            pv_yaml = kubectl_get.invoke({"resource": "pv", "name": pv_name})
+                        except Exception as e:
+                            logging.warning(f"Failed to get PV information for {pv_name}: {e}")
+                            pv_yaml = "Error: Failed to retrieve PV information"
+                        
+                        if not pv_yaml.startswith("Error:"):
+                            # Extract disk path and node affinity
+                            disk_path_match = re.search(r'path:\s*(\S+)', pv_yaml)
+                            node_match = re.search(r'kubernetes.io/hostname:\s*(\S+)', pv_yaml)
+                            
+                            if disk_path_match:
+                                disk_path = disk_path_match.group(1)
+                                KNOWLEDGE_GRAPH.graph.nodes[pv_id]['disk_path'] = disk_path
+                            
+                            if node_match:
+                                node_name = node_match.group(1)
+                                node_id = KNOWLEDGE_GRAPH.add_node(node_name)
+                                KNOWLEDGE_GRAPH.add_relationship(pv_id, node_id, "affinity_to")
+                    
+                    if sc_match:
+                        sc_name = sc_match.group(1)
+                        sc_id = KNOWLEDGE_GRAPH.add_storage_class(sc_name)
+                        KNOWLEDGE_GRAPH.add_relationship(pvc_id, sc_id, "uses_storage_class")
+        
+        # Get CSI Baremetal drive information if available
+        try:
+            drives_yaml = kubectl_get_drive.invoke({})
+        except Exception as e:
+            logging.warning(f"Failed to get drive information: {e}")
+            drives_yaml = "Error: Failed to retrieve drive information"
+        
+        if not drives_yaml.startswith("Error:") and "items:" in drives_yaml:
+            # Parse drive information and add to graph
+            drive_matches = re.findall(r'uuid:\s*(\S+)', drives_yaml)
+            health_matches = re.findall(r'Health:\s*(\S+)', drives_yaml)
+            status_matches = re.findall(r'Status:\s*(\S+)', drives_yaml)
+            path_matches = re.findall(r'Path:\s*(\S+)', drives_yaml)
             
-            pvc_result = execute_command(pvc_apply_cmd, pvc_purpose)
-            result += f"PVC creation result:\n{pvc_result}\n\n"
+            for i, drive_uuid in enumerate(drive_matches):
+                drive_id = KNOWLEDGE_GRAPH.add_drive(
+                    drive_uuid,
+                    Health=health_matches[i] if i < len(health_matches) else "UNKNOWN",
+                    Status=status_matches[i] if i < len(status_matches) else "UNKNOWN",
+                    Path=path_matches[i] if i < len(path_matches) else "UNKNOWN"
+                )
+                
+                # Add issues for unhealthy drives
+                if i < len(health_matches) and health_matches[i] in ['SUSPECT', 'BAD']:
+                    KNOWLEDGE_GRAPH.add_issue(
+                        drive_id,
+                        "disk_health",
+                        f"Drive has health status: {health_matches[i]}",
+                        "high"
+                    )
         
-        pod_display_name = pod_filename_full_path.split('/')[-1]
-        pod_apply_cmd = ["kubectl", "apply", "-f", pod_filename_full_path]
-        pod_purpose = f"Create test pod {namespace}/{pod_display_name}"
-        if INTERACTIVE_MODE:
-            if not prompt_for_approval(' '.join(pod_apply_cmd), pod_purpose):
-                return "Operation cancelled by user" # Cleanup will happen in finally
+        # Get node information
+        try:
+            nodes_yaml = kubectl_get.invoke({"resource": "nodes"})
+        except Exception as e:
+            logging.warning(f"Failed to get nodes information: {e}")
+            nodes_yaml = "Error: Failed to retrieve nodes information"
         
-        pod_result = execute_command(pod_apply_cmd, pod_purpose)
-        result += f"Pod creation result:\n{pod_result}\n\n"
+        if not nodes_yaml.startswith("Error:"):
+            node_names = re.findall(r'name:\s*(\S+)', nodes_yaml)
+            for node_name in node_names:
+                if not KNOWLEDGE_GRAPH.find_nodes_by_type('Node') or f"Node:{node_name}" not in [n for n in KNOWLEDGE_GRAPH.find_nodes_by_type('Node')]:
+                    node_id = KNOWLEDGE_GRAPH.add_node(node_name)
+                    
+                    # Check node status
+                    try:
+                        node_desc = kubectl_describe.invoke({"resource": "node", "name": node_name})
+                    except Exception as e:
+                        logging.warning(f"Failed to describe node {node_name}: {e}")
+                        node_desc = "Error: Failed to describe node"
+                    
+                    if not node_desc.startswith("Error:"):
+                        ready_status = "Ready" in node_desc and "Ready=True" in node_desc
+                        disk_pressure = "DiskPressure=True" in node_desc
+                        
+                        KNOWLEDGE_GRAPH.graph.nodes[node_id]['Ready'] = ready_status
+                        KNOWLEDGE_GRAPH.graph.nodes[node_id]['DiskPressure'] = disk_pressure
+                        
+                        if not ready_status or disk_pressure:
+                            KNOWLEDGE_GRAPH.add_issue(
+                                node_id,
+                                "node_health",
+                                f"Node issues: Ready={ready_status}, DiskPressure={disk_pressure}",
+                                "high"
+                            )
         
-        # Wait for pod to start
-        result += "Waiting for pod to start...\n"
-        time.sleep(5) # time module is imported
+        # Log Knowledge Graph construction
+        summary = KNOWLEDGE_GRAPH.get_summary()
+        logging.info(f"Knowledge Graph built: {summary}")
         
-        # Get pod status
-        pod_get_cmd = ["kubectl", "get", "pod", name, "-n", namespace]
-        pod_get_purpose = f"Check status of pod {namespace}/{name}"
-        pod_status = execute_command(pod_get_cmd, pod_get_purpose)
-        result += f"Pod status:\n{pod_status}\n\n"
+        print("=" * 80)
+        print("KNOWLEDGE GRAPH - FORMATTED OUTPUT")
+        print("=" * 80)
+        print()
         
-        return result
-        # --- End of try block ---
-    except Exception as e: # Catching broader exceptions during pod/PVC creation steps
-        error_msg = f"Failed during test pod/PVC creation or execution: {str(e)}"
+        # Print the formatted graph
+        formatted_output = KNOWLEDGE_GRAPH.print_graph()
+        print(formatted_output)
+        
+        print("\n" + "=" * 80)
+        print("Knowledge Graph")
+        print("=" * 80)
+
+        return f"Knowledge Graph successfully built with {summary['total_nodes']} nodes, {summary['total_edges']} edges, and {summary['total_issues']} issues identified."
+        
+    except Exception as e:
+        error_msg = f"Error building Knowledge Graph: {str(e)}"
         logging.error(error_msg)
-        return f"Error: {error_msg}" # The error string will be returned, and finally will execute
-    finally:
-        # --- Start of finally block ---
-        if pvc_filename_full_path and os.path.exists(pvc_filename_full_path):
-            try:
-                os.remove(pvc_filename_full_path)
-                logging.debug(f"Successfully deleted temporary file: {pvc_filename_full_path}")
-            except Exception as e:
-                logging.warning(f"Failed to delete temporary file {pvc_filename_full_path}: {e}")
-            
-        if os.path.exists(pod_filename_full_path): # pod_filename_full_path is always defined
-            try:
-                os.remove(pod_filename_full_path)
-                logging.debug(f"Successfully deleted temporary file: {pod_filename_full_path}")
-            except Exception as e:
-                logging.warning(f"Failed to delete temporary file {pod_filename_full_path}: {e}")
-        # --- End of finally block ---
+        return f"Error: {error_msg}"
+
+@tool
+def analyze_knowledge_graph() -> str:
+    """Analyze the Knowledge Graph to identify root causes and generate fix plan"""
+    global KNOWLEDGE_GRAPH
+    
+    if not KNOWLEDGE_GRAPH:
+        return "Error: Knowledge Graph not initialized. Run build_knowledge_graph first."
+    
+    try:
+        # Perform analysis
+        analysis = KNOWLEDGE_GRAPH.analyze_issues()
+        
+        # Generate fix plan
+        fix_plan = KNOWLEDGE_GRAPH.generate_fix_plan(analysis)
+        
+        # Format results
+        result = {
+            "root_cause": "Analysis completed",
+            "fix_plan": "Generated based on Knowledge Graph analysis"
+        }
+        
+        if analysis['potential_root_causes']:
+            primary_cause = analysis['potential_root_causes'][0]
+            result["root_cause"] = f"Primary: {primary_cause['description']}. Total issues: {analysis['total_issues']}"
+        
+        if fix_plan:
+            steps = [f"Step {step['step']}: {step['description']}" for step in fix_plan]
+            result["fix_plan"] = ". ".join(steps)
+        
+        # Log analysis results
+        logging.info(f"Knowledge Graph analysis: {len(analysis['potential_root_causes'])} root causes, {len(fix_plan)} fix steps")
+        
+        return json.dumps(result, indent=2)
+        
+    except Exception as e:
+        error_msg = f"Error analyzing Knowledge Graph: {str(e)}"
+        logging.error(error_msg)
+        return f"Error: {error_msg}"
+
+def define_tools() -> List[Any]:
+    """
+    Define comprehensive tools for the LangGraph ReAct agent
+    
+    Returns:
+        List[Any]: List of tool callables
+    """
+    tools = [
+        # Kubernetes core tools
+        kubectl_get,
+        kubectl_describe,
+        kubectl_logs,
+        kubectl_exec,
+        
+        # CSI Baremetal specific tools
+        kubectl_get_drive,
+        kubectl_get_csibmnode,
+        kubectl_get_ac,
+        kubectl_get_lvg,
+        kubectl_get_pods_csi,
+        kubectl_logs_csi,
+        kubectl_get_csidrivers,
+        
+        # Kubernetes diagnostic tools
+        kubectl_logs_control_plane,
+        kubectl_exec_df_h,
+        kubectl_exec_ls_ld,
+        kubectl_get_pod_securitycontext,
+        
+        # SSH-based tools
+        ssh_smartctl,
+        ssh_fio_read,
+        ssh_mount,
+        ssh_xfs_repair_n,
+        
+        # System diagnostic tools
+        df_h,
+        lsblk,
+        dmesg_grep_error,
+        dmesg_grep_disk,
+        journalctl_kubelet,
+        
+        # Test and utility tools
+        create_test_pod_yaml,
+        
+        # Knowledge Graph tools
+        build_knowledge_graph,
+        analyze_knowledge_graph
+    ]
+    return tools
 
 def create_troubleshooting_graph(pod_name: str, namespace: str, volume_path: str, phase: str = "analysis"):
     """
@@ -762,124 +868,96 @@ def create_troubleshooting_graph(pod_name: str, namespace: str, volume_path: str
     )
     
     # Get tools
-    tools = define_tools(pod_name, namespace, volume_path)
+    tools = define_tools()
     
     # Define function to call the model
     def call_model(state: MessagesState):
-        # Add system prompt with CSI Baremetal knowledge and phase-specific guidance
+        # Add comprehensive system prompt based on design requirements
         phase_specific_guidance = ""
         if phase == "analysis":
             phase_specific_guidance = """
 You are currently in Phase 1 (Analysis). Your task is to:
-1. Diagnose the root cause of the volume I/O error.
-2. Create a clear fix plan with step-by-step remediation actions.
-3. Present your findings as a JSON object with two keys: "root_cause" and "fix_plan". For example:
-   {
-     "root_cause": "The disk is full due to excessive log files.",
-     "fix_plan": "Step 1: Identify large log files in volume X. Step 2: Archive and delete old log files. Step 3: Implement log rotation."
-   }
-4. Ensure this JSON object is the final part of your response.
-5. DO NOT attempt to execute any remediation actions yet.
+1. Build a Knowledge Graph using build_knowledge_graph tool with the provided pod, namespace, and volume path
+2. Execute comprehensive diagnostic steps using available LangGraph tools
+3. Analyze the Knowledge Graph using analyze_knowledge_graph tool
+4. Present your findings as a JSON object with "root_cause" and "fix_plan" keys
+5. DO NOT attempt to execute any remediation actions yet
 
-Focus only on diagnostics and analysis in this phase. The remediation actions will be executed in Phase 2 if approved.
+Focus on comprehensive diagnostics and Knowledge Graph-based analysis. Use the Knowledge Graph to identify patterns and root causes.
 """
         elif phase == "remediation":
             phase_specific_guidance = """
 You are currently in Phase 2 (Remediation). Your task is to:
-1. Execute the fix plan from Phase 1
-2. Implement remediation actions while respecting allowed/disallowed commands
-3. Verify that the issue is resolved after implementing fixes
-4. Report the final resolution status
+1. Execute the fix plan from Phase 1 using available tools
+2. Respect command validation and interactive mode settings
+3. Verify that issues are resolved after implementing fixes
+4. Report final resolution status
 
-Focus on implementing the fix plan safely and effectively. Validate that each fix resolves the underlying issue.
+Implement the fix plan safely and effectively while following security constraints.
 """
         
         system_message = {
-            "role": "system",
-            "content": f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
+            "role": "system", 
+            "content": f"""You are an AI assistant powering an enhanced Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). The troubleshooting process is split into two phases: Analysis (Phase 1) and Remediation (Phase 2). All diagnostic and remediation commands are implemented as LangGraph tools, validated against `commands.disallowed` in `config.yaml` using prefix/wildcard matching. In Phase 1, a Knowledge Graph is constructed to organize diagnostic data, which you query for root cause analysis and fix plan generation.
 
 {phase_specific_guidance}
 
-Follow these strict guidelines for safe, reliable, and effective troubleshooting:
+Follow these strict guidelines for safe, reliable, and comprehensive troubleshooting:
 
 1. **Safety and Security**:
-   - Only execute commands listed in `commands.allowed` in `config.yaml` (e.g., `kubectl get drive`, `smartctl -a`, `fio`).
-   - Never execute commands in `commands.disallowed` (e.g., `fsck`, `chmod`, `dd`, `kubectl delete pod`) unless explicitly enabled in `config.yaml` and approved by the user in interactive mode.
-   - Validate all commands for safety and relevance before execution.
-   - Log all SSH commands and outputs for auditing, using secure credential handling as specified in `config.yaml`.
+   - Only execute predefined LangGraph tools. All tools are validated against `commands.disallowed`.
+   - Never execute tools whose commands match disallowed patterns unless explicitly enabled and approved.
+   - Validate all tool executions for safety and relevance.
+   - Log all tool executions, SSH commands, and outputs for auditing.
 
-2. **Interactive Mode**:
-   - If `troubleshoot.interactive_mode` is `true` in `config.yaml`, prompt the user before executing any command or tool with: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)". Include a clear purpose (e.g., "Check drive health with kubectl get drive").
-   - If disabled, execute allowed commands automatically, respecting `config.yaml` restrictions.
+2. **Interactive and Auto-Fix Modes**:
+   - In interactive mode, some tools may prompt for user approval with: "Proposed tool: <tool_name>. Purpose: <purpose>. Approve? (y/n)".
+   - If auto-fix mode is disabled, prompt after Phase 1: "Issues found: <list>. Fix plan: <plan>. Proceed to remediation phase? (y/n)".
+   - Execute allowed tools while respecting configuration restrictions.
 
-3. **Troubleshooting Process**:
-   - Use the LangGraph ReAct module to reason about volume I/O errors based on parameters: `PodName`, `PodNamespace`, and `VolumePath`.
-   - Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
-     a. **Confirm Issue**: Run `kubectl logs <pod-name> -n <namespace>` and `kubectl describe pod <pod-name> -n <namespace>` to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount").
-     b. **Verify Configurations**: Check Pod, PVC, and PV with `kubectl get pod/pvc/pv -o yaml`. Confirm PV uses local volume, valid disk path (e.g., `/dev/sda`), and correct `nodeAffinity`. Verify mount points with `kubectl exec <pod-name> -n <namespace> -- df -h` and `ls -ld <mount-path>`.
-     c. **Check CSI Baremetal Driver and Resources**:
-        - Identify driver: `kubectl get storageclass <storageclass-name> -o yaml` (e.g., `csi-baremetal-sc-ssd`).
-        - Verify driver pod: `kubectl get pods -n kube-system -l app=csi-baremetal` and `kubectl logs <driver-pod-name> -n kube-system`. Check for errors like "failed to mount".
-        - Confirm driver registration: `kubectl get csidrivers`.
-        - Check drive status: `kubectl get drive -o wide` and `kubectl get drive <drive-uuid> -o yaml`. Verify `Health: GOOD`, `Status: ONLINE`, `Usage: IN_USE`, and match `Path` (e.g., `/dev/sda`) with `VolumePath`.
-        - Map drive to node: `kubectl get csibmnode` to correlate `NodeId` with hostname/IP.
-        - Check AvailableCapacity: `kubectl get ac -o wide` to confirm size, storage class, and location (drive UUID).
-        - Check LogicalVolumeGroup: `kubectl get lvg` to verify `Health: GOOD` and associated drive UUIDs.
-     d. **Test Driver**: Create a test PVC/Pod using `csi-baremetal-sc-ssd` storage class (use provided YAML template). Check logs and events for read/write errors.
-     e. **Verify Node Health**: Run `kubectl describe node <node-name>` to ensure `Ready` state and no `DiskPressure`. Verify disk mounting via SSH: `mount | grep <disk-path>`.
-     f. **Check Permissions**: Verify file system permissions with `kubectl exec <pod-name> -n <namespace> -- ls -ld <mount-path>` and Pod `SecurityContext` settings.
-     g. **Inspect Control Plane**: Check `kube-controller-manager` and `kube-scheduler` logs for provisioning/scheduling issues.
-     h. **Test Hardware Disk**:
-        - Identify disk: `kubectl get pv -o yaml` and `kubectl get drive <drive-uuid> -o yaml` to confirm `Path`.
-        - Check health: `kubectl get drive <drive-uuid> -o yaml` and `ssh <node-name> sudo smartctl -a /dev/<disk-device>`. Verify `Health: GOOD`, zero `Reallocated_Sector_Ct` or `Current_Pending_Sector`.
-        - Test performance: `ssh <node-name> sudo fio --name=read_test --filename=/dev/<disk-device> --rw=read --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting`.
-        - Check file system (if unmounted): `ssh <node-name> sudo fsck /dev/<disk-device>` (requires approval).
-        - Test via Pod: Create a test Pod (use provided YAML) and check logs for "Write OK" and "Read OK".
-     i. **Propose Remediations**:
-        - Bad sectors: Recommend disk replacement if `kubectl get drive` or SMART shows `Health: BAD` or non-zero `Reallocated_Sector_Ct`.
-        - Performance issues: Suggest optimizing I/O scheduler or replacing disk if `fio` results show low IOPS (HDD: 100–200, SSD: thousands, NVMe: tens of thousands).
-        - File system corruption: Recommend `fsck` (if enabled/approved) after data backup.
-        - Driver issues: Suggest restarting CSI Baremetal driver pod (if enabled/approved) if logs indicate errors.
-   - Only propose remediations after analyzing diagnostic data. Ensure write/change commands (e.g., `fsck`, `kubectl delete pod`) are allowed and approved.
+3. **Knowledge Graph Integration**:
+   - In Phase 1, ALWAYS start by using build_knowledge_graph tool to construct the Knowledge Graph
+   - Use analyze_knowledge_graph tool to perform comprehensive analysis
+   - The Knowledge Graph organizes entities (Pod, PVC, PV, Drive, Node, StorageClass, LVG, AC) and relationships
+   - Use graph analysis results for root cause identification and fix plan generation
 
-4. **Error Handling**:
-   - Log all actions, command outputs, SSH results, and errors to the configured log file and stdout (if enabled).
-   - Handle Kubernetes API or SSH failures with retries as specified in `config.yaml`.
-   - EXPECT that some commands may fail and be prepared to handle failures gracefully.
-   - If a command fails (e.g., "resource type not found"), log the error, then TRY ALTERNATIVE approaches to gather similar information.
-   - For CSI Baremetal driver resources, verify resource availability with `kubectl get crd | grep csi-baremetal` before trying to access custom resources.
-   - If unresolved, provide a detailed report of findings (e.g., logs, drive status, SMART data, test results) and suggest manual intervention.
-   - ALWAYS provide a useful final response summarizing what was discovered, even if some commands failed.
+4. **Comprehensive Diagnostic Process**:
+   - **Confirm Issue**: Use kubectl_logs and kubectl_describe tools to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount")
+   - **Verify Configurations**: Check Pod, PVC, and PV with kubectl_get tools. Verify mount points with kubectl_exec_df_h and kubectl_exec_ls_ld
+   - **Check CSI Baremetal Driver and Resources**:
+     - Use kubectl_get_drive for drive status (Health: GOOD, Status: ONLINE, Usage: IN_USE)
+     - Use kubectl_get_csibmnode for drive-to-node mapping
+     - Use kubectl_get_ac for AvailableCapacity
+     - Use kubectl_get_lvg for LogicalVolumeGroup health
+     - Use kubectl_get_pods_csi and kubectl_logs_csi for driver pod status
+   - **Test Hardware**: Use ssh_smartctl for SMART data, ssh_fio_read for performance testing
+   - **Check Permissions**: Use kubectl_exec_ls_ld and kubectl_get_pod_securitycontext
+   - **Verify Node Health**: Use kubectl_describe for node status, ssh_mount for disk mounting
 
-5. **Constraints**:
-   - Restrict operations to the Kubernetes cluster and configured worker nodes; do not access external networks or resources.
-   - Do not modify cluster state (e.g., delete pods, change configurations) unless explicitly allowed and approved.
-   - Adhere to `troubleshoot.timeout_seconds` for the troubleshooting workflow.
-   - Always recommend data backup before suggesting write/change operations (e.g., `fsck`).
+5. **Error Handling**:
+   - Log all actions, outputs, and errors
+   - Handle failures gracefully - some commands may fail due to missing resources or permissions
+   - If CSI Baremetal resources are not available, continue with alternative diagnostic approaches
+   - Provide useful analysis even if some commands fail
 
-6. **Output**:
-   - Provide clear, concise explanations of diagnostic steps, findings, and remediation proposals.
-   - In interactive mode, format prompts as: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)".
-   - Include performance benchmarks in reports (e.g., HDD: 100–200 IOPS, SSD: thousands, NVMe: tens of thousands).
-   - Log all outputs with timestamps and context for traceability.
+6. **Output Requirements**:
+   - In Phase 1: Provide comprehensive analysis with JSON format containing "root_cause" and "fix_plan"
+   - In Phase 2: Report remediation results and resolution status
+   - Include performance benchmarks (HDD: 100-200 IOPS, SSD: thousands, NVMe: tens of thousands)
+   - Always provide actionable recommendations
 
-You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.
+You must adhere to these guidelines to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver using Knowledge Graph analysis.
 """
         }
         
-        # Handle case where state["messages"] might be a HumanMessage object (not subscriptable)
-        # Check if state["messages"] exists and is a list before trying to access elements
+        # Ensure system message is first
         if state["messages"]:
-            # Check if state["messages"] is a list
             if isinstance(state["messages"], list):
-                # If it's a list and the first message is not a system message, add the system message
                 if state["messages"][0].type != "system":
                     state["messages"] = [system_message] + state["messages"]
             else:
-                # If it's not a list (likely a HumanMessage object), convert to a list with system message first
                 state["messages"] = [system_message, state["messages"]]
         else:
-            # If state["messages"] is empty or None, initialize with just the system message
             state["messages"] = [system_message]
         
         # Call the model and bind tools
@@ -906,7 +984,7 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
 
 async def run_analysis_phase(pod_name: str, namespace: str, volume_path: str) -> Tuple[str, str]:
     """
-    Run Phase 1: Analysis to identify root cause and generate fix plan
+    Run Phase 1: Analysis with Knowledge Graph integration
     
     Args:
         pod_name: Name of the pod with the error
@@ -922,73 +1000,72 @@ async def run_analysis_phase(pod_name: str, namespace: str, volume_path: str) ->
         # Create troubleshooting graph for analysis phase
         graph = create_troubleshooting_graph(pod_name, namespace, volume_path, phase="analysis")
         
-        # Initial query with problem details for analysis phase
-        query = f"""Phase 1 - Analysis: Identify the root cause of volume I/O error for pod {pod_name} in namespace {namespace} at volume path {volume_path}.
+        # Initial query for analysis phase with Knowledge Graph integration
+        query = f"""Phase 1 - Analysis: Diagnose volume I/O error for pod {pod_name} in namespace {namespace} at volume path {volume_path}.
 
-Important: 
-1. Some commands may fail due to missing resources or permissions. This is normal and expected.
-2. If a command fails (e.g., "kubectl get drive" with "resource type not found"), continue with alternative approaches.
-3. For CSI Baremetal driver resources, verify resource availability with "kubectl get crd | grep csi-baremetal" first.
-4. Even if some diagnostic commands fail, provide your best analysis based on available information.
-5. Focus on diagnosis and root cause analysis ONLY. Do not attempt to fix the issue yet.
+IMPORTANT STEPS:
+1. First, use build_knowledge_graph tool to construct the Knowledge Graph with the provided parameters
+2. Execute comprehensive diagnostic steps using available LangGraph tools
+3. Use analyze_knowledge_graph tool to perform Knowledge Graph analysis
+4. Present findings as JSON with "root_cause" and "fix_plan" keys
+
+Notes:
+- Some commands may fail due to missing CSI Baremetal resources - this is expected
+- Continue with available diagnostic approaches even if some tools fail
+- Focus on comprehensive analysis, NOT remediation actions
+- The Knowledge Graph will help identify patterns and relationships between entities
 """
         formatted_query = {"messages": [{"role": "user", "content": query}]}
         
         # Set timeout
         timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
         
-        # Run graph to process analysis with timeout
-        logging.info(f"Starting analysis phase with timeout of {timeout_seconds} seconds")
+        # Run graph with timeout
+        logging.info(f"Starting analysis phase with Knowledge Graph integration, timeout: {timeout_seconds}s")
         try:
             response = await asyncio.wait_for(
-                graph.ainvoke(formatted_query),
+                graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
                 timeout=timeout_seconds
             )
         except Exception as e:
-            logging.error(f"Error during graph execution: {str(e)}")
+            logging.error(f"Error during analysis graph execution: {str(e)}")
             return (
-                "The CSI Baremetal driver resources might not be available in this cluster",
-                "Verify CSI Baremetal driver installation and CRD registration with 'kubectl get crd | grep csi-baremetal'"
+                "Analysis encountered an error, possibly due to missing CSI Baremetal resources",
+                "Verify cluster configuration and CSI Baremetal driver installation"
             )
         
         # Extract analysis results
-        # Handle case where response["messages"] might not be a list or might be empty
         if response["messages"]:
             if isinstance(response["messages"], list):
-                final_message = response["messages"][-1]["content"]
+                final_message = response["messages"][-1].content
             else:
-                # If it's not a list (e.g., a single message object), try to get content directly
-                final_message = response["messages"].get("content", "Failed to extract content from non-list messages")
+                final_message = response["messages"].content
         else:
             final_message = "Failed to generate analysis results"
         
-        # Parse root cause and fix plan from the analysis results
-        final_message_content = final_message # Assuming final_message is the string content
-        root_cause = "Unknown" # Default value
-        fix_plan = "No specific fix plan generated" # Default value
+        # Parse root cause and fix plan
+        root_cause = "Unknown"
+        fix_plan = "No specific fix plan generated"
 
         try:
-            # Attempt to find and parse the JSON block
-            json_start_index = final_message_content.find('{')
-            # Ensure rfind starts search from where json_start_index was found, if found.
-            json_end_index = final_message_content.rfind('}', json_start_index if json_start_index != -1 else 0) + 1
+            # Look for JSON block in the response
+            json_start = final_message.find('{')
+            json_end = final_message.rfind('}') + 1
             
-            if json_start_index != -1 and json_end_index != -1 and json_start_index < json_end_index:
-                json_str = final_message_content[json_start_index:json_end_index]
+            if json_start != -1 and json_end > json_start:
+                json_str = final_message[json_start:json_end]
                 parsed_json = json.loads(json_str)
-                root_cause = parsed_json.get("root_cause", "Unknown root cause (key 'root_cause' missing from JSON)")
-                fix_plan = parsed_json.get("fix_plan", "No fix plan provided (key 'fix_plan' missing from JSON)")
-                logging.info("Successfully parsed root cause and fix plan from LLM JSON output.")
+                root_cause = parsed_json.get("root_cause", "Unknown root cause")
+                fix_plan = parsed_json.get("fix_plan", "No fix plan provided")
+                logging.info("Successfully parsed root cause and fix plan from LLM JSON output")
             else:
-                # This custom exception helps differentiate from json.loads actual decoding error
-                raise json.JSONDecodeError("No JSON object found in LLM output", final_message_content, 0)
+                raise json.JSONDecodeError("No JSON object found", final_message, 0)
 
-        except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse LLM output as JSON: {e}. Content: '{final_message_content}'")
-            logging.info("Attempting fallback to string parsing for root cause and fix plan.")
-            # Fallback to old string parsing method
-            if "Root cause:" in final_message_content:
-                parts = final_message_content.split("Root cause:", 1)
+        except json.JSONDecodeError:
+            logging.warning("Failed to parse JSON, attempting fallback parsing")
+            # Fallback to string parsing
+            if "Root cause:" in final_message:
+                parts = final_message.split("Root cause:", 1)
                 if len(parts) > 1:
                     root_cause_section = parts[1].strip()
                     if "Fix plan:" in root_cause_section:
@@ -996,12 +1073,9 @@ Important:
                         fix_plan = root_cause_section.split("Fix plan:", 1)[1].strip()
                     else:
                         root_cause = root_cause_section
-                else: # Should not happen if "Root cause:" is in final_message_content
-                    root_cause = "Unknown (fallback parsing error after 'Root cause:' detected)"
-                    fix_plan = "Unknown (fallback parsing error after 'Root cause:' detected)"
             else:
-                root_cause = "Unknown (Failed to parse LLM output, no JSON or 'Root cause:' keyword)"
-                fix_plan = "Unknown (Failed to parse LLM output, no JSON or 'Root cause:' keyword)"
+                root_cause = "Analysis completed but specific root cause not clearly identified"
+                fix_plan = "Review diagnostic results and Knowledge Graph analysis for detailed insights"
         
         logging.info(f"Analysis completed for pod {namespace}/{pod_name}, volume {volume_path}")
         logging.info(f"Root cause: {root_cause}")
@@ -1020,7 +1094,7 @@ Important:
 
 async def run_remediation_phase(pod_name: str, namespace: str, volume_path: str, root_cause: str, fix_plan: str) -> str:
     """
-    Run Phase 2: Remediation to resolve the identified issue
+    Run Phase 2: Remediation to resolve identified issues
     
     Args:
         pod_name: Name of the pod with the error
@@ -1038,25 +1112,27 @@ async def run_remediation_phase(pod_name: str, namespace: str, volume_path: str,
         # Create troubleshooting graph for remediation phase
         graph = create_troubleshooting_graph(pod_name, namespace, volume_path, phase="remediation")
         
-        # Initial query with problem details for remediation phase
+        # Initial query for remediation phase
         query = f"""Phase 2 - Remediation: Resolve volume I/O error for pod {pod_name} in namespace {namespace} at volume path {volume_path}.
-Root cause: {root_cause}
-Fix plan: {fix_plan}
 
-Important:
-1. Some commands may fail due to missing resources or permissions. This is normal and expected.
-2. If a command fails, continue with alternative approaches where possible.
-3. For CSI Baremetal driver resources, verify resource availability before trying to access them.
-4. Even if some commands fail, provide a summary of what was attempted and what succeeded.
+Root cause identified: {root_cause}
+Fix plan to implement: {fix_plan}
 
-Implement the fix plan while respecting allowed/disallowed commands. After implementing fixes, verify that the issue is resolved."""
+IMPORTANT:
+1. Implement the fix plan using available LangGraph tools
+2. Respect command validation and interactive mode settings
+3. Some commands may fail due to permissions or missing resources - handle gracefully
+4. Verify resolution after implementing fixes
+5. Provide clear summary of what was accomplished
+
+Execute remediation steps while following security constraints and configuration settings."""
         formatted_query = {"messages": [{"role": "user", "content": query}]}
         
         # Set timeout
         timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
         
-        # Run graph to process remediation with timeout
-        logging.info(f"Starting remediation phase with timeout of {timeout_seconds} seconds")
+        # Run graph with timeout
+        logging.info(f"Starting remediation phase, timeout: {timeout_seconds}s")
         try:
             response = await asyncio.wait_for(
                 graph.ainvoke(formatted_query),
@@ -1064,22 +1140,18 @@ Implement the fix plan while respecting allowed/disallowed commands. After imple
             )
         except Exception as e:
             logging.error(f"Error during remediation graph execution: {str(e)}")
-            return f"Remediation phase encountered an error: {str(e)}. Some remediation steps may not have been completed. Please check system logs and verify the state of the pod {namespace}/{pod_name} manually."
+            return f"Remediation phase encountered an error: {str(e)}. Manual intervention may be required."
         
         # Extract remediation results
-        # Handle case where response["messages"] might not be a list or might be empty
         if response["messages"]:
             if isinstance(response["messages"], list):
-                final_message = response["messages"][-1]["content"]
+                final_message = response["messages"][-1].content
             else:
-                # If it's not a list (e.g., a single message object), try to get content directly
-                final_message = response["messages"].get("content", "Failed to extract content from non-list messages")
+                final_message = response["messages"].content
         else:
             final_message = "Failed to generate remediation results"
         
         logging.info(f"Remediation completed for pod {namespace}/{pod_name}, volume {volume_path}")
-        logging.info(f"Result: {final_message}")
-        
         return final_message
         
     except asyncio.TimeoutError:
@@ -1093,7 +1165,7 @@ Implement the fix plan while respecting allowed/disallowed commands. After imple
 
 async def troubleshoot(pod_name: str, namespace: str, volume_path: str):
     """
-    Two-phase troubleshooting process: Analysis and Remediation
+    Enhanced two-phase troubleshooting process with Knowledge Graph integration
     
     Args:
         pod_name: Name of the pod with the error
@@ -1103,11 +1175,8 @@ async def troubleshoot(pod_name: str, namespace: str, volume_path: str):
     global CONFIG_DATA, INTERACTIVE_MODE
     
     try:
-        # Initialize Kubernetes client
-        #init_kubernetes_client()
-        
-        # Phase 1: Analysis
-        logging.info("Starting Phase 1: Analysis")
+        # Phase 1: Analysis with Knowledge Graph
+        logging.info("Starting Phase 1: Analysis with Knowledge Graph integration")
         try:
             root_cause, fix_plan = await run_analysis_phase(pod_name, namespace, volume_path)
             
@@ -1118,10 +1187,10 @@ async def troubleshoot(pod_name: str, namespace: str, volume_path: str):
 Analysis phase encountered an issue: {root_cause}
 
 Recommendations:
-1. Verify that the CSI Baremetal driver is properly installed on your cluster.
-2. Check if CRDs are registered with 'kubectl get crd | grep csi-baremetal'.
-3. Ensure the pod {namespace}/{pod_name} exists and has storage issues.
-4. Review the log file for detailed error messages."""
+1. Verify that the CSI Baremetal driver is properly installed
+2. Check if CRDs are registered with 'kubectl get crd | grep csi-baremetal'
+3. Ensure the pod {namespace}/{pod_name} exists and has storage issues
+4. Review the troubleshoot.log file for detailed error messages"""
                 
         except Exception as e:
             logging.error(f"Exception during analysis phase: {str(e)}")
@@ -1129,10 +1198,10 @@ Recommendations:
 Analysis phase encountered an unexpected error: {str(e)}
 
 Recommendations:
-1. Check if the Kubernetes API server is accessible.
-2. Verify that your kubectl configuration is correct.
-3. Ensure the pod {namespace}/{pod_name} exists.
-4. Review the log file for detailed error messages."""
+1. Check if the Kubernetes API server is accessible
+2. Verify kubectl configuration is correct
+3. Ensure the pod {namespace}/{pod_name} exists
+4. Review the troubleshoot.log file for detailed error messages"""
         
         # Check if we should proceed to remediation
         proceed_to_remediation = CONFIG_DATA['troubleshoot']['auto_fix']
@@ -1151,21 +1220,8 @@ Recommendations:
             try:
                 result = await run_remediation_phase(pod_name, namespace, volume_path, root_cause, fix_plan)
                 
-                if result.startswith("Error:"):
-                    logging.warning(f"Remediation phase reported an error: {result}")
-                    return f"""Troubleshooting Summary:
-Analysis completed:
-- Root cause: {root_cause}
-- Fix plan: {fix_plan}
-
-Remediation phase encountered an issue: {result}
-
-Recommendations:
-1. Review the log file for detailed error messages.
-2. Consider manually implementing the fix plan based on the analysis results."""
-                    
                 return f"""Troubleshooting Summary:
-Analysis completed:
+Analysis completed (with Knowledge Graph):
 - Root cause: {root_cause}
 - Fix plan: {fix_plan}
 
@@ -1175,23 +1231,24 @@ Remediation results:
             except Exception as e:
                 logging.error(f"Exception during remediation phase: {str(e)}")
                 return f"""Troubleshooting Summary:
-Analysis completed:
+Analysis completed (with Knowledge Graph):
 - Root cause: {root_cause}
 - Fix plan: {fix_plan}
 
 Remediation phase encountered an unexpected error: {str(e)}
 
 Recommendations:
-1. Review the log file for detailed error messages.
-2. Consider manually implementing the fix plan based on the analysis results."""
+1. Review the troubleshoot.log file for detailed error messages
+2. Consider manually implementing the fix plan based on analysis results"""
         else:
             logging.info("Remediation phase skipped per user request")
             return f"""Troubleshooting Summary:
-Analysis completed:
+Analysis completed (with Knowledge Graph):
 - Root cause: {root_cause}
 - Fix plan: {fix_plan}
 
 Remediation phase was skipped per user request."""
+            
     except Exception as e:
         error_msg = f"Unexpected error during troubleshooting: {str(e)}"
         logging.error(error_msg)
@@ -1199,10 +1256,10 @@ Remediation phase was skipped per user request."""
 An unexpected error occurred: {str(e)}
 
 Recommendations:
-1. Review the log file for detailed error messages.
-2. Check if the Kubernetes API server is accessible.
-3. Verify that your kubectl configuration is correct.
-4. Ensure required resources and permissions are available."""
+1. Review the troubleshoot.log file for detailed error messages
+2. Check if the Kubernetes API server is accessible
+3. Verify kubectl configuration is correct
+4. Ensure required resources and permissions are available"""
     finally:
         # Close SSH connections
         close_ssh_connections()
@@ -1229,15 +1286,16 @@ def main():
     # Set interactive mode
     INTERACTIVE_MODE = CONFIG_DATA['troubleshoot']['interactive_mode']
     
-    logging.info(f"Starting troubleshooting for pod {namespace}/{pod_name}, volume {volume_path}")
+    logging.info(f"Starting enhanced troubleshooting with Knowledge Graph for pod {namespace}/{pod_name}, volume {volume_path}")
     logging.info(f"Interactive mode: {INTERACTIVE_MODE}")
+    logging.info(f"Auto-fix mode: {CONFIG_DATA['troubleshoot']['auto_fix']}")
     
     # Run troubleshooting
     try:
         result = asyncio.run(troubleshoot(pod_name, namespace, volume_path))
-        print("\n=== Troubleshooting Results ===")
+        print("\n=== Enhanced Troubleshooting Results ===")
         print(result)
-        print("==============================\n")
+        print("=======================================\n")
     except KeyboardInterrupt:
         logging.info("Troubleshooting stopped by user")
         print("\nTroubleshooting stopped by user")

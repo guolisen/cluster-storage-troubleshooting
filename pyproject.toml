@@ -28,6 +28,7 @@ dependencies = [
     "langchain>=0.3.25",
     "langchain-openai>=0.3.17",
     "langgraph",
+    "networkx>=3.4.2",
     "paramiko",
     "pyyaml",
 ]

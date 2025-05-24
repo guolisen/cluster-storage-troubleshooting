@@ -16,19 +16,11 @@ import yaml
 import logging
 import asyncio
 import time
-import subprocess
 import json
-import paramiko
-import uuid
-import shlex
-import re
 import argparse
 from typing import Dict, List, Any, Optional, Tuple
 from langgraph.graph import StateGraph
-from kubernetes import client, config
-from kubernetes.client.rest import ApiException
-from knowledge_graph import KnowledgeGraph
-from tools import define_remediation_tools, execute_command
+from kubernetes import config
 from graph import create_troubleshooting_graph_with_context
 from information_collector import ComprehensiveInformationCollector
 
@@ -37,6 +29,11 @@ CONFIG_DATA = None
 INTERACTIVE_MODE = False
 SSH_CLIENTS = {}
 KNOWLEDGE_GRAPH = None
+
+os.environ['LANGCHAIN_TRACING_V2'] = "true"   
+os.environ['LANGCHAIN_ENDPOINT'] = "https://api.smith.langchain.com"   
+os.environ['LANGCHAIN_API_KEY'] = "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"   
+os.environ['LANGCHAIN_PROJECT'] = "pr-silver-bank-1"
 
 def load_config():
     """Load configuration from config.yaml"""

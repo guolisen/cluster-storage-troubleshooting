@@ -225,7 +225,8 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         tools_condition,
         {
             "tools": "tools",
-            "none": END
+            "none": END,
+            "__end__": END  # Add explicit mapping for __end__ state
         }
     )
     builder.add_edge("tools", "call_model")

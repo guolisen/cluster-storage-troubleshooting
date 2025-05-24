@@ -609,18 +609,18 @@ def define_remediation_tools() -> List[Any]:
         kg_print_graph,
         
         # Kubernetes tools
-        kubectl_get,
-        kubectl_describe,
-        kubectl_apply,
-        kubectl_delete,
+        #kubectl_get,
+        #kubectl_describe,
+        #kubectl_apply,
+        #kubectl_delete,
         kubectl_exec,
         kubectl_logs,
-        kubectl_get_drive,
-        kubectl_get_csibmnode,
-        kubectl_get_availablecapacity,
-        kubectl_get_logicalvolumegroup,
-        kubectl_get_storageclass,
-        kubectl_get_csidrivers,
+        #kubectl_get_drive,
+        #kubectl_get_csibmnode,
+        #kubectl_get_availablecapacity,
+        #kubectl_get_logicalvolumegroup,
+        #kubectl_get_storageclass,
+        #kubectl_get_csidrivers,
         
         # Hardware diagnostic tools
         smartctl_check,

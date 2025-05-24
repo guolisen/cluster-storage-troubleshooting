@@ -12,7 +12,7 @@ from typing import Dict, List, Any
 
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
-from langchain.chat_models import init_chat_model
+from langchain_openai import ChatOpenAI
 
 
 def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "analysis", config_data: Dict[str, Any] = None):
@@ -31,8 +31,8 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
         raise ValueError("Configuration data is required")
     
     # Initialize language model
-    model = init_chat_model(
-        config_data['llm']['model'],
+    model = ChatOpenAI(
+        model=config_data['llm']['model'],
         api_key=config_data['llm']['api_key'],
         base_url=config_data['llm']['api_endpoint'],
         temperature=config_data['llm']['temperature'],

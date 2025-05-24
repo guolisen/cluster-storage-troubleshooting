@@ -20,6 +20,61 @@ from graph import create_troubleshooting_graph_with_context
 
 # Global variables
 INTERACTIVE_MODE = False  # To be set by the caller
+CONFIG_DATA = None  # To be set by the caller with configuration
+
+def validate_command(command_list: List[str], config_data: Dict[str, Any] = None) -> Tuple[bool, str]:
+    """
+    Validate command against allowed/disallowed patterns in configuration
+    
+    Args:
+        command_list: Command to validate as list of strings
+        config_data: Configuration data containing command restrictions
+        
+    Returns:
+        Tuple[bool, str]: (is_allowed, reason)
+    """
+    if not command_list:
+        return False, "Empty command list"
+    
+    if config_data is None:
+        config_data = CONFIG_DATA
+    
+    if config_data is None:
+        return True, "No configuration available - allowing command"
+    
+    command_str = ' '.join(command_list)
+    commands_config = config_data.get('commands', {})
+    
+    # Check disallowed commands first (higher priority)
+    disallowed = commands_config.get('disallowed', [])
+    for pattern in disallowed:
+        if _matches_pattern(command_str, pattern):
+            return False, f"Command matches disallowed pattern: {pattern}"
+    
+    # Check allowed commands
+    allowed = commands_config.get('allowed', [])
+    if allowed:  # If allowed list exists, command must match one of them
+        for pattern in allowed:
+            if _matches_pattern(command_str, pattern):
+                return True, f"Command matches allowed pattern: {pattern}"
+        return False, "Command does not match any allowed pattern"
+    
+    # If no allowed list, allow by default (only disallowed list matters)
+    return True, "No allowed list specified - command permitted"
+
+def _matches_pattern(command: str, pattern: str) -> bool:
+    """
+    Check if command matches a pattern (supports wildcards)
+    
+    Args:
+        command: Full command string
+        pattern: Pattern to match against (supports * wildcard)
+        
+    Returns:
+        bool: True if command matches pattern
+    """
+    import fnmatch
+    return fnmatch.fnmatch(command, pattern)
 
 def execute_command(command_list: List[str], purpose: str, requires_approval: bool = True) -> str:
     """
@@ -499,9 +554,48 @@ def ssh_execute(node_name: str, command: str) -> str:
     Returns:
         str: Command output
     """
-    # Note: In a real implementation, this would use paramiko or similar
-    # For now, this is a placeholder that shows the command that would be executed
-    return f"SSH command to {node_name}: {command}\n[Note: Actual SSH execution requires proper credential configuration]"
+    try:
+        import paramiko
+        import os
+        
+        # Get SSH configuration from global config (would be passed in real implementation)
+        ssh_user = "root"  # Default, should come from config
+        ssh_key_path = os.path.expanduser("~/.ssh/id_ed25519")  # Default, should come from config
+        
+        # Create SSH client
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        try:
+            # Connect using SSH key
+            ssh_client.connect(
+                hostname=node_name,
+                username=ssh_user,
+                key_filename=ssh_key_path,
+                timeout=30
+            )
+            
+            # Execute command
+            stdin, stdout, stderr = ssh_client.exec_command(command, timeout=60)
+            
+            # Get output
+            output = stdout.read().decode('utf-8')
+            error = stderr.read().decode('utf-8')
+            
+            # Return combined output
+            if error:
+                return f"Output:\n{output}\nError:\n{error}"
+            return output
+            
+        except Exception as e:
+            return f"SSH execution failed: {str(e)}"
+        finally:
+            ssh_client.close()
+            
+    except ImportError:
+        return f"Error: paramiko not available. Install with: pip install paramiko"
+    except Exception as e:
+        return f"SSH setup error: {str(e)}"
 
 # System diagnostic tools
 

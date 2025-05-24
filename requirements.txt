@@ -1,6 +1,7 @@
 kubernetes>=24.2.0
-langgraph>=0.0.19
+langgraph>=0.2.0
 paramiko>=3.0.0
 pyyaml>=6.0
-langchain-openai>=0.0.5
-langchain>=0.0.350
+langchain-openai>=0.1.0
+langchain>=0.2.0
+networkx>=3.0

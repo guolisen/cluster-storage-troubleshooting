@@ -63,14 +63,15 @@ def execute_command(command_list: List[str], purpose: str, requires_approval: bo
         error_msg = f"Failed to execute command {command_display_str}: {str(e)}"
         logging.error(error_msg)
         return f"Error: {error_msg}"
+
 def define_remediation_tools() -> List[Any]:
     """
-    Define tools needed for remediation phase
+    Define tools needed for remediation and analysis phases
     
     Returns:
-        List[Any]: List of tool callables for remediation
+        List[Any]: List of tool callables for investigation and remediation
     """
-    # Return LangGraph tools for Kubernetes operations
+    # Return LangGraph tools for Kubernetes operations and CSI Baremetal investigation
     return [
         kubectl_get,
         kubectl_describe,
@@ -78,6 +79,16 @@ def define_remediation_tools() -> List[Any]:
         kubectl_delete,
         kubectl_exec,
         kubectl_logs,
+        kubectl_get_drive,
+        kubectl_get_csibmnode,
+        kubectl_get_availablecapacity,
+        kubectl_get_logicalvolumegroup,
+        kubectl_get_storageclass,
+        kubectl_get_csidrivers,
+        smartctl_check,
+        fio_performance_test,
+        fsck_check,
+        ssh_execute,
         df_command,
         lsblk_command,
         mount_command,
@@ -215,11 +226,12 @@ def kubectl_exec(pod_name: str, command: str, namespace: str = None) -> str:
     Returns:
         str: Command output
     """
-    cmd = ["kubectl", "exec", pod_name, "--"]
-    cmd.extend(command.split())
+    cmd = ["kubectl", "exec", pod_name]
     
     if namespace:
         cmd.extend(["-n", namespace])
+    
+    cmd.extend(["--", *command.split()])
     
     # Execute command
     try:
@@ -263,6 +275,233 @@ def kubectl_logs(pod_name: str, namespace: str = None, container: str = None, ta
         return f"Error: {e.stderr}"
     except Exception as e:
         return f"Error executing kubectl logs: {str(e)}"
+
+# CSI Baremetal-specific tools
+
+@tool
+def kubectl_get_drive(drive_uuid: str = None, output_format: str = "wide") -> str:
+    """
+    Get CSI Baremetal drive information
+    
+    Args:
+        drive_uuid: Drive UUID (optional, gets all drives if not specified)
+        output_format: Output format (wide, yaml, json)
+        
+    Returns:
+        str: Command output showing drive status, health, path, etc.
+    """
+    cmd = ["kubectl", "get", "drive"]
+    
+    if drive_uuid:
+        cmd.append(drive_uuid)
+    
+    cmd.extend(["-o", output_format])
+    
+    try:
+        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        return f"Error: {e.stderr}"
+    except Exception as e:
+        return f"Error executing kubectl get drive: {str(e)}"
+
+@tool
+def kubectl_get_csibmnode(node_name: str = None, output_format: str = "wide") -> str:
+    """
+    Get CSI Baremetal node information
+    
+    Args:
+        node_name: Node name (optional, gets all nodes if not specified)
+        output_format: Output format (wide, yaml, json)
+        
+    Returns:
+        str: Command output showing node mapping and drive associations
+    """
+    cmd = ["kubectl", "get", "csibmnode"]
+    
+    if node_name:
+        cmd.append(node_name)
+    
+    cmd.extend(["-o", output_format])
+    
+    try:
+        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        return f"Error: {e.stderr}"
+    except Exception as e:
+        return f"Error executing kubectl get csibmnode: {str(e)}"
+
+@tool
+def kubectl_get_availablecapacity(ac_name: str = None, output_format: str = "wide") -> str:
+    """
+    Get CSI Baremetal available capacity information
+    
+    Args:
+        ac_name: Available capacity name (optional, gets all if not specified)
+        output_format: Output format (wide, yaml, json)
+        
+    Returns:
+        str: Command output showing available capacity and storage class mapping
+    """
+    cmd = ["kubectl", "get", "ac"]
+    
+    if ac_name:
+        cmd.append(ac_name)
+    
+    cmd.extend(["-o", output_format])
+    
+    try:
+        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        return f"Error: {e.stderr}"
+    except Exception as e:
+        return f"Error executing kubectl get ac: {str(e)}"
+
+@tool
+def kubectl_get_logicalvolumegroup(lvg_name: str = None, output_format: str = "wide") -> str:
+    """
+    Get CSI Baremetal logical volume group information
+    
+    Args:
+        lvg_name: Logical volume group name (optional, gets all if not specified)
+        output_format: Output format (wide, yaml, json)
+        
+    Returns:
+        str: Command output showing LVG health and associated drives
+    """
+    cmd = ["kubectl", "get", "lvg"]
+    
+    if lvg_name:
+        cmd.append(lvg_name)
+    
+    cmd.extend(["-o", output_format])
+    
+    try:
+        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        return f"Error: {e.stderr}"
+    except Exception as e:
+        return f"Error executing kubectl get lvg: {str(e)}"
+
+@tool
+def kubectl_get_storageclass(sc_name: str = None, output_format: str = "yaml") -> str:
+    """
+    Get storage class information
+    
+    Args:
+        sc_name: Storage class name (optional, gets all if not specified)
+        output_format: Output format (yaml, json, wide)
+        
+    Returns:
+        str: Command output showing storage class configuration
+    """
+    cmd = ["kubectl", "get", "storageclass"]
+    
+    if sc_name:
+        cmd.append(sc_name)
+    
+    cmd.extend(["-o", output_format])
+    
+    try:
+        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        return f"Error: {e.stderr}"
+    except Exception as e:
+        return f"Error executing kubectl get storageclass: {str(e)}"
+
+@tool
+def kubectl_get_csidrivers(output_format: str = "wide") -> str:
+    """
+    Get CSI driver registration information
+    
+    Args:
+        output_format: Output format (wide, yaml, json)
+        
+    Returns:
+        str: Command output showing registered CSI drivers
+    """
+    cmd = ["kubectl", "get", "csidrivers", "-o", output_format]
+    
+    try:
+        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        return f"Error: {e.stderr}"
+    except Exception as e:
+        return f"Error executing kubectl get csidrivers: {str(e)}"
+
+# Hardware diagnostic tools
+
+@tool
+def smartctl_check(node_name: str, device_path: str) -> str:
+    """
+    Check disk health using smartctl via SSH
+    
+    Args:
+        node_name: Node hostname or IP
+        device_path: Device path (e.g., /dev/sda)
+        
+    Returns:
+        str: SMART data showing disk health, reallocated sectors, etc.
+    """
+    cmd = f"sudo smartctl -a {device_path}"
+    return ssh_execute(node_name, cmd)
+
+@tool
+def fio_performance_test(node_name: str, device_path: str, test_type: str = "read") -> str:
+    """
+    Test disk performance using fio via SSH
+    
+    Args:
+        node_name: Node hostname or IP
+        device_path: Device path (e.g., /dev/sda)
+        test_type: Test type (read, write, randread, randwrite)
+        
+    Returns:
+        str: Performance test results showing IOPS and throughput
+    """
+    cmd = f"sudo fio --name={test_type}_test --filename={device_path} --rw={test_type} --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting"
+    return ssh_execute(node_name, cmd)
+
+@tool
+def fsck_check(node_name: str, device_path: str, check_only: bool = True) -> str:
+    """
+    Check file system integrity using fsck via SSH
+    
+    Args:
+        node_name: Node hostname or IP
+        device_path: Device path (e.g., /dev/sda1)
+        check_only: If True, only check without fixing (safer)
+        
+    Returns:
+        str: File system check results
+    """
+    if check_only:
+        cmd = f"sudo fsck -n {device_path}"  # -n flag means no changes, check only
+    else:
+        cmd = f"sudo fsck -y {device_path}"  # -y flag means auto-fix (requires approval)
+    
+    return ssh_execute(node_name, cmd)
+
+@tool
+def ssh_execute(node_name: str, command: str) -> str:
+    """
+    Execute command on remote node via SSH
+    
+    Args:
+        node_name: Node hostname or IP
+        command: Command to execute
+        
+    Returns:
+        str: Command output
+    """
+    # Note: In a real implementation, this would use paramiko or similar
+    # For now, this is a placeholder that shows the command that would be executed
+    return f"SSH command to {node_name}: {command}\n[Note: Actual SSH execution requires proper credential configuration]"
 
 # System diagnostic tools
 

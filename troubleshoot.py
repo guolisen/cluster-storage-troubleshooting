@@ -4,10 +4,10 @@ Kubernetes Volume I/O Error Troubleshooting Script with Phase 0 Information Coll
 
 This script uses a 3-phase approach:
 - Phase 0: Information Collection - Pre-collect all diagnostic data upfront
-- Phase 1: Analysis - Analyze pre-collected data with Knowledge Graph
+- Phase 1: ReAct Investigation - Actively investigate using tools with pre-collected data as base knowledge
 - Phase 2: Remediation - Execute fix plan based on analysis
 
-Enhanced with Knowledge Graph integration for comprehensive root cause analysis.
+Enhanced with Knowledge Graph integration and ReAct methodology for comprehensive root cause analysis.
 """
 
 import os
@@ -24,6 +24,7 @@ import shlex
 import re
 import argparse
 from typing import Dict, List, Any, Optional, Tuple
+from langgraph.graph import StateGraph
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from knowledge_graph import KnowledgeGraph
@@ -36,80 +37,6 @@ CONFIG_DATA = None
 INTERACTIVE_MODE = False
 SSH_CLIENTS = {}
 KNOWLEDGE_GRAPH = None
-
-async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds: int = 60) -> Tuple[str, str]:
-    """
-    Run an analysis using the provided LangGraph StateGraph
-    
-    Args:
-        query: The initial query to send to the graph
-        graph: LangGraph StateGraph to use
-        timeout_seconds: Maximum execution time in seconds
-        
-    Returns:
-        Tuple[str, str]: Root cause and fix plan
-    """
-    try:
-        formatted_query = {"messages": [{"role": "user", "content": query}]}
-        
-        # Run graph with timeout
-        logging.info(f"Starting analysis with graph, timeout: {timeout_seconds}s")
-        try:
-            response = await asyncio.wait_for(
-                graph.ainvoke(formatted_query, config={"recursion_limit": 50}),
-                timeout=timeout_seconds
-            )
-        except Exception as e:
-            logging.error(f"Error during graph execution: {str(e)}")
-            return (
-                "Analysis encountered an error during graph execution",
-                "Review collected diagnostic information manually for troubleshooting"
-            )
-        
-        # Extract analysis results
-        if response["messages"]:
-            if isinstance(response["messages"], list):
-                final_message = response["messages"][-1].content
-            else:
-                final_message = response["messages"].content
-        else:
-            final_message = "Failed to generate analysis results"
-        
-        # Parse root cause and fix plan
-        root_cause = "Unknown"
-        fix_plan = "No specific fix plan generated"
-
-        try:
-            # Look for JSON block in the response
-            json_start = final_message.find('{')
-            json_end = final_message.rfind('}') + 1
-            
-            if json_start != -1 and json_end > json_start:
-                json_str = final_message[json_start:json_end]
-                parsed_json = json.loads(json_str)
-                root_cause = parsed_json.get("root_cause", "Unknown root cause")
-                fix_plan = parsed_json.get("fix_plan", "No fix plan provided")
-                logging.info(f"Root cause identified: {root_cause}")
-            else:
-                # If no JSON found, use heuristic to extract information
-                if "root cause" in final_message.lower():
-                    root_parts = final_message.lower().split("root cause")
-                    if len(root_parts) > 1:
-                        root_cause = root_parts[1].strip().split("\n")[0]
-                
-                if "fix plan" in final_message.lower():
-                    fix_parts = final_message.lower().split("fix plan")
-                    if len(fix_parts) > 1:
-                        fix_plan = fix_parts[1].strip().split("\n")[0]
-        except Exception as e:
-            logging.warning(f"Error parsing LLM response: {str(e)}")
-            # Return raw message if parsing fails
-            return final_message, final_message
-        
-        return root_cause, fix_plan
-    except Exception as e:
-        logging.error(f"Error in run_analysis_with_graph: {str(e)}")
-        return "Error in analysis", str(e)
 
 def load_config():
     """Load configuration from config.yaml"""
@@ -206,10 +133,83 @@ async def run_information_collection_phase(pod_name: str, namespace: str, volume
         }
         return collected_info
 
+async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds: int = 60) -> Tuple[str, str]:
+    """
+    Run an analysis using the provided LangGraph StateGraph
+    
+    Args:
+        query: The initial query to send to the graph
+        graph: LangGraph StateGraph to use
+        timeout_seconds: Maximum execution time in seconds
+        
+    Returns:
+        Tuple[str, str]: Root cause and fix plan
+    """
+    try:
+        formatted_query = {"messages": [{"role": "user", "content": query}]}
+        
+        # Run graph with timeout
+        logging.info(f"Starting analysis with graph, timeout: {timeout_seconds}s")
+        try:
+            response = await asyncio.wait_for(
+                graph.ainvoke(formatted_query, config={"recursion_limit": 50}),
+                timeout=timeout_seconds
+            )
+        except Exception as e:
+            logging.error(f"Error during graph execution: {str(e)}")
+            return (
+                "Analysis encountered an error during graph execution",
+                "Review collected diagnostic information manually for troubleshooting"
+            )
+        
+        # Extract analysis results
+        if response["messages"]:
+            if isinstance(response["messages"], list):
+                final_message = response["messages"][-1].content
+            else:
+                final_message = response["messages"].content
+        else:
+            final_message = "Failed to generate analysis results"
+        
+        # Parse root cause and fix plan
+        root_cause = "Unknown"
+        fix_plan = "No specific fix plan generated"
+
+        try:
+            # Look for JSON block in the response
+            json_start = final_message.find('{')
+            json_end = final_message.rfind('}') + 1
+            
+            if json_start != -1 and json_end > json_start:
+                json_str = final_message[json_start:json_end]
+                parsed_json = json.loads(json_str)
+                root_cause = parsed_json.get("root_cause", "Unknown root cause")
+                fix_plan = parsed_json.get("fix_plan", "No fix plan provided")
+                logging.info(f"Root cause identified: {root_cause}")
+            else:
+                # If no JSON found, use heuristic to extract information
+                if "root cause" in final_message.lower():
+                    root_parts = final_message.lower().split("root cause")
+                    if len(root_parts) > 1:
+                        root_cause = root_parts[1].strip().split("\n")[0]
+                
+                if "fix plan" in final_message.lower():
+                    fix_parts = final_message.lower().split("fix plan")
+                    if len(fix_parts) > 1:
+                        fix_plan = fix_parts[1].strip().split("\n")[0]
+        except Exception as e:
+            logging.warning(f"Error parsing LLM response: {str(e)}")
+            # Return raw message if parsing fails
+            return final_message, final_message
+        
+        return root_cause, fix_plan
+    except Exception as e:
+        logging.error(f"Error in run_analysis_with_graph: {str(e)}")
+        return "Error in analysis", str(e)
 
 async def run_analysis_phase_with_context(pod_name: str, namespace: str, volume_path: str, collected_info: Dict[str, Any]) -> Tuple[str, str]:
     """
-    Run Phase 1: Analysis with pre-collected information
+    Run Phase 1: ReAct Investigation with pre-collected information as base knowledge
     
     Args:
         pod_name: Name of the pod with the error
@@ -226,18 +226,31 @@ async def run_analysis_phase_with_context(pod_name: str, namespace: str, volume_
         # Create troubleshooting graph with pre-collected context
         graph = create_troubleshooting_graph_with_context(collected_info, phase="analysis", config_data=CONFIG_DATA)
         
-        # Initial query for analysis phase with context
-        query = f"""Phase 1 - Analysis: Analyze the pre-collected diagnostic information for volume I/O error in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
+        # Initial query for ReAct investigation phase
+        query = f"""Phase 1 - ReAct Investigation: Actively investigate the volume I/O error in pod {pod_name} in namespace {namespace} at volume path {volume_path} using available tools.
 
-All necessary diagnostic information has been collected in Phase 0 and is provided in the system context. Please:
+You have pre-collected diagnostic information from Phase 0 as base knowledge, but you must now use ReAct methodology to actively investigate the volume I/O issue step by step using available tools.
 
-1. Review all the pre-collected diagnostic data
-2. Analyze the Knowledge Graph relationships to understand the storage stack
-3. Identify root cause(s) based on the available information
-4. Generate a comprehensive fix plan
-5. Present findings as JSON with "root_cause" and "fix_plan" keys
+Your task is to:
+1. Use the pre-collected data as base knowledge to understand the initial context
+2. Follow the structured diagnostic process (steps a-i) using ReAct tools for active investigation
+3. Execute tools step-by-step to gather additional evidence and verify findings
+4. Identify root cause(s) based on both pre-collected data and active investigation results
+5. Generate a comprehensive fix plan
+6. Present findings as JSON with "root_cause" and "fix_plan" keys
 
-Focus on comprehensive analysis of the pre-collected data - no additional commands need to be executed.
+Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
+a. **Confirm Issue**: Use kubectl_logs and kubectl_describe tools to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount")
+b. **Verify Configurations**: Check Pod, PVC, and PV with kubectl_get tool. Confirm PV uses local volume, valid disk path, and correct nodeAffinity
+c. **Check CSI Baremetal Driver and Resources**: Use kubectl_get_drive, kubectl_get_csibmnode, kubectl_get_availablecapacity, kubectl_get_logicalvolumegroup tools
+d. **Test Driver**: Consider creating test resources if needed for verification
+e. **Verify Node Health**: Use kubectl_describe for nodes and check for DiskPressure
+f. **Check Permissions**: Verify file system permissions and SecurityContext settings
+g. **Inspect Control Plane**: Check controller and scheduler logs if needed
+h. **Test Hardware Disk**: Use smartctl_check, fio_performance_test, and fsck_check tools
+i. **Propose Remediations**: Based on investigation results, provide specific remediation steps
+
+Use available tools actively to investigate step by step. The pre-collected data provides the starting context, but you should verify and expand your understanding through active tool use.
 """
         # Set timeout
         timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
@@ -355,11 +368,11 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
         
         phase_1_start = time.time()
         
-        # Phase 1: Analysis
+        # Phase 1: ReAct Investigation
         print("=" * 80)
-        print("PHASE 1: ANALYSIS")
+        print("PHASE 1: REACT INVESTIGATION")
         print("=" * 80)
-        print("Analyzing pre-collected diagnostic information...")
+        print("Actively investigating volume I/O issue using tools...")
         print()
         
         root_cause, fix_plan = await run_analysis_phase_with_context(
@@ -407,7 +420,7 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
         print("=" * 80)
         print(f"Total Duration: {total_duration:.2f} seconds")
         print(f"Phase 0 (Collection): {results['phases']['phase_0_collection']['duration']:.2f}s")
-        print(f"Phase 1 (Analysis): {results['phases']['phase_1_analysis']['duration']:.2f}s")
+        print(f"Phase 1 (ReAct Investigation): {results['phases']['phase_1_analysis']['duration']:.2f}s")
         print(f"Phase 2 (Remediation): {results['phases']['phase_2_remediation']['duration']:.2f}s")
         print()
         print(f"Root Cause: {root_cause}")

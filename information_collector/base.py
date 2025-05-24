@@ -27,6 +27,7 @@ class InformationCollectorBase:
             'system': {},
             'ssh_data': {},
             'tool_outputs': {},  # Store individual tool outputs
+            'log_analysis': {},  # Parsed log issues and analysis
             'errors': []
         }
         
@@ -83,7 +84,7 @@ class InformationCollectorBase:
         
         Args:
             tool_func: Tool function to execute
-            tool_args: Arguments for the tool
+            tool_args: Arguments for the tool (either positional args list or dict for named args)
             tool_name: Name of the tool for logging
             purpose: Purpose of the tool execution
             
@@ -97,27 +98,88 @@ class InformationCollectorBase:
             
             # Execute the tool
             logging.info(f"Executing tool: {tool_name} - {purpose}")
-            if tool_args:
-                result = tool_func(*tool_args)
+            
+            # Handle different argument patterns for LangChain tools
+            if hasattr(tool_func, 'invoke'):
+                # New LangChain pattern - use invoke with proper argument structure
+                if isinstance(tool_args, dict):
+                    # Named arguments
+                    result = tool_func.invoke(tool_args)
+                elif isinstance(tool_args, list) and len(tool_args) > 0:
+                    # Convert positional args to named args based on tool function signature
+                    result = self._invoke_tool_with_positional_args(tool_func, tool_args)
+                else:
+                    # No arguments
+                    result = tool_func.invoke({})
             else:
-                result = tool_func()
+                # Fallback to direct function call for non-LangChain tools
+                if tool_args:
+                    result = tool_func(*tool_args)
+                else:
+                    result = tool_func()
+            
+            # Handle result extraction if it's wrapped in a response object
+            if hasattr(result, 'content'):
+                result_str = str(result.content)
+            elif isinstance(result, dict) and 'output' in result:
+                result_str = str(result['output'])
+            else:
+                result_str = str(result)
             
             # Store the result
             self.collected_data['tool_outputs'][f"{tool_name}_{int(time.time())}"] = {
                 'tool': tool_name,
                 'purpose': purpose,
-                'output': result,
+                'output': result_str,
                 'timestamp': time.time()
             }
             
             logging.debug(f"Tool {tool_name} completed successfully")
-            return result
+            return result_str
             
         except Exception as e:
             error_msg = f"Error executing tool {tool_name}: {str(e)}"
             logging.error(error_msg)
             self.collected_data['errors'].append(error_msg)
             return f"Error: {error_msg}"
+    
+    def _invoke_tool_with_positional_args(self, tool_func, tool_args: List[Any]) -> Any:
+        """
+        Helper method to invoke LangChain tools with positional arguments
+        converted to named arguments based on function signature
+        
+        Args:
+            tool_func: LangChain tool function
+            tool_args: List of positional arguments
+            
+        Returns:
+            Tool execution result
+        """
+        import inspect
+        
+        try:
+            # Get function signature to map positional args to named args
+            if hasattr(tool_func, 'func'):
+                sig = inspect.signature(tool_func.func)
+            else:
+                sig = inspect.signature(tool_func)
+            
+            param_names = list(sig.parameters.keys())
+            
+            # Create named argument dict, filtering out None values
+            named_args = {}
+            for i, arg_value in enumerate(tool_args):
+                if i < len(param_names) and arg_value is not None:
+                    named_args[param_names[i]] = arg_value
+            
+            return tool_func.invoke(named_args)
+            
+        except Exception as e:
+            # Fallback: try with first argument as input
+            if tool_args:
+                return tool_func.invoke({'input': tool_args[0]})
+            else:
+                return tool_func.invoke({})
     
     def _create_enhanced_context_summary(self, analysis: Dict[str, Any], fix_plan: Dict[str, Any], volume_chain: Dict[str, List[str]]) -> Dict[str, Any]:
         """Create enhanced context summary for troubleshooting"""

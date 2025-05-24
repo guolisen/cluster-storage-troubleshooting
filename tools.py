@@ -147,7 +147,8 @@ def define_remediation_tools() -> List[Any]:
         df_command,
         lsblk_command,
         mount_command,
-        dmesg_command
+        dmesg_command,
+        journalctl_command
     ]
 
 
@@ -702,3 +703,28 @@ def dmesg_command(options: str = "") -> str:
         return f"Error: {e.stderr}"
     except Exception as e:
         return f"Error executing dmesg: {str(e)}"
+
+@tool
+def journalctl_command(options: str = "") -> str:
+    """
+    Execute journalctl command to show systemd journal logs
+    
+    Args:
+        options: Command options (optional)
+        
+    Returns:
+        str: Command output
+    """
+    cmd = ["journalctl"]
+    
+    if options:
+        cmd.extend(options.split())
+    
+    # Execute command
+    try:
+        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        return f"Error: {e.stderr}"
+    except Exception as e:
+        return f"Error executing journalctl: {str(e)}"

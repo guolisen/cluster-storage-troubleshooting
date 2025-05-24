@@ -43,7 +43,12 @@ class VolumeDiscovery(InformationCollectorBase):
                 
                 # Get pod details to find PVCs
                 pod_output = self._execute_tool_with_validation(
-                    kubectl_get, ['pod', target_pod, target_namespace, 'yaml'],
+                    kubectl_get, {
+                        'resource_type': 'pod',
+                        'resource_name': target_pod,
+                        'namespace': target_namespace,
+                        'output_format': 'yaml'
+                    },
                     'kubectl_get_pod', f'Get details for target pod {target_pod}'
                 )
                 
@@ -61,7 +66,12 @@ class VolumeDiscovery(InformationCollectorBase):
                 for pvc_key in chain['pvcs']:
                     pvc_name = pvc_key.split('/')[-1]
                     pvc_output = self._execute_tool_with_validation(
-                        kubectl_get, ['pvc', pvc_name, target_namespace, 'yaml'],
+                        kubectl_get, {
+                            'resource_type': 'pvc',
+                            'resource_name': pvc_name,
+                            'namespace': target_namespace,
+                            'output_format': 'yaml'
+                        },
                         'kubectl_get_pvc', f'Get PVC details for {pvc_name}'
                     )
                     
@@ -81,7 +91,11 @@ class VolumeDiscovery(InformationCollectorBase):
                 # For each PV, find associated drive and node
                 for pv_name in chain['pvs']:
                     pv_output = self._execute_tool_with_validation(
-                        kubectl_get, ['pv', pv_name, None, 'yaml'],
+                        kubectl_get, {
+                            'resource_type': 'pv',
+                            'resource_name': pv_name,
+                            'output_format': 'yaml'
+                        },
                         'kubectl_get_pv', f'Get PV details for {pv_name}'
                     )
                     

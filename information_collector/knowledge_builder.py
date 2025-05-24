@@ -118,6 +118,9 @@ class KnowledgeBuilder(MetadataParsers):
         # Add CSI Baremetal specific entities
         await self._add_csi_baremetal_entities()
         
+        # Add log-based issues to knowledge graph
+        await self._add_log_based_issues()
+        
         # Log final summary
         summary = self.knowledge_graph.get_summary()
         logging.info(f"Enhanced Knowledge Graph built: {summary['total_nodes']} nodes, "
@@ -201,3 +204,54 @@ class KnowledgeBuilder(MetadataParsers):
                     
         except Exception as e:
             logging.warning(f"Error processing CSI Baremetal node entities: {e}")
+    
+    async def _add_log_based_issues(self):
+        """Add log-based issues to the knowledge graph"""
+        try:
+            logging.info("Analyzing logs for storage-related issues...")
+            
+            # Parse dmesg issues
+            dmesg_issues = self._parse_dmesg_issues()
+            for issue in dmesg_issues:
+                # Add system-level issues to a general system entity
+                system_id = "System:kernel"
+                self.knowledge_graph.add_issue(
+                    system_id,
+                    issue['type'],
+                    issue['description'],
+                    issue['severity']
+                )
+            
+            # Parse journal log issues
+            journal_issues = self._parse_journal_issues()
+            for issue in journal_issues:
+                # Determine entity based on issue source
+                if issue['source'] == 'journal_kubelet':
+                    entity_id = "System:kubelet"
+                elif issue['source'] == 'journal_boot':
+                    entity_id = "System:boot"
+                else:
+                    entity_id = "System:storage_services"
+                
+                self.knowledge_graph.add_issue(
+                    entity_id,
+                    issue['type'],
+                    issue['description'],
+                    issue['severity']
+                )
+            
+            total_log_issues = len(dmesg_issues) + len(journal_issues)
+            logging.info(f"Added {total_log_issues} log-based issues to knowledge graph "
+                        f"({len(dmesg_issues)} from dmesg, {len(journal_issues)} from journal)")
+            
+            # Store log analysis summary
+            self.collected_data['log_analysis'] = {
+                'dmesg_issues': dmesg_issues,
+                'journal_issues': journal_issues,
+                'total_issues': total_log_issues
+            }
+            
+        except Exception as e:
+            error_msg = f"Error adding log-based issues: {str(e)}"
+            logging.error(error_msg)
+            self.collected_data['errors'].append(error_msg)

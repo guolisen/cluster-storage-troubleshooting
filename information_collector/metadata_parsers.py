@@ -229,3 +229,223 @@ class MetadataParsers(InformationCollectorBase):
                 logging.warning(f"Error parsing node metadata for {node_name}: {e}")
         
         return node_info
+    
+    def _parse_dmesg_issues(self) -> List[Dict[str, Any]]:
+        """Parse dmesg logs to identify storage-related issues"""
+        issues = []
+        dmesg_output = self.collected_data.get('system', {}).get('kernel_logs', '')
+        
+        if not dmesg_output:
+            return issues
+        
+        try:
+            lines = dmesg_output.split('\n')
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Parse timestamp and message
+                issue = self._extract_dmesg_issue(line)
+                if issue:
+                    issues.append(issue)
+        
+        except Exception as e:
+            logging.warning(f"Error parsing dmesg issues: {e}")
+        
+        return issues
+    
+    def _extract_dmesg_issue(self, line: str) -> Dict[str, Any]:
+        """Extract issue information from a dmesg log line"""
+        issue = None
+        line_lower = line.lower()
+        
+        # Disk/Drive hardware errors
+        if any(keyword in line_lower for keyword in ['disk error', 'drive error', 'bad sector', 'i/o error']):
+            severity = 'critical' if 'bad sector' in line_lower else 'high'
+            issue = {
+                'type': 'disk_hardware_error',
+                'severity': severity,
+                'description': f"Hardware disk error detected: {line}",
+                'raw_log': line,
+                'source': 'dmesg'
+            }
+        
+        # NVMe/SSD specific issues
+        elif any(keyword in line_lower for keyword in ['nvme', 'ssd']) and any(error in line_lower for error in ['error', 'fail', 'timeout']):
+            issue = {
+                'type': 'nvme_ssd_error',
+                'severity': 'high',
+                'description': f"NVMe/SSD error detected: {line}",
+                'raw_log': line,
+                'source': 'dmesg'
+            }
+        
+        # Filesystem errors
+        elif any(keyword in line_lower for keyword in ['xfs', 'ext4']) and any(error in line_lower for error in ['error', 'corrupt', 'fail']):
+            issue = {
+                'type': 'filesystem_error',
+                'severity': 'high',
+                'description': f"Filesystem error detected: {line}",
+                'raw_log': line,
+                'source': 'dmesg'
+            }
+        
+        # I/O timeout issues
+        elif 'timeout' in line_lower and any(keyword in line_lower for keyword in ['i/o', 'io', 'disk', 'drive']):
+            issue = {
+                'type': 'io_timeout',
+                'severity': 'medium',
+                'description': f"I/O timeout detected: {line}",
+                'raw_log': line,
+                'source': 'dmesg'
+            }
+        
+        # Controller/SCSI/SATA issues
+        elif any(keyword in line_lower for keyword in ['controller', 'scsi', 'sata']) and any(error in line_lower for error in ['error', 'fail', 'reset']):
+            issue = {
+                'type': 'controller_error',
+                'severity': 'high',
+                'description': f"Storage controller error detected: {line}",
+                'raw_log': line,
+                'source': 'dmesg'
+            }
+        
+        return issue
+    
+    def _parse_journal_issues(self) -> List[Dict[str, Any]]:
+        """Parse systemd journal logs to identify storage and service issues"""
+        issues = []
+        
+        # Parse different journal log types
+        storage_logs = self.collected_data.get('system', {}).get('journal_storage_logs', '')
+        kubelet_logs = self.collected_data.get('system', {}).get('journal_kubelet_logs', '')
+        boot_logs = self.collected_data.get('system', {}).get('journal_boot_logs', '')
+        
+        # Parse storage-related journal logs
+        if storage_logs:
+            issues.extend(self._extract_journal_storage_issues(storage_logs))
+        
+        # Parse kubelet service logs
+        if kubelet_logs:
+            issues.extend(self._extract_journal_kubelet_issues(kubelet_logs))
+        
+        # Parse boot-time hardware detection issues
+        if boot_logs:
+            issues.extend(self._extract_journal_boot_issues(boot_logs))
+        
+        return issues
+    
+    def _extract_journal_storage_issues(self, logs: str) -> List[Dict[str, Any]]:
+        """Extract storage-related issues from journal logs"""
+        issues = []
+        
+        try:
+            lines = logs.split('\n')
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                line_lower = line.lower()
+                
+                # Storage service failures
+                if any(keyword in line_lower for keyword in ['failed', 'error', 'timeout']) and any(service in line_lower for service in ['mount', 'umount', 'filesystem']):
+                    issues.append({
+                        'type': 'storage_service_error',
+                        'severity': 'high',
+                        'description': f"Storage service error: {line}",
+                        'raw_log': line,
+                        'source': 'journal_storage'
+                    })
+                
+                # Disk/drive detection issues
+                elif any(keyword in line_lower for keyword in ['disk', 'drive', 'nvme', 'ssd']) and 'detected' in line_lower:
+                    issues.append({
+                        'type': 'hardware_detection',
+                        'severity': 'low',
+                        'description': f"Hardware detection event: {line}",
+                        'raw_log': line,
+                        'source': 'journal_storage'
+                    })
+        
+        except Exception as e:
+            logging.warning(f"Error parsing journal storage issues: {e}")
+        
+        return issues
+    
+    def _extract_journal_kubelet_issues(self, logs: str) -> List[Dict[str, Any]]:
+        """Extract kubelet volume-related issues from journal logs"""
+        issues = []
+        
+        try:
+            lines = logs.split('\n')
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                line_lower = line.lower()
+                
+                # Volume mount/attach failures
+                if any(keyword in line_lower for keyword in ['volume', 'mount', 'attach']) and any(error in line_lower for error in ['failed', 'error', 'timeout']):
+                    issues.append({
+                        'type': 'kubelet_volume_error',
+                        'severity': 'high',
+                        'description': f"Kubelet volume error: {line}",
+                        'raw_log': line,
+                        'source': 'journal_kubelet'
+                    })
+                
+                # CSI driver issues
+                elif 'csi' in line_lower and any(error in line_lower for error in ['failed', 'error', 'timeout']):
+                    issues.append({
+                        'type': 'csi_driver_error',
+                        'severity': 'high',
+                        'description': f"CSI driver error: {line}",
+                        'raw_log': line,
+                        'source': 'journal_kubelet'
+                    })
+        
+        except Exception as e:
+            logging.warning(f"Error parsing journal kubelet issues: {e}")
+        
+        return issues
+    
+    def _extract_journal_boot_issues(self, logs: str) -> List[Dict[str, Any]]:
+        """Extract boot-time hardware and storage initialization issues"""
+        issues = []
+        
+        try:
+            lines = logs.split('\n')
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                line_lower = line.lower()
+                
+                # Hardware initialization failures
+                if any(keyword in line_lower for keyword in ['failed to initialize', 'hardware error', 'device not found']):
+                    issues.append({
+                        'type': 'boot_hardware_error',
+                        'severity': 'critical',
+                        'description': f"Boot-time hardware error: {line}",
+                        'raw_log': line,
+                        'source': 'journal_boot'
+                    })
+                
+                # Drive/controller detection issues
+                elif any(keyword in line_lower for keyword in ['drive', 'controller', 'nvme', 'ssd']) and any(issue in line_lower for issue in ['not found', 'failed', 'error']):
+                    issues.append({
+                        'type': 'boot_storage_detection',
+                        'severity': 'high',
+                        'description': f"Boot-time storage detection issue: {line}",
+                        'raw_log': line,
+                        'source': 'journal_boot'
+                    })
+        
+        except Exception as e:
+            logging.warning(f"Error parsing journal boot issues: {e}")
+        
+        return issues

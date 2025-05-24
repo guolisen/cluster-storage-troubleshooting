@@ -4,7 +4,7 @@ llm:
   #model: "gpt-4o-mini-2024-07-18"
   model: "gpt-4.1-mini-2025-04-14"
   api_endpoint: "https://api.openai.com/v1"
-  api_key: 'YOUR_API_KEY_HERE'
+  api_key: 'sk-projxnXwA'
   #api_endpoint: "https://api.zhizengzeng.com/v1"
   #api_key: "skccf39bc"
   temperature: 0

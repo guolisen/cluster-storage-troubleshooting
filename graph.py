@@ -8,6 +8,13 @@ used in the analysis and remediation phases of Kubernetes volume troubleshooting
 
 import json
 import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] LangGraph: %(message)s'
+)
+
 from typing import Dict, List, Any
 
 from langgraph.graph import StateGraph, MessagesState, START, END
@@ -41,6 +48,8 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
     
     # Define function to call the model with pre-collected context
     def call_model(state: MessagesState):
+        logging.info(f"Processing state with {len(state['messages'])} messages")
+        
         # Add comprehensive system prompt with pre-collected context
         phase_specific_guidance = ""
         if phase == "analysis":
@@ -210,16 +219,36 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         # Call the model with tools for both phases (Phase 1 now actively investigates)
         response = model.bind_tools(tools).invoke(state["messages"])
         
+        logging.info(f"Model response: {response.content[:200]}...")
+        
+        # Log tool usage if applicable
+        if hasattr(response, 'additional_kwargs') and 'tool_calls' in response.additional_kwargs:
+            for tool_call in response.additional_kwargs['tool_calls']:
+                logging.info(f"Model invoking tool: {tool_call['function']['name']}")
+                if 'arguments' in tool_call['function']:
+                    logging.info(f"Tool arguments: {tool_call['function']['arguments']}")
+                else:
+                    logging.info("No arguments provided for tool call")
+                #logging.info(f"Tool parameters: {json.dumps(json.loads(tool_call['function']['arguments']), indent=2)}")
+        
         return {"messages": state["messages"] + [response]}
     
     # Build state graph
+    logging.info("Building state graph")
     builder = StateGraph(MessagesState)
+    
+    logging.info("Adding node: call_model")
     builder.add_node("call_model", call_model)
     
     # Add tools for both analysis and remediation phases
+    logging.info("Importing and defining remediation tools")
     from tools import define_remediation_tools
     tools = define_remediation_tools()
+    
+    logging.info("Adding node: tools")
     builder.add_node("tools", ToolNode(tools))
+    
+    logging.info("Adding conditional edges for tools")
     builder.add_conditional_edges(
         "call_model",
         tools_condition,
@@ -229,9 +258,15 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
             "__end__": END  # Add explicit mapping for __end__ state
         }
     )
+    
+    logging.info("Adding edge: tools -> call_model")
     builder.add_edge("tools", "call_model")
     
+    logging.info("Adding edge: START -> call_model")
     builder.add_edge(START, "call_model")
     
+    logging.info("Compiling graph")
     graph = builder.compile()
+    
+    logging.info("Graph compilation complete")
     return graph

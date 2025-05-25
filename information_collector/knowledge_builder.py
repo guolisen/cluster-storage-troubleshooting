@@ -227,16 +227,19 @@ class KnowledgeBuilder(MetadataParsers):
             logging.warning(f"Error finalizing LVG entity {lvg_name}: {e}")
     
     def _process_available_capacity_entities(self, ac_output: str):
-        """Process available capacity entities"""
+        """Process only relevant available capacity entities"""
         try:
+            # Get relevant drive UUIDs to filter ACs
+            relevant_drives = self._get_relevant_drive_uuids()
+            
             lines = ac_output.split('\n')
             current_ac = None
             ac_info = {}
             
             for line in lines:
                 if 'name:' in line and 'metadata:' not in line:
-                    # Process previous AC if exists
-                    if current_ac:
+                    # Process previous AC if exists and relevant
+                    if current_ac and self._is_ac_relevant(current_ac, ac_info, relevant_drives):
                         self._finalize_ac_entity(current_ac, ac_info)
                     
                     current_ac = line.split('name:')[-1].strip()
@@ -250,12 +253,28 @@ class KnowledgeBuilder(MetadataParsers):
                     elif 'location:' in line:
                         ac_info['location'] = line.split('location:')[-1].strip()
             
-            # Process last AC
-            if current_ac:
+            # Process last AC if relevant
+            if current_ac and self._is_ac_relevant(current_ac, ac_info, relevant_drives):
                 self._finalize_ac_entity(current_ac, ac_info)
                 
         except Exception as e:
             logging.warning(f"Error processing Available Capacity entities: {e}")
+    
+    def _is_ac_relevant(self, ac_name: str, ac_info: Dict[str, str], relevant_drives: set) -> bool:
+        """Check if AC is relevant to the current volume troubleshooting"""
+        try:
+            # AC is relevant if its location matches a relevant drive
+            location = ac_info.get('location', '')
+            if location in relevant_drives:
+                return True
+            
+            # Also include ACs that might be on the same nodes as relevant drives
+            # This is a more conservative approach to ensure we don't miss related capacity
+            return False
+            
+        except Exception as e:
+            logging.warning(f"Error checking AC relevance for {ac_name}: {e}")
+            return False
     
     def _finalize_ac_entity(self, ac_name: str, ac_info: Dict[str, str]):
         """Finalize AC entity with properties"""
@@ -315,12 +334,15 @@ class KnowledgeBuilder(MetadataParsers):
             self.collected_data['errors'].append(error_msg)
     
     async def _process_all_drives(self):
-        """Process all drives from collected CSI Baremetal data"""
+        """Process only relevant drives from collected CSI Baremetal data"""
         try:
             drives_output = self.collected_data.get('csi_baremetal', {}).get('drives', '')
             if not drives_output:
                 logging.warning("No drives data found in collected CSI Baremetal information")
                 return
+            
+            # Get relevant drive UUIDs from volume locations and LVGs
+            relevant_drives = self._get_relevant_drive_uuids()
             
             lines = drives_output.split('\n')
             current_drive = None
@@ -328,14 +350,14 @@ class KnowledgeBuilder(MetadataParsers):
             
             for line in lines:
                 if 'name:' in line and 'metadata:' not in line:
-                    # Process previous drive if exists
-                    if current_drive:
+                    # Process previous drive if exists and relevant
+                    if current_drive and current_drive in relevant_drives:
                         self._finalize_drive_entity(current_drive, drive_info)
                     
                     current_drive = line.split('name:')[-1].strip()
                     drive_info = {}
-                elif current_drive:
-                    # Extract drive properties
+                elif current_drive and current_drive in relevant_drives:
+                    # Extract drive properties only for relevant drives
                     if 'health:' in line:
                         drive_info['Health'] = line.split('health:')[-1].strip()
                     elif 'status:' in line:
@@ -353,14 +375,73 @@ class KnowledgeBuilder(MetadataParsers):
                     elif 'serialNumber:' in line:
                         drive_info['SerialNumber'] = line.split('serialNumber:')[-1].strip()
             
-            # Process last drive
-            if current_drive:
+            # Process last drive if relevant
+            if current_drive and current_drive in relevant_drives:
                 self._finalize_drive_entity(current_drive, drive_info)
                 
-            logging.info(f"Processed drives from CSI Baremetal data")
+            logging.info(f"Processed {len(relevant_drives)} relevant drives from CSI Baremetal data")
             
         except Exception as e:
-            logging.warning(f"Error processing all drives: {e}")
+            logging.warning(f"Error processing relevant drives: {e}")
+    
+    def _get_relevant_drive_uuids(self) -> set:
+        """Get relevant drive UUIDs from volume locations and LVGs"""
+        relevant_drives = set()
+        
+        try:
+            # Get drive UUIDs from CSI Volume locations
+            volumes_output = self.collected_data.get('csi_baremetal', {}).get('volumes', '')
+            if volumes_output:
+                volume_locations = self._parse_volume_locations(volumes_output)
+                for location in volume_locations.values():
+                    if self._is_drive_uuid(location):
+                        relevant_drives.add(location)
+            
+            # Get drive UUIDs from LVG locations
+            lvg_output = self.collected_data.get('csi_baremetal', {}).get('lvgs', '')
+            if lvg_output:
+                lvg_drives = self._parse_lvg_drive_locations(lvg_output)
+                relevant_drives.update(lvg_drives)
+            
+            # Also include drives from volume chain if available
+            volume_chain_drives = getattr(self, '_volume_chain_drives', set())
+            relevant_drives.update(volume_chain_drives)
+            
+            logging.info(f"Found {len(relevant_drives)} relevant drive UUIDs")
+            return relevant_drives
+            
+        except Exception as e:
+            logging.warning(f"Error getting relevant drive UUIDs: {e}")
+            return set()
+    
+    def _parse_lvg_drive_locations(self, lvg_output: str) -> set:
+        """Parse LVG output to extract drive UUIDs from LOCATIONS property"""
+        drive_uuids = set()
+        
+        try:
+            lines = lvg_output.split('\n')
+            current_lvg = None
+            
+            for line in lines:
+                line = line.strip()
+                if 'name:' in line and 'metadata:' not in line:
+                    current_lvg = line.split('name:')[-1].strip()
+                elif current_lvg and 'locations:' in line.lower():
+                    # Extract drive UUIDs from locations array
+                    locations_str = line.split('locations:')[-1].strip()
+                    # Handle array format like ["uuid1", "uuid2"]
+                    if '[' in locations_str and ']' in locations_str:
+                        locations_str = locations_str.strip('[]')
+                        for location in locations_str.split(','):
+                            location = location.strip().strip('"\'')
+                            if self._is_drive_uuid(location):
+                                drive_uuids.add(location)
+                    current_lvg = None  # Reset for next LVG
+            
+        except Exception as e:
+            logging.warning(f"Error parsing LVG drive locations: {e}")
+        
+        return drive_uuids
     
     def _finalize_drive_entity(self, drive_uuid: str, drive_info: Dict[str, str]):
         """Finalize drive entity with comprehensive information"""
@@ -395,27 +476,81 @@ class KnowledgeBuilder(MetadataParsers):
             logging.warning(f"Error finalizing drive entity {drive_uuid}: {e}")
     
     async def _process_all_cluster_nodes(self):
-        """Process all cluster nodes from collected Kubernetes data"""
+        """Process only actual cluster nodes from kubectl get node output"""
         try:
             nodes_output = self.collected_data.get('kubernetes', {}).get('nodes', '')
             if not nodes_output:
                 logging.warning("No nodes data found in collected Kubernetes information")
                 return
             
-            # Parse YAML-like output for node information
+            # Get actual cluster node names from kubectl get node output
+            cluster_nodes = self._parse_cluster_node_names(nodes_output)
+            
+            # Process only these cluster nodes
+            for node_name in cluster_nodes:
+                node_info = self._parse_node_info_from_output(node_name, nodes_output)
+                self._finalize_cluster_node_entity(node_name, node_info)
+                
+            logging.info(f"Processed {len(cluster_nodes)} actual cluster nodes from Kubernetes data")
+            
+        except Exception as e:
+            logging.warning(f"Error processing cluster nodes: {e}")
+    
+    def _parse_cluster_node_names(self, nodes_output: str) -> List[str]:
+        """Parse actual cluster node names from kubectl get node output"""
+        cluster_nodes = []
+        
+        try:
             lines = nodes_output.split('\n')
-            current_node = None
-            node_info = {}
             
             for line in lines:
+                line = line.strip()
+                # Look for node names that match cluster naming pattern
                 if 'name:' in line and 'metadata:' not in line:
-                    # Process previous node if exists
-                    if current_node:
-                        self._finalize_cluster_node_entity(current_node, node_info)
-                    
-                    current_node = line.split('name:')[-1].strip()
-                    node_info = {}
-                elif current_node:
+                    node_name = line.split('name:')[-1].strip()
+                    # Filter out non-cluster nodes (CSI nodes, PV nodes, etc.)
+                    if self._is_cluster_node(node_name):
+                        cluster_nodes.append(node_name)
+            
+        except Exception as e:
+            logging.warning(f"Error parsing cluster node names: {e}")
+        
+        return cluster_nodes
+    
+    def _is_cluster_node(self, node_name: str) -> bool:
+        """Check if node name represents an actual cluster node"""
+        # Filter out CSI-specific nodes, PV nodes, and other non-cluster entities
+        exclude_patterns = [
+            'csi/',
+            'driver.',
+            'pvc-',
+            'kubernetes.io/',
+            '-' * 8,  # UUID-like patterns
+        ]
+        
+        for pattern in exclude_patterns:
+            if pattern in node_name:
+                return False
+        
+        # Cluster nodes typically have domain-like names
+        return '.' in node_name or node_name.endswith('.local') or len(node_name.split('.')) > 1
+    
+    def _parse_node_info_from_output(self, node_name: str, nodes_output: str) -> Dict[str, Any]:
+        """Parse node information for a specific node from the output"""
+        node_info = {}
+        
+        try:
+            lines = nodes_output.split('\n')
+            in_node_section = False
+            
+            for line in lines:
+                if f'name: {node_name}' in line:
+                    in_node_section = True
+                    continue
+                elif in_node_section and 'name:' in line and node_name not in line:
+                    # Reached next node section
+                    break
+                elif in_node_section:
                     # Extract node properties
                     if 'ready:' in line.lower():
                         ready_value = line.split(':')[-1].strip().lower()
@@ -438,14 +573,10 @@ class KnowledgeBuilder(MetadataParsers):
                     elif 'role:' in line.lower():
                         node_info['Role'] = line.split(':')[-1].strip()
             
-            # Process last node
-            if current_node:
-                self._finalize_cluster_node_entity(current_node, node_info)
-                
-            logging.info(f"Processed cluster nodes from Kubernetes data")
-            
         except Exception as e:
-            logging.warning(f"Error processing all cluster nodes: {e}")
+            logging.warning(f"Error parsing node info for {node_name}: {e}")
+        
+        return node_info
     
     def _finalize_cluster_node_entity(self, node_name: str, node_info: Dict[str, Any]):
         """Finalize cluster node entity with comprehensive information"""

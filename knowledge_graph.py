@@ -824,9 +824,37 @@ class KnowledgeGraph:
                     'bound_to': '🔗',
                     'maps_to': '📍',
                     'affinity_to': '🎯',
-                    'uses_storage_class': '📂'
+                    'uses_storage_class': '📂',
+                    'contains': '📦',
+                    'located_on': '🏠',
+                    'available_on': '🏪',
+                    'monitors': '👁️'
                 }.get(rel_type, '↔️')
                 output.append(f"{rel_icon} {rel_type}: {count} connections")
+            
+            # Show Volume→Storage relationships specifically
+            volume_relationships = []
+            for volume_id in self.find_nodes_by_type('Volume'):
+                volume_name = self.graph.nodes[volume_id].get('name', volume_id.split(':')[-1])
+                
+                # Find direct Drive connections
+                for drive_id in self.find_connected_nodes(volume_id, 'bound_to'):
+                    if drive_id.startswith('Drive:'):
+                        drive_uuid = drive_id.split(':')[-1][:8] + "..."  # Truncate UUID for display
+                        volume_relationships.append(f"📦 {volume_name} → 💿 {drive_uuid}")
+                
+                # Find LVG connections
+                for lvg_id in self.find_connected_nodes(volume_id, 'bound_to'):
+                    if lvg_id.startswith('LVG:'):
+                        lvg_name = lvg_id.split(':')[-1][:8] + "..."  # Truncate UUID for display
+                        volume_relationships.append(f"📦 {volume_name} → 📚 {lvg_name}")
+            
+            if volume_relationships:
+                output.append("\n📦 Volume→Storage Relationships:")
+                for rel in volume_relationships[:5]:  # Show first 5
+                    output.append(f"  • {rel}")
+                if len(volume_relationships) > 5:
+                    output.append(f"  ... and {len(volume_relationships) - 5} more")
             
             # Show some example relationships
             output.append("\n📝 Example Relationships:")

@@ -742,6 +742,119 @@ class KnowledgeBuilder(MetadataParsers):
         except Exception as e:
             logging.warning(f"Error adding volume storage relationships for {volume_id}: {e}")
     
+    async def _create_enhanced_csi_relationships(self):
+        """Create enhanced CSI relationships based on Volume location mapping"""
+        try:
+            logging.info("Creating enhanced CSI relationships...")
+            
+            # Create Volume → Drive/LVG relationships based on CSI Volume data
+            await self._create_volume_drive_relationships()
+            
+            logging.info("Enhanced CSI relationships created successfully")
+            
+        except Exception as e:
+            error_msg = f"Error creating enhanced CSI relationships: {str(e)}"
+            logging.error(error_msg)
+            self.collected_data['errors'].append(error_msg)
+    
+    async def _create_volume_drive_relationships(self):
+        """Create Volume → Drive/LVG relationships based on CSI Volume location data"""
+        try:
+            volumes_output = self.collected_data.get('csi_baremetal', {}).get('volumes', '')
+            if not volumes_output:
+                logging.warning("No CSI Volume data found for relationship creation")
+                return
+            
+            # Parse CSI Volume data to extract location information
+            volume_locations = self._parse_volume_locations(volumes_output)
+            
+            # Get all Volume nodes from knowledge graph
+            volume_nodes = self.knowledge_graph.find_nodes_by_type('Volume')
+            
+            for volume_id in volume_nodes:
+                volume_attrs = self.knowledge_graph.graph.nodes[volume_id]
+                volume_name = volume_attrs.get('name')
+                
+                if not volume_name:
+                    continue
+                
+                # Find location for this volume
+                location = volume_locations.get(volume_name)
+                if not location:
+                    # Try to get location from volume attributes if not found in parsed data
+                    location = volume_attrs.get('location')
+                
+                if not location:
+                    logging.debug(f"No location found for volume {volume_name}")
+                    continue
+                
+                # Enhanced logic: Determine if location is Drive UUID or LVG UUID
+                if self._is_drive_uuid(location):
+                    # Direct Volume → Drive relationship
+                    drive_id = f"Drive:{location}"
+                    if self.knowledge_graph.graph.has_node(drive_id):
+                        self.knowledge_graph.add_relationship(volume_id, drive_id, "bound_to")
+                        logging.debug(f"Added Volume→Drive relationship: {volume_id} → {drive_id}")
+                    else:
+                        logging.warning(f"Drive {location} not found for volume {volume_name}")
+                else:
+                    # Volume → LVG relationship (location is LVG UUID)
+                    lvg_id = f"LVG:{location}"
+                    if self.knowledge_graph.graph.has_node(lvg_id):
+                        self.knowledge_graph.add_relationship(volume_id, lvg_id, "bound_to")
+                        logging.debug(f"Added Volume→LVG relationship: {volume_id} → {lvg_id}")
+                        
+                        # Also create Volume → Drive relationships through LVG
+                        await self._create_volume_to_drive_via_lvg(volume_id, lvg_id)
+                    else:
+                        logging.warning(f"LVG {location} not found for volume {volume_name}")
+            
+        except Exception as e:
+            logging.warning(f"Error creating volume→drive relationships: {e}")
+    
+    def _parse_volume_locations(self, volumes_output: str) -> Dict[str, str]:
+        """Parse CSI Volume output to extract volume name → location mapping"""
+        volume_locations = {}
+        
+        try:
+            lines = volumes_output.split('\n')
+            current_volume = None
+            
+            for line in lines:
+                line = line.strip()
+                if 'name:' in line and 'metadata:' not in line:
+                    current_volume = line.split('name:')[-1].strip()
+                elif current_volume and 'location:' in line:
+                    location = line.split('location:')[-1].strip()
+                    if location:
+                        volume_locations[current_volume] = location
+                        current_volume = None  # Reset for next volume
+            
+        except Exception as e:
+            logging.warning(f"Error parsing volume locations: {e}")
+        
+        return volume_locations
+    
+    def _is_drive_uuid(self, location: str) -> bool:
+        """Check if location string is a Drive UUID format"""
+        # Drive UUIDs are typically 36 characters with hyphens (UUID format)
+        # e.g., "2a96dfec-47db-449d-9789-0d81660c2c4d"
+        return len(location) == 36 and location.count('-') == 4
+    
+    async def _create_volume_to_drive_via_lvg(self, volume_id: str, lvg_id: str):
+        """Create Volume → Drive relationships through LVG"""
+        try:
+            # Get drives contained in the LVG
+            lvg_drives = self.knowledge_graph.find_connected_nodes(lvg_id, "contains")
+            
+            for drive_id in lvg_drives:
+                # Add Volume → Drive relationship through LVG
+                self.knowledge_graph.add_relationship(volume_id, drive_id, "bound_to")
+                logging.debug(f"Added Volume→Drive (via LVG) relationship: {volume_id} → {drive_id}")
+                
+        except Exception as e:
+            logging.warning(f"Error creating volume→drive relationships via LVG {lvg_id}: {e}")
+    
     async def _add_system_entities(self):
         """Add System entities to the knowledge graph"""
         try:
@@ -876,69 +989,6 @@ class KnowledgeBuilder(MetadataParsers):
             logging.error(error_msg)
             self.collected_data['errors'].append(error_msg)
     
-    def _parse_smart_data_issues(self, smart_output: str, drive_uuid: str) -> List[Dict]:
-        """Parse SMART data output for health issues"""
-        issues = []
-        
-        try:
-            lines = smart_output.split('\n')
-            
-            for line in lines:
-                line_lower = line.lower()
-                
-                # Check for SMART health status
-                if 'overall-health self-assessment test result:' in line_lower:
-                    if 'passed' not in line_lower:
-                        issues.append({
-                            'type': 'smart_health_fail',
-                            'description': f"SMART health test failed: {line.strip()}",
-                            'severity': 'critical'
-                        })
-                
-                # Check for reallocated sectors
-                if 'reallocated_sector_ct' in line_lower and 'raw_value' in line_lower:
-                    try:
-                        raw_value = int(line.split()[-1])
-                        if raw_value > 0:
-                            issues.append({
-                                'type': 'reallocated_sectors',
-                                'description': f"Drive has {raw_value} reallocated sectors",
-                                'severity': 'high' if raw_value > 10 else 'medium'
-                            })
-                    except (ValueError, IndexError):
-                        pass
-                
-                # Check for pending sectors
-                if 'current_pending_sector' in line_lower:
-                    try:
-                        raw_value = int(line.split()[-1])
-                        if raw_value > 0:
-                            issues.append({
-                                'type': 'pending_sectors',
-                                'description': f"Drive has {raw_value} pending sectors",
-                                'severity': 'high'
-                            })
-                    except (ValueError, IndexError):
-                        pass
-                
-                # Check for temperature issues
-                if 'temperature_celsius' in line_lower:
-                    try:
-                        temp = int(line.split()[-1])
-                        if temp > 60:  # High temperature threshold
-                            issues.append({
-                                'type': 'high_temperature',
-                                'description': f"Drive temperature is high: {temp}°C",
-                                'severity': 'medium' if temp < 70 else 'high'
-                            })
-                    except (ValueError, IndexError):
-                        pass
-        
-        except Exception as e:
-            logging.warning(f"Error parsing SMART data for drive {drive_uuid}: {e}")
-        
-        return issues
-    
     async def _add_enhanced_log_analysis(self):
         """Add enhanced log analysis to the knowledge graph"""
         try:
@@ -986,182 +1036,3 @@ class KnowledgeBuilder(MetadataParsers):
             error_msg = f"Error adding enhanced log analysis: {str(e)}"
             logging.error(error_msg)
             self.collected_data['errors'].append(error_msg)
-    
-    async def _create_enhanced_csi_relationships(self):
-        """Create enhanced CSI relationships based on Volume location mapping"""
-        try:
-            logging.info("Creating enhanced CSI relationships...")
-            
-            # Create Volume → Drive/LVG relationships based on CSI Volume data
-            await self._create_volume_drive_relationships()
-            
-            # Create Drive → Node relationships using CSI NodeId mapping
-            await self._create_drive_node_relationships_enhanced()
-            
-            # Create LVG → Drive relationships using LVG locations
-            await self._create_lvg_drive_relationships()
-            
-            # Create AC → Node relationships
-            await self._create_ac_node_relationships()
-            
-            logging.info("Enhanced CSI relationships created successfully")
-            
-        except Exception as e:
-            error_msg = f"Error creating enhanced CSI relationships: {str(e)}"
-            logging.error(error_msg)
-            self.collected_data['errors'].append(error_msg)
-    
-    async def _create_volume_drive_relationships(self):
-        """Create Volume → Drive/LVG relationships based on CSI Volume location data"""
-        try:
-            volumes_output = self.collected_data.get('csi_baremetal', {}).get('volumes', '')
-            if not volumes_output:
-                logging.warning("No CSI Volume data found for relationship creation")
-                return
-            
-            # Parse CSI Volume data to extract location information
-            volume_locations = self._parse_volume_locations(volumes_output)
-            
-            # Get all Volume nodes from knowledge graph
-            volume_nodes = self.knowledge_graph.find_nodes_by_type('Volume')
-            
-            for volume_id in volume_nodes:
-                volume_attrs = self.knowledge_graph.graph.nodes[volume_id]
-                volume_name = volume_attrs.get('name')
-                
-                if not volume_name:
-                    continue
-                
-                # Find location for this volume
-                location = volume_locations.get(volume_name)
-                if not location:
-                    continue
-                
-                # Determine if location is Drive UUID or LVG name
-                if self._is_drive_uuid(location):
-                    # Direct Volume → Drive relationship
-                    drive_id = f"Drive:{location}"
-                    if self.knowledge_graph.graph.has_node(drive_id):
-                        self.knowledge_graph.add_relationship(volume_id, drive_id, "bound_to")
-                        logging.debug(f"Added Volume→Drive relationship: {volume_id} → {drive_id}")
-                else:
-                    # Volume → LVG relationship
-                    lvg_id = f"LVG:{location}"
-                    if self.knowledge_graph.graph.has_node(lvg_id):
-                        self.knowledge_graph.add_relationship(volume_id, lvg_id, "bound_to")
-                        logging.debug(f"Added Volume→LVG relationship: {volume_id} → {lvg_id}")
-            
-        except Exception as e:
-            logging.warning(f"Error creating volume→drive relationships: {e}")
-    
-    def _parse_volume_locations(self, volumes_output: str) -> Dict[str, str]:
-        """Parse CSI Volume output to extract volume name → location mapping"""
-        volume_locations = {}
-        
-        try:
-            lines = volumes_output.split('\n')
-            current_volume = None
-            
-            for line in lines:
-                line = line.strip()
-                if 'name:' in line and 'metadata:' not in line:
-                    current_volume = line.split('name:')[-1].strip()
-                elif current_volume and 'location:' in line:
-                    location = line.split('location:')[-1].strip()
-                    if location:
-                        volume_locations[current_volume] = location
-                        current_volume = None  # Reset for next volume
-            
-        except Exception as e:
-            logging.warning(f"Error parsing volume locations: {e}")
-        
-        return volume_locations
-    
-    def _is_drive_uuid(self, location: str) -> bool:
-        """Check if location string is a Drive UUID format"""
-        # Drive UUIDs are typically 36 characters with hyphens (UUID format)
-        # e.g., "2a96dfec-47db-449d-9789-0d81660c2c4d"
-        return len(location) == 36 and location.count('-') == 4
-    
-    async def _create_drive_node_relationships_enhanced(self):
-        """Create Drive → Node relationships using CSI NodeId mapping"""
-        try:
-            # Get CSI Baremetal node mapping (UUID → hostname)
-            node_mapping = self._parse_csibmnode_mapping()
-            
-            # Get all Drive nodes
-            drive_nodes = self.knowledge_graph.find_nodes_by_type('Drive')
-            
-            for drive_id in drive_nodes:
-                drive_attrs = self.knowledge_graph.graph.nodes[drive_id]
-                node_id_uuid = drive_attrs.get('NodeId')  # CSI NodeId (UUID)
-                
-                if not node_id_uuid:
-                    continue
-                
-                # Map UUID to hostname
-                hostname = node_mapping.get(node_id_uuid)
-                if hostname:
-                    node_id = f"Node:{hostname}"
-                    if self.knowledge_graph.graph.has_node(node_id):
-                        # Check if relationship already exists
-                        existing_relationships = self.knowledge_graph.find_connected_nodes(drive_id, "located_on")
-                        if node_id not in existing_relationships:
-                            self.knowledge_graph.add_relationship(drive_id, node_id, "located_on")
-                            logging.debug(f"Added enhanced Drive→Node relationship: {drive_id} → {node_id}")
-            
-        except Exception as e:
-            logging.warning(f"Error creating enhanced drive→node relationships: {e}")
-    
-    async def _create_lvg_drive_relationships(self):
-        """Create LVG → Drive relationships using LVG locations array"""
-        try:
-            # Get all LVG nodes
-            lvg_nodes = self.knowledge_graph.find_nodes_by_type('LVG')
-            
-            for lvg_id in lvg_nodes:
-                lvg_name = lvg_id.split(':')[-1]  # Extract LVG name from ID
-                
-                # Parse LVG metadata to get drive locations
-                lvg_metadata = self._parse_lvg_metadata(lvg_name)
-                drive_locations = lvg_metadata.get('Locations', [])
-                
-                for drive_uuid in drive_locations:
-                    drive_id = f"Drive:{drive_uuid}"
-                    if self.knowledge_graph.graph.has_node(drive_id):
-                        # Check if relationship already exists
-                        existing_relationships = self.knowledge_graph.find_connected_nodes(lvg_id, "contains")
-                        if drive_id not in existing_relationships:
-                            self.knowledge_graph.add_relationship(lvg_id, drive_id, "contains")
-                            logging.debug(f"Added LVG→Drive relationship: {lvg_id} → {drive_id}")
-            
-        except Exception as e:
-            logging.warning(f"Error creating LVG→drive relationships: {e}")
-    
-    async def _create_ac_node_relationships(self):
-        """Create AC → Node relationships"""
-        try:
-            # Get CSI Baremetal node mapping (UUID → hostname)
-            node_mapping = self._parse_csibmnode_mapping()
-            
-            # Get all AC nodes
-            ac_nodes = self.knowledge_graph.find_nodes_by_type('AC')
-            
-            for ac_id in ac_nodes:
-                ac_name = ac_id.split(':')[-1]  # Extract AC name from ID
-                
-                # Parse AC metadata to get node information
-                ac_metadata = self._parse_ac_metadata(ac_name)
-                node_id_uuid = ac_metadata.get('NodeId')
-                
-                if node_id_uuid:
-                    # Map UUID to hostname
-                    hostname = node_mapping.get(node_id_uuid)
-                    if hostname:
-                        node_id = f"Node:{hostname}"
-                        if self.knowledge_graph.graph.has_node(node_id):
-                            self.knowledge_graph.add_relationship(ac_id, node_id, "available_on")
-                            logging.debug(f"Added AC→Node relationship: {ac_id} → {node_id}")
-            
-        except Exception as e:
-            logging.warning(f"Error creating AC→node relationships: {e}")

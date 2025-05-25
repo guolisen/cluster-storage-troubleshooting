@@ -132,6 +132,16 @@ class ToolExecutors(InformationCollectorBase):
             'kubectl_get_logicalvolumegroup', 'Get LVG health and drive associations'
         )
         self.collected_data['csi_baremetal']['lvgs'] = lvg_output
+        
+        # Get CSI Baremetal volumes
+        volumes_output = self._execute_tool_with_validation(
+            kubectl_get, {
+                'resource_type': 'volume',
+                'output_format': 'yaml'
+            },
+            'kubectl_get_volumes', 'Get CSI Baremetal volume information with location mapping'
+        )
+        self.collected_data['csi_baremetal']['volumes'] = volumes_output
     
     async def _execute_node_system_tools(self, nodes: List[str]):
         """Execute node and system discovery tools"""

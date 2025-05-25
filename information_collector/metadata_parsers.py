@@ -181,6 +181,245 @@ class MetadataParsers(InformationCollectorBase):
         
         return drive_info
     
+    def _parse_volume_metadata(self, volume_name: str, namespace: str = None) -> Dict[str, Any]:
+        """Parse CSI Baremetal Volume metadata from tool outputs"""
+        volume_info = {
+            'Health': 'UNKNOWN',
+            'LocationType': 'UNKNOWN',
+            'Size': 0,
+            'StorageClass': '',
+            'Location': '',  # This is the key field - Drive UUID or LVG name
+            'Usage': 'UNKNOWN',
+            'Mode': 'UNKNOWN',
+            'Type': 'UNKNOWN',
+            'NodeId': ''
+        }
+        
+        volumes_output = self.collected_data.get('csi_baremetal', {}).get('volumes', '')
+        if volumes_output and volume_name in volumes_output:
+            try:
+                volume_section = self._extract_yaml_section(volumes_output, volume_name)
+                if volume_section:
+                    for line in volume_section:
+                        line = line.strip()
+                        if 'health:' in line:
+                            volume_info['Health'] = line.split('health:')[-1].strip()
+                        elif 'locationType:' in line:
+                            volume_info['LocationType'] = line.split('locationType:')[-1].strip()
+                        elif 'size:' in line:
+                            try:
+                                size_str = line.split('size:')[-1].strip()
+                                volume_info['Size'] = int(size_str) if size_str.isdigit() else size_str
+                            except (ValueError, TypeError):
+                                pass
+                        elif 'storageClass:' in line:
+                            volume_info['StorageClass'] = line.split('storageClass:')[-1].strip()
+                        elif 'location:' in line:
+                            volume_info['Location'] = line.split('location:')[-1].strip()
+                        elif 'usage:' in line:
+                            volume_info['Usage'] = line.split('usage:')[-1].strip()
+                        elif 'mode:' in line:
+                            volume_info['Mode'] = line.split('mode:')[-1].strip()
+                        elif 'type:' in line:
+                            volume_info['Type'] = line.split('type:')[-1].strip()
+                        elif 'nodeId:' in line:
+                            volume_info['NodeId'] = line.split('nodeId:')[-1].strip()
+            except Exception as e:
+                logging.warning(f"Error parsing volume metadata for {volume_name}: {e}")
+        
+        return volume_info
+    
+    def _parse_lvg_metadata(self, lvg_name: str) -> Dict[str, Any]:
+        """Parse LVG metadata from CSI Baremetal tool outputs"""
+        lvg_info = {
+            'Health': 'UNKNOWN',
+            'Size': 0,
+            'VolumeGroup': '',
+            'Node': '',
+            'Locations': []  # Array of Drive UUIDs
+        }
+        
+        lvgs_output = self.collected_data.get('csi_baremetal', {}).get('lvgs', '')
+        if lvgs_output and lvg_name in lvgs_output:
+            try:
+                lvg_section = self._extract_yaml_section(lvgs_output, lvg_name)
+                if lvg_section:
+                    in_locations_array = False
+                    for line in lvg_section:
+                        line = line.strip()
+                        if 'health:' in line:
+                            lvg_info['Health'] = line.split('health:')[-1].strip()
+                        elif 'size:' in line:
+                            try:
+                                size_str = line.split('size:')[-1].strip()
+                                lvg_info['Size'] = int(size_str) if size_str.isdigit() else size_str
+                            except (ValueError, TypeError):
+                                pass
+                        elif 'volumeGroup:' in line:
+                            lvg_info['VolumeGroup'] = line.split('volumeGroup:')[-1].strip()
+                        elif 'node:' in line:
+                            lvg_info['Node'] = line.split('node:')[-1].strip()
+                        elif 'locations:' in line:
+                            in_locations_array = True
+                        elif in_locations_array and line.startswith('- '):
+                            # Extract drive UUID from array item
+                            drive_uuid = line[2:].strip()
+                            if drive_uuid:
+                                lvg_info['Locations'].append(drive_uuid)
+                        elif in_locations_array and not line.startswith('- ') and not line.startswith(' '):
+                            # End of locations array
+                            in_locations_array = False
+            except Exception as e:
+                logging.warning(f"Error parsing LVG metadata for {lvg_name}: {e}")
+        
+        return lvg_info
+    
+    def _parse_ac_metadata(self, ac_name: str) -> Dict[str, Any]:
+        """Parse Available Capacity metadata from CSI Baremetal tool outputs"""
+        ac_info = {
+            'Size': 0,
+            'StorageClass': '',
+            'Location': '',  # Drive UUID or LVG name
+            'Node': '',
+            'NodeId': ''
+        }
+        
+        ac_output = self.collected_data.get('csi_baremetal', {}).get('available_capacity', '')
+        if ac_output and ac_name in ac_output:
+            try:
+                ac_section = self._extract_yaml_section(ac_output, ac_name)
+                if ac_section:
+                    for line in ac_section:
+                        line = line.strip()
+                        if 'size:' in line:
+                            try:
+                                size_str = line.split('size:')[-1].strip()
+                                ac_info['Size'] = int(size_str) if size_str.isdigit() else size_str
+                            except (ValueError, TypeError):
+                                pass
+                        elif 'storageClass:' in line:
+                            ac_info['StorageClass'] = line.split('storageClass:')[-1].strip()
+                        elif 'location:' in line:
+                            ac_info['Location'] = line.split('location:')[-1].strip()
+                        elif 'node:' in line:
+                            ac_info['Node'] = line.split('node:')[-1].strip()
+                        elif 'nodeId:' in line:
+                            ac_info['NodeId'] = line.split('nodeId:')[-1].strip()
+            except Exception as e:
+                logging.warning(f"Error parsing AC metadata for {ac_name}: {e}")
+        
+        return ac_info
+    
+    def _parse_csibmnode_mapping(self) -> Dict[str, str]:
+        """Parse CSI Baremetal node mapping to get UUID to hostname mapping"""
+        node_mapping = {}  # UUID -> hostname
+        
+        csibm_nodes_output = self.collected_data.get('csi_baremetal', {}).get('nodes', '')
+        if csibm_nodes_output:
+            try:
+                lines = csibm_nodes_output.split('\n')
+                current_uuid = None
+                current_hostname = None
+                
+                for line in lines:
+                    line = line.strip()
+                    if 'name:' in line and len(line.split('name:')[-1].strip()) > 30:  # UUID format
+                        current_uuid = line.split('name:')[-1].strip()
+                    elif 'hostname:' in line:
+                        current_hostname = line.split('hostname:')[-1].strip()
+                        if current_uuid and current_hostname:
+                            node_mapping[current_uuid] = current_hostname
+                            current_uuid = None
+                            current_hostname = None
+            except Exception as e:
+                logging.warning(f"Error parsing CSI Baremetal node mapping: {e}")
+        
+        return node_mapping
+    
+    def _parse_smart_data(self, drive_uuid: str) -> Dict[str, Any]:
+        """Parse SMART data for drive health analysis"""
+        smart_info = {
+            'PowerOnHours': 0,
+            'PowerCycleCount': 0,
+            'ReallocatedSectorCount': 0,
+            'CurrentPendingSectorCount': 0,
+            'UncorrectableErrorCount': 0,
+            'Temperature': 0,
+            'OverallHealth': 'UNKNOWN',
+            'SmartStatus': 'UNKNOWN'
+        }
+        
+        smart_data = self.collected_data.get('smart_data', {}).get(drive_uuid, '')
+        if smart_data:
+            try:
+                lines = smart_data.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    line_lower = line.lower()
+                    
+                    # Overall SMART status
+                    if 'smart overall-health self-assessment test result:' in line_lower:
+                        smart_info['SmartStatus'] = line.split(':')[-1].strip()
+                        smart_info['OverallHealth'] = 'GOOD' if 'passed' in line_lower else 'BAD'
+                    
+                    # Power on hours
+                    elif 'power_on_hours' in line_lower or '9 power_on_hours' in line_lower:
+                        parts = line.split()
+                        if len(parts) >= 10:
+                            try:
+                                smart_info['PowerOnHours'] = int(parts[9])
+                            except (ValueError, IndexError):
+                                pass
+                    
+                    # Power cycle count
+                    elif 'power_cycle_count' in line_lower or '12 power_cycle_count' in line_lower:
+                        parts = line.split()
+                        if len(parts) >= 10:
+                            try:
+                                smart_info['PowerCycleCount'] = int(parts[9])
+                            except (ValueError, IndexError):
+                                pass
+                    
+                    # Reallocated sector count
+                    elif 'reallocated_sector_ct' in line_lower or '5 reallocated_sector_ct' in line_lower:
+                        parts = line.split()
+                        if len(parts) >= 10:
+                            try:
+                                smart_info['ReallocatedSectorCount'] = int(parts[9])
+                            except (ValueError, IndexError):
+                                pass
+                    
+                    # Current pending sector count
+                    elif 'current_pending_sector' in line_lower or '197 current_pending_sector' in line_lower:
+                        parts = line.split()
+                        if len(parts) >= 10:
+                            try:
+                                smart_info['CurrentPendingSectorCount'] = int(parts[9])
+                            except (ValueError, IndexError):
+                                pass
+                    
+                    # Uncorrectable error count
+                    elif 'offline_uncorrectable' in line_lower or '198 offline_uncorrectable' in line_lower:
+                        parts = line.split()
+                        if len(parts) >= 10:
+                            try:
+                                smart_info['UncorrectableErrorCount'] = int(parts[9])
+                            except (ValueError, IndexError):
+                                pass
+                    
+                    # Temperature
+                    elif 'temperature_celsius' in line_lower or '194 temperature_celsius' in line_lower:
+                        parts = line.split()
+                        if len(parts) >= 10:
+                            try:
+                                smart_info['Temperature'] = int(parts[9])
+                            except (ValueError, IndexError):
+                                pass
+            except Exception as e:
+                logging.warning(f"Error parsing SMART data for {drive_uuid}: {e}")
+        
+        return smart_info
+    
     def _parse_comprehensive_node_info(self, node_name: str) -> Dict[str, Any]:
         """Parse comprehensive node information from tool outputs"""
         node_info = {

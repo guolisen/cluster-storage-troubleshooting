@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 """
-Enhanced Knowledge Graph Test
+Test Enhanced Knowledge Graph Implementation
 
-Test the enhanced knowledge graph functionality with Volume and System entities,
-SMART data integration, and enhanced log analysis.
+This script tests the enhanced knowledge graph functionality with CSI Volume relationships.
 """
 
 import asyncio
 import logging
 import sys
 import os
-from typing import Dict, Any
 
 # Add the current directory to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from information_collector.collector import InformationCollector
 from knowledge_graph import KnowledgeGraph
-from information_collector.collector import ComprehensiveInformationCollector
 
 # Configure logging
 logging.basicConfig(
@@ -24,423 +22,451 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-def create_test_config() -> Dict[str, Any]:
-    """Create test configuration"""
-    return {
-        'interactive_mode': False,
+async def test_enhanced_knowledge_graph():
+    """Test the enhanced knowledge graph with CSI relationships"""
+    print("🧪 Testing Enhanced Knowledge Graph Implementation")
+    print("=" * 60)
+    
+    # Create mock CSI data for testing
+    mock_csi_data = {
+        'csi_baremetal': {
+            'drives': '''
+apiVersion: v1
+items:
+- apiVersion: csi-baremetal.dell.com/v1
+  kind: Drive
+  metadata:
+    name: 2a96dfec-47db-449d-9789-0d81660c2c4d
+  spec:
+    Health: GOOD
+    Status: ONLINE
+    Path: /dev/sda
+    Usage: IN_USE
+    Size: 299573968896
+    Type: SSD
+    NodeId: 6e172f8c-9d8b-41ac-99cf-44dab5da25f6
+    SerialNumber: 6000c293fbf5f0fa45686547adedc378
+- apiVersion: csi-baremetal.dell.com/v1
+  kind: Drive
+  metadata:
+    name: 4ae92cbd-6fed-412a-a259-f627dac829c2
+  spec:
+    Health: GOOD
+    Status: ONLINE
+    Path: /dev/sda
+    Usage: IN_USE
+    Size: 299573968896
+    Type: SSD
+    NodeId: 0c94ee22-3ac7-4114-a7a2-3b572d8574fb
+            ''',
+            'nodes': '''
+apiVersion: v1
+items:
+- apiVersion: csi-baremetal.dell.com/v1
+  kind: CSIBMNode
+  metadata:
+    name: csibmnode-6e172f8c-9d8b-41ac-99cf-44dab5da25f6
+  spec:
+    UUID: 6e172f8c-9d8b-41ac-99cf-44dab5da25f6
+    hostname: masternode1
+    nodeIP: 10.227.104.51
+- apiVersion: csi-baremetal.dell.com/v1
+  kind: CSIBMNode
+  metadata:
+    name: csibmnode-0c94ee22-3ac7-4114-a7a2-3b572d8574fb
+  spec:
+    UUID: 0c94ee22-3ac7-4114-a7a2-3b572d8574fb
+    hostname: workernode1
+    nodeIP: 10.227.104.52
+            ''',
+            'lvgs': '''
+apiVersion: v1
+items:
+- apiVersion: csi-baremetal.dell.com/v1
+  kind: LogicalVolumeGroup
+  metadata:
+    name: c15dd61c-e597-4392-bc5d-4c27b2d23a21
+  spec:
+    Health: GOOD
+    Size: 299573968896
+    Node: 6e172f8c-9d8b-41ac-99cf-44dab5da25f6
+    Locations:
+    - 2a96dfec-47db-449d-9789-0d81660c2c4d
+- apiVersion: csi-baremetal.dell.com/v1
+  kind: LogicalVolumeGroup
+  metadata:
+    name: eee60c88-0c93-4235-af53-e4295137eb2e
+  spec:
+    Health: GOOD
+    Size: 299573968896
+    Node: 0c94ee22-3ac7-4114-a7a2-3b572d8574fb
+    Locations:
+    - 4ae92cbd-6fed-412a-a259-f627dac829c2
+            ''',
+            'volumes': '''
+apiVersion: v1
+items:
+- apiVersion: csi-baremetal.dell.com/v1
+  kind: Volume
+  metadata:
+    name: vol-test-pvc-1
+    namespace: default
+  spec:
+    Health: GOOD
+    LocationType: LVG
+    Size: 10737418240
+    StorageClass: csi-baremetal-sc-ssdlvg
+    Location: c15dd61c-e597-4392-bc5d-4c27b2d23a21
+    Usage: IN_USE
+    Mode: FS
+    Type: LVM
+    NodeId: 6e172f8c-9d8b-41ac-99cf-44dab5da25f6
+- apiVersion: csi-baremetal.dell.com/v1
+  kind: Volume
+  metadata:
+    name: vol-test-pvc-2
+    namespace: default
+  spec:
+    Health: GOOD
+    LocationType: DRIVE
+    Size: 5368709120
+    StorageClass: csi-baremetal-sc-ssd
+    Location: 4ae92cbd-6fed-412a-a259-f627dac829c2
+    Usage: IN_USE
+    Mode: FS
+    Type: DRIVE
+    NodeId: 0c94ee22-3ac7-4114-a7a2-3b572d8574fb
+            ''',
+            'available_capacity': '''
+apiVersion: v1
+items:
+- apiVersion: csi-baremetal.dell.com/v1
+  kind: AvailableCapacity
+  metadata:
+    name: 33d8aa02-cd15-4e7f-a3c0-14c2c390fc48
+  spec:
+    Size: 18360985190
+    StorageClass: SSD
+    Location: 4fdcb98b-7beb-4811-b906-3d7da1f788b5
+    Node: masternode1
+    NodeId: 6e172f8c-9d8b-41ac-99cf-44dab5da25f6
+            '''
+        },
         'kubernetes': {
-            'config_path': '~/.kube/config',
-            'context': None
+            'target_pod': '''
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod
+  namespace: default
+spec:
+  containers:
+  - name: test-container
+    image: nginx
+status:
+  phase: Running
+  containerStatuses:
+  - restartCount: 0
+            ''',
+            'pvcs': '''
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: test-pvc-1
+    namespace: default
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: csi-baremetal-sc-ssdlvg
+  status:
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: test-pvc-2
+    namespace: default
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 5Gi
+    storageClassName: csi-baremetal-sc-ssd
+  status:
+    phase: Bound
+            ''',
+            'pvs': '''
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    name: pv-test-1
+  spec:
+    capacity:
+      storage: 10Gi
+    accessModes:
+    - ReadWriteOnce
+    persistentVolumeReclaimPolicy: Delete
+    storageClassName: csi-baremetal-sc-ssdlvg
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/hostname
+            operator: In
+            values:
+            - masternode1
+  status:
+    phase: Bound
+- apiVersion: v1
+  kind: PersistentVolume
+  metadata:
+    name: pv-test-2
+  spec:
+    capacity:
+      storage: 5Gi
+    accessModes:
+    - ReadWriteOnce
+    persistentVolumeReclaimPolicy: Delete
+    storageClassName: csi-baremetal-sc-ssd
+    nodeAffinity:
+      required:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/hostname
+            operator: In
+            values:
+            - workernode1
+  status:
+    phase: Bound
+            ''',
+            'nodes': '''
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: Node
+  metadata:
+    name: masternode1
+  status:
+    conditions:
+    - type: Ready
+      status: "True"
+    - type: DiskPressure
+      status: "False"
+    - type: MemoryPressure
+      status: "False"
+    nodeInfo:
+      architecture: amd64
+      kernelVersion: 5.14.0
+      osImage: Ubuntu 20.04.3 LTS
+- apiVersion: v1
+  kind: Node
+  metadata:
+    name: workernode1
+  status:
+    conditions:
+    - type: Ready
+      status: "True"
+    - type: DiskPressure
+      status: "False"
+    - type: MemoryPressure
+      status: "False"
+    nodeInfo:
+      architecture: amd64
+      kernelVersion: 5.14.0
+      osImage: Ubuntu 20.04.3 LTS
+            '''
         },
-        'ssh': {
-            'enabled': False
+        'system': {
+            'kernel_logs': '''
+[  123.456789] nvme nvme0: pci function 0000:00:04.0
+[  123.456790] nvme 0000:00:04.0: enabling device (0000 -> 0002)
+[  123.456791] nvme nvme0: 1/0/0 default/read/poll queues
+[  234.567890] scsi 2:0:0:0: Direct-Access     VMware   Virtual disk     2.0  PQ: 0 ANSI: 6
+[  234.567891] sd 2:0:0:0: [sda] 585937500 512-byte logical blocks: (300 GB/279 GiB)
+[  345.678901] EXT4-fs (sda1): mounted filesystem with ordered data mode
+            ''',
+            'journal_storage_logs': '''
+Jan 15 10:30:15 masternode1 systemd[1]: Started CSI Baremetal Node Service.
+Jan 15 10:30:16 masternode1 csi-baremetal-node[1234]: INFO: Drive 2a96dfec-47db-449d-9789-0d81660c2c4d detected
+Jan 15 10:30:17 masternode1 csi-baremetal-node[1234]: INFO: LVG c15dd61c-e597-4392-bc5d-4c27b2d23a21 created successfully
+            ''',
+            'journal_kubelet_logs': '''
+Jan 15 10:31:00 masternode1 kubelet[5678]: I0115 10:31:00.123456    5678 reconciler.go:224] "operationExecutor.VerifyControllerAttachedVolume started for volume \"test-pvc-1\" (UniqueName: \"kubernetes.io/csi/csi-baremetal^vol-test-pvc-1\") pod \"test-pod\" (UID: \"12345678-1234-1234-1234-123456789012\")"
+Jan 15 10:31:01 masternode1 kubelet[5678]: I0115 10:31:01.234567    5678 reconciler.go:157] "Volume attached for pod" volumeName="test-pvc-1" podName="test-pod"
+            '''
         },
-        'collection': {
-            'timeout': 300,
-            'parallel_execution': True
-        }
-    }
+        'smart_data': {
+            '2a96dfec-47db-449d-9789-0d81660c2c4d': '''
+smartctl 7.2 2020-12-30 r5155 [x86_64-linux-5.14.0] (local build)
+Copyright (C) 2002-20, Bruce Allen, Christian Franke, www.smartmontools.org
 
-def test_enhanced_knowledge_graph():
-    """Test enhanced knowledge graph with new entity types"""
-    print("=" * 80)
-    print("🧪 TESTING ENHANCED KNOWLEDGE GRAPH")
-    print("=" * 80)
+=== START OF INFORMATION SECTION ===
+Model Family:     VMware Virtual Disk
+Device Model:     VMware Virtual disk
+Serial Number:    6000c293fbf5f0fa45686547adedc378
+Firmware Version: 2.0
+User Capacity:    299,573,968,896 bytes [299 GB]
+
+=== START OF READ SMART DATA SECTION ===
+SMART overall-health self-assessment test result: PASSED
+
+SMART Attributes Data Structure revision number: 1
+Vendor Specific SMART Attributes with Thresholds:
+ID# ATTRIBUTE_NAME          FLAGS    VALUE WORST THRESH FAIL RAW_VALUE
+  1 Raw_Read_Error_Rate     POSR--   100   100   006    -    0
+  3 Spin_Up_Time            PO----   100   100   000    -    0
+  4 Start_Stop_Count        -O--CK   100   100   020    -    0
+  5 Reallocated_Sector_Ct   PO--CK   100   100   036    -    0
+  9 Power_On_Hours          -O--CK   100   100   000    -    1234
+ 12 Power_Cycle_Count       -O--CK   100   100   020    -    56
+194 Temperature_Celsius     -O---K   100   100   000    -    35
+197 Current_Pending_Sector  -O--C-   100   100   000    -    0
+198 Offline_Uncorrectable   ----C-   100   100   000    -    0
+            '''
+        },
+        'errors': []
+    }
     
-    # Initialize knowledge graph
-    kg = KnowledgeGraph()
+    # Create information collector with mock data
+    collector = InformationCollector()
+    collector.collected_data = mock_csi_data
     
-    # Test 1: Add basic entities
-    print("\n📝 Test 1: Adding basic entities...")
+    # Test volume chain discovery
+    print("📊 Testing volume chain discovery...")
+    volume_chain = {
+        'pvcs': ['default/test-pvc-1', 'default/test-pvc-2'],
+        'pvs': ['pv-test-1', 'pv-test-2'],
+        'drives': ['2a96dfec-47db-449d-9789-0d81660c2c4d', '4ae92cbd-6fed-412a-a259-f627dac829c2'],
+        'nodes': ['masternode1', 'workernode1']
+    }
     
-    # Add Pod
-    pod_id = kg.add_pod("test-pod", "default", 
-                       node_name="worker-1",
-                       phase="Running",
-                       SecurityContext={'runAsUser': 1000})
+    # Build enhanced knowledge graph
+    print("🔧 Building enhanced knowledge graph...")
+    kg = await collector._build_knowledge_graph_from_tools(
+        target_pod='test-pod',
+        target_namespace='default',
+        target_volume_path='/data',
+        volume_chain=volume_chain
+    )
     
-    # Add PVC
-    pvc_id = kg.add_pvc("test-pvc", "default",
-                       storageClass="csi-baremetal-sc",
-                       capacity="10Gi",
-                       phase="Bound")
+    # Test knowledge graph structure
+    print("\n📈 Knowledge Graph Summary:")
+    summary = kg.get_summary()
+    for entity_type, count in summary['entity_counts'].items():
+        if count > 0:
+            print(f"  • {entity_type}: {count}")
     
-    # Add PV
-    pv_id = kg.add_pv("test-pv",
-                     capacity="10Gi",
-                     diskPath="/dev/sdb",
-                     nodeAffinity="worker-1")
+    print(f"\n🔗 Total Relationships: {summary['total_edges']}")
+    print(f"⚠️  Total Issues: {summary['total_issues']}")
     
-    # Add Drive
-    drive_id = kg.add_drive("drive-uuid-123",
-                           Health="GOOD",
-                           Status="ONLINE",
-                           Path="/dev/sdb",
-                           Usage="IN_USE",
-                           Size="1TB")
+    # Test enhanced relationships
+    print("\n🔍 Testing Enhanced CSI Relationships:")
     
-    # Add Node
-    node_id = kg.add_node("worker-1",
-                         Ready=True,
-                         DiskPressure=False,
-                         Architecture="amd64")
+    # Test Volume → LVG relationship
+    volume_nodes = kg.find_nodes_by_type('Volume')
+    for volume_id in volume_nodes:
+        volume_attrs = kg.graph.nodes[volume_id]
+        volume_name = volume_attrs.get('name')
+        location_type = volume_attrs.get('LocationType')
+        
+        print(f"\n📦 Volume: {volume_name}")
+        print(f"   Location Type: {location_type}")
+        
+        # Check relationships
+        if location_type == 'LVG':
+            lvg_connections = kg.find_connected_nodes(volume_id, 'bound_to')
+            for lvg_id in lvg_connections:
+                if lvg_id.startswith('LVG:'):
+                    print(f"   ✅ Connected to LVG: {lvg_id}")
+                    
+                    # Check LVG → Drive relationships
+                    drive_connections = kg.find_connected_nodes(lvg_id, 'contains')
+                    for drive_id in drive_connections:
+                        if drive_id.startswith('Drive:'):
+                            print(f"      ✅ LVG contains Drive: {drive_id}")
+        
+        elif location_type == 'DRIVE':
+            drive_connections = kg.find_connected_nodes(volume_id, 'bound_to')
+            for drive_id in drive_connections:
+                if drive_id.startswith('Drive:'):
+                    print(f"   ✅ Connected to Drive: {drive_id}")
     
-    # Add Storage Class
-    sc_id = kg.add_storage_class("csi-baremetal-sc",
-                                provisioner="csi-baremetal")
+    # Test Drive → Node relationships
+    print("\n🖥️  Testing Drive → Node Relationships:")
+    drive_nodes = kg.find_nodes_by_type('Drive')
+    for drive_id in drive_nodes:
+        drive_attrs = kg.graph.nodes[drive_id]
+        drive_uuid = drive_attrs.get('uuid')
+        node_connections = kg.find_connected_nodes(drive_id, 'located_on')
+        
+        for node_id in node_connections:
+            if node_id.startswith('Node:'):
+                node_name = node_id.split(':')[-1]
+                print(f"   ✅ Drive {drive_uuid[:8]}... located on Node: {node_name}")
     
-    # Add LVG
-    lvg_id = kg.add_lvg("test-lvg",
-                       Health="GOOD",
-                       drive_uuids=["drive-uuid-123"])
+    # Test SMART data integration
+    print("\n🔬 Testing SMART Data Integration:")
+    smart_system_nodes = [node for node in kg.graph.nodes() if 'smart_monitoring' in node]
+    if smart_system_nodes:
+        smart_system_id = smart_system_nodes[0]
+        monitored_drives = kg.find_connected_nodes(smart_system_id, 'monitors')
+        print(f"   ✅ SMART monitoring system tracks {len(monitored_drives)} drives")
     
-    # Add AC
-    ac_id = kg.add_ac("test-ac",
-                     size="500Gi",
-                     storage_class="csi-baremetal-sc",
-                     location="worker-1")
+    # Test issue detection
+    print("\n⚠️  Testing Issue Detection:")
+    all_issues = kg.get_all_issues()
+    issue_types = {}
+    for issue in all_issues:
+        issue_type = issue['type']
+        issue_types[issue_type] = issue_types.get(issue_type, 0) + 1
     
-    print(f"✅ Added basic entities: {kg.graph.number_of_nodes()} nodes")
+    for issue_type, count in issue_types.items():
+        print(f"   • {issue_type}: {count} issues")
     
-    # Test 2: Add new Volume entities
-    print("\n📝 Test 2: Adding Volume entities...")
+    # Test path finding
+    print("\n🛤️  Testing Path Finding:")
+    pod_nodes = kg.find_nodes_by_type('Pod')
+    drive_nodes = kg.find_nodes_by_type('Drive')
     
-    volume_id = kg.add_volume("test-volume", "default",
-                             Health="GOOD",
-                             LocationType="LVG",
-                             size="10Gi",
-                             storage_class="csi-baremetal-sc",
-                             location="worker-1",
-                             Usage="ACTIVE")
+    if pod_nodes and drive_nodes:
+        pod_id = pod_nodes[0]
+        drive_id = drive_nodes[0]
+        path = kg.find_path(pod_id, drive_id)
+        
+        if path:
+            print(f"   ✅ Found path from Pod to Drive ({len(path)-1} hops):")
+            for i in range(len(path)-1):
+                source = path[i]
+                target = path[i+1]
+                edge_data = kg.graph.edges[source, target]
+                relationship = edge_data.get('relationship', 'connected_to')
+                
+                source_type = kg.graph.nodes[source].get('entity_type', 'Unknown')
+                target_type = kg.graph.nodes[target].get('entity_type', 'Unknown')
+                
+                print(f"      {source_type} --{relationship}--> {target_type}")
     
-    print(f"✅ Added Volume entity: {volume_id}")
-    
-    # Test 3: Add System entities
-    print("\n📝 Test 3: Adding System entities...")
-    
-    kernel_id = kg.add_system_entity("kernel", "logs",
-                                    description="Kernel logs and dmesg output",
-                                    log_sources=["dmesg", "journal"])
-    
-    kubelet_id = kg.add_system_entity("kubelet", "service",
-                                     description="Kubelet service",
-                                     service_status="active")
-    
-    smart_id = kg.add_system_entity("smart_monitoring", "hardware",
-                                   description="SMART drive monitoring",
-                                   monitored_drives=["drive-uuid-123"])
-    
-    print(f"✅ Added System entities: kernel, kubelet, smart_monitoring")
-    
-    # Test 4: Add relationships
-    print("\n📝 Test 4: Adding relationships...")
-    
-    # Storage chain relationships
-    kg.add_relationship(pod_id, pvc_id, "uses")
-    kg.add_relationship(pvc_id, pv_id, "bound_to")
-    kg.add_relationship(pv_id, drive_id, "maps_to")
-    kg.add_relationship(drive_id, node_id, "located_on")
-    kg.add_relationship(pv_id, node_id, "affinity_to")
-    
-    # LVG relationships
-    kg.add_relationship(volume_id, lvg_id, "bound_to")
-    kg.add_relationship(lvg_id, drive_id, "contains")
-    
-    # AC relationships
-    kg.add_relationship(ac_id, node_id, "available_on")
-    
-    # System monitoring relationships
-    kg.add_relationship(smart_id, drive_id, "monitors")
-    
-    print(f"✅ Added relationships: {kg.graph.number_of_edges()} edges")
-    
-    # Test 5: Add issues
-    print("\n📝 Test 5: Adding issues...")
-    
-    # Add drive health issue
-    kg.add_issue(drive_id, "disk_health", "Drive showing early warning signs", "medium")
-    
-    # Add system log issue
-    kg.add_issue(kernel_id, "kernel_error", "Kernel detected I/O errors", "high")
-    
-    # Add SMART issue
-    kg.add_issue(drive_id, "smart_health_fail", "SMART self-test failed", "critical")
-    
-    # Add service issue
-    kg.add_issue(kubelet_id, "service_error", "Kubelet volume mount errors", "medium")
-    
-    print(f"✅ Added issues: {len(kg.issues)} total issues")
-    
-    # Test 6: Analysis
-    print("\n📝 Test 6: Performing analysis...")
-    
-    analysis = kg.analyze_issues()
-    fix_plan = kg.generate_fix_plan(analysis)
-    
-    print(f"✅ Analysis completed:")
-    print(f"   - Total issues: {analysis['total_issues']}")
-    print(f"   - Root causes: {len(analysis['potential_root_causes'])}")
-    print(f"   - Patterns: {len(analysis['issue_patterns'])}")
-    print(f"   - Fix plan steps: {len(fix_plan)}")
-    
-    # Test 7: Print enhanced graph
-    print("\n📝 Test 7: Printing enhanced knowledge graph...")
-    
-    graph_output = kg.print_graph(
+    # Print formatted knowledge graph
+    print("\n" + "="*60)
+    print("📊 ENHANCED KNOWLEDGE GRAPH VISUALIZATION")
+    print("="*60)
+    formatted_output = kg.print_graph(
         include_detailed_entities=True,
         include_relationships=True,
         include_issues=True,
         include_analysis=True
     )
+    print(formatted_output)
     
-    print(graph_output)
-    
-    # Test 8: Summary
-    print("\n📝 Test 8: Final summary...")
-    
-    summary = kg.get_summary()
-    print(f"✅ Knowledge Graph Summary:")
-    print(f"   - Total nodes: {summary['total_nodes']}")
-    print(f"   - Total edges: {summary['total_edges']}")
-    print(f"   - Entity breakdown:")
-    for entity_type, count in summary['entity_counts'].items():
-        if count > 0:
-            print(f"     • {entity_type}: {count}")
-    print(f"   - Issues by severity:")
-    print(f"     • Critical: {summary['critical_issues']}")
-    print(f"     • High: {summary['high_issues']}")
-    print(f"     • Medium: {summary['medium_issues']}")
-    print(f"     • Low: {summary['low_issues']}")
-    
+    print("\n✅ Enhanced Knowledge Graph Test Completed Successfully!")
     return kg
-
-def test_mock_smart_data():
-    """Test SMART data parsing functionality"""
-    print("\n" + "=" * 80)
-    print("🔬 TESTING SMART DATA PARSING")
-    print("=" * 80)
-    
-    # Mock SMART data output
-    mock_smart_output = """
-smartctl 7.2 2020-12-30 r5155 [x86_64-linux-5.4.0] (local build)
-Copyright (C) 2002-20, Bruce Allen, Christian Franke, www.smartmontools.org
-
-=== START OF INFORMATION SECTION ===
-Model Family:     Western Digital Blue
-Device Model:     WDC WD10EZEX-08WN4A0
-Serial Number:    WD-WCC6Y7XXXXXX
-LU WWN Device Id: 5 0014ee 2b5xxxxxx
-Firmware Version: 01.01A01
-User Capacity:    1,000,204,886,016 bytes [1.00 TB]
-Sector Size:      512 bytes logical/physical
-Rotation Rate:    7200 rpm
-Form Factor:      3.5 inches
-Device is:        In smartctl database [for details use: -P show]
-ATA Version is:   ACS-3 T13/2161-D revision 3b
-SATA Version is:  SATA 3.1, 6.0 Gb/s (current: 6.0 Gb/s)
-Local Time is:    Mon May 25 02:30:00 2025 UTC
-SMART support is: Available - device has SMART capability.
-SMART support is: Enabled
-
-=== START OF READ SMART DATA SECTION ===
-SMART overall-health self-assessment test result: PASSED
-
-General SMART Values:
-Offline data collection status:  (0x82) Offline data collection activity
-                                        was completed without error.
-                                        Auto Offline Data Collection: Enabled.
-Self-test execution status:      (   0) The previous self-test routine completed
-                                        without error or no self-test has ever 
-                                        been run.
-Total time to complete Offline 
-data collection:                (12060) seconds.
-Offline data collection
-capabilities:                    (0x7b) SMART execute Offline immediate.
-                                        Auto Offline data collection on/off support.
-                                        Suspend Offline collection upon new
-                                        command.
-                                        Offline surface scan supported.
-                                        Self-test supported.
-                                        Conveyance Self-test supported.
-                                        Selective Self-test supported.
-SMART capabilities:            (0x0003) Saves SMART data before entering
-                                        power-saving mode.
-                                        Supports SMART auto save timer.
-Error logging capability:        (0x01) Error logging supported.
-                                        General Purpose Logging supported.
-Short self-test routine 
-recommended polling time:        (   2) minutes.
-Extended self-test routine
-recommended polling time:        ( 139) minutes.
-Conveyance self-test routine
-recommended polling time:        (   5) minutes.
-SCT capabilities:              (0x3037) SCT Status supported.
-                                        SCT Feature Control supported.
-                                        SCT Data Table supported.
-
-SMART Attributes Data Structure revision number: 16
-Vendor Specific SMART Attributes with Thresholds:
-ID# ATTRIBUTE_NAME          FLAGS    VALUE WORST THRESH FAIL RAW_VALUE
-  1 Raw_Read_Error_Rate     POSR-K   200   200   051    -    0
-  3 Spin_Up_Time            POS--K   180   177   021    -    4125
-  4 Start_Stop_Count        -O--CK   100   100   000    -    156
-  5 Reallocated_Sector_Ct   PO--CK   200   200   140    -    0
-  7 Seek_Error_Rate         -OSR-K   200   200   000    -    0
-  9 Power_On_Hours          -O--CK   098   098   000    -    1876
- 10 Spin_Retry_Count        -O--CK   100   100   000    -    0
- 11 Calibration_Retry_Count -O--CK   100   100   000    -    0
- 12 Power_Cycle_Count       -O--CK   100   100   000    -    156
-192 Power-Off_Retract_Count -O--CK   200   200   000    -    45
-193 Load_Cycle_Count        -O--CK   200   200   000    -    156
-194 Temperature_Celsius     -O---K   120   105   000    -    27
-196 Reallocated_Event_Count -O--CK   200   200   000    -    0
-197 Current_Pending_Sector  -O--CK   200   200   000    -    0
-198 Offline_Uncorrectable   ----CK   200   200   000    -    0
-199 UDMA_CRC_Error_Count    -O--CK   200   200   000    -    0
-200 Multi_Zone_Error_Rate   ---R--   200   200   000    -    0
-"""
-    
-    # Initialize knowledge graph
-    kg = KnowledgeGraph()
-    
-    # Add drive
-    drive_id = kg.add_drive("test-drive-uuid",
-                           Health="GOOD",
-                           Path="/dev/sdb")
-    
-    # Add SMART monitoring system
-    smart_id = kg.add_system_entity("smart_monitoring", "hardware",
-                                   description="SMART monitoring")
-    
-    # Parse SMART data (simulate the parsing logic)
-    issues = []
-    lines = mock_smart_output.split('\n')
-    
-    for line in lines:
-        line_lower = line.lower()
-        
-        # Check for SMART health status
-        if 'overall-health self-assessment test result:' in line_lower:
-            if 'passed' in line_lower:
-                print("✅ SMART health test: PASSED")
-            else:
-                issues.append({
-                    'type': 'smart_health_fail',
-                    'description': f"SMART health test failed: {line.strip()}",
-                    'severity': 'critical'
-                })
-        
-        # Check for reallocated sectors
-        if 'reallocated_sector_ct' in line_lower and 'raw_value' in line_lower:
-            try:
-                raw_value = int(line.split()[-1])
-                if raw_value > 0:
-                    issues.append({
-                        'type': 'reallocated_sectors',
-                        'description': f"Drive has {raw_value} reallocated sectors",
-                        'severity': 'high' if raw_value > 10 else 'medium'
-                    })
-                else:
-                    print(f"✅ Reallocated sectors: {raw_value} (healthy)")
-            except (ValueError, IndexError):
-                pass
-        
-        # Check for temperature
-        if 'temperature_celsius' in line_lower and 'raw_value' in line_lower:
-            try:
-                temp = int(line.split()[-1])
-                if temp > 60:
-                    issues.append({
-                        'type': 'high_temperature',
-                        'description': f"Drive temperature is high: {temp}°C",
-                        'severity': 'medium' if temp < 70 else 'high'
-                    })
-                else:
-                    print(f"✅ Drive temperature: {temp}°C (normal)")
-            except (ValueError, IndexError):
-                pass
-    
-    # Add issues to knowledge graph
-    for issue in issues:
-        kg.add_issue(drive_id, issue['type'], issue['description'], issue['severity'])
-    
-    print(f"\n📊 SMART Analysis Results:")
-    print(f"   - Issues found: {len(issues)}")
-    print(f"   - Drive health: {'GOOD' if len(issues) == 0 else 'NEEDS_ATTENTION'}")
-    
-    return kg
-
-async def test_information_collector_integration():
-    """Test integration with enhanced information collector"""
-    print("\n" + "=" * 80)
-    print("🔗 TESTING INFORMATION COLLECTOR INTEGRATION")
-    print("=" * 80)
-    
-    try:
-        # Create test configuration
-        config = create_test_config()
-        
-        # Initialize collector
-        collector = ComprehensiveInformationCollector(config)
-        
-        print("✅ Information collector initialized successfully")
-        print("✅ Enhanced knowledge graph integration ready")
-        print("✅ SMART data collection tools available")
-        print("✅ Enhanced log analysis tools available")
-        
-        # Test the new tool methods exist
-        assert hasattr(collector, '_execute_smart_data_tools'), "SMART data tools missing"
-        assert hasattr(collector, '_execute_enhanced_log_analysis_tools'), "Enhanced log tools missing"
-        assert hasattr(collector, '_add_volume_entities'), "Volume entities method missing"
-        assert hasattr(collector, '_add_system_entities'), "System entities method missing"
-        
-        print("✅ All enhanced methods are available")
-        
-    except Exception as e:
-        print(f"❌ Integration test failed: {e}")
-        return False
-    
-    return True
-
-def main():
-    """Main test function"""
-    print("🚀 STARTING ENHANCED KNOWLEDGE GRAPH TESTS")
-    print("=" * 80)
-    
-    try:
-        # Test 1: Enhanced Knowledge Graph
-        kg1 = test_enhanced_knowledge_graph()
-        
-        # Test 2: SMART Data Parsing
-        kg2 = test_mock_smart_data()
-        
-        # Test 3: Information Collector Integration
-        integration_success = asyncio.run(test_information_collector_integration())
-        
-        print("\n" + "=" * 80)
-        print("🎉 ALL TESTS COMPLETED")
-        print("=" * 80)
-        
-        print(f"✅ Enhanced Knowledge Graph: {kg1.graph.number_of_nodes()} nodes, {kg1.graph.number_of_edges()} edges")
-        print(f"✅ SMART Data Integration: {kg2.graph.number_of_nodes()} nodes, {len(kg2.issues)} issues")
-        print(f"✅ Information Collector Integration: {'SUCCESS' if integration_success else 'FAILED'}")
-        
-        print("\n🔍 Key Enhancements Verified:")
-        print("   • Volume entities with Health, LocationType, Usage attributes")
-        print("   • System entities for logs, services, and hardware monitoring")
-        print("   • SMART data collection and analysis")
-        print("   • Enhanced log analysis with pattern detection")
-        print("   • Comprehensive relationship mapping")
-        print("   • Advanced issue detection and root cause analysis")
-        
-        return True
-        
-    except Exception as e:
-        print(f"\n❌ TEST FAILED: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
 
 if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)
+    asyncio.run(test_enhanced_knowledge_graph())

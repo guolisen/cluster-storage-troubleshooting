@@ -22,21 +22,24 @@ class KnowledgeGraph:
         """Initialize the Knowledge Graph"""
         self.graph = nx.DiGraph()
         self.entities = {
-            'pods': {},
-            'pvcs': {},
-            'pvs': {},
-            'drives': {},
-            'nodes': {},
-            'storage_classes': {},
-            'lvgs': {},
-            'acs': {},
-            'volumes': {},
-            'system_entities': {}
+            'gnodes': {
+                'pods': {},
+                'pvcs': {},
+                'pvs': {},
+                'drives': {},
+                'nodes': {},
+                'storage_classes': {},
+                'lvgs': {},
+                'acs': {},
+                'volumes': {},
+                'system_entities': {},
+                'cluster_nodes': {}
+            }
         }
         self.issues = []
         logging.info("Knowledge Graph initialized")
     
-    def add_pod(self, name: str, namespace: str, **attributes) -> str:
+    def add_gnode_pod(self, name: str, namespace: str, **attributes) -> str:
         """
         Add a Pod node to the knowledge graph
         
@@ -48,13 +51,14 @@ class KnowledgeGraph:
         Returns:
             str: Node ID
         """
-        node_id = f"Pod:{namespace}/{name}"
+        node_id = f"gnode:Pod:{namespace}/{name}"
         self.graph.add_node(node_id, 
-                           entity_type="Pod",
+                           entity_type="gnode",
+                           gnode_subtype="Pod",
                            name=name,
                            namespace=namespace,
                            **attributes)
-        self.entities['pods'][node_id] = {
+        self.entities['gnodes']['pods'][node_id] = {
             'name': name,
             'namespace': namespace,
             **attributes
@@ -62,7 +66,7 @@ class KnowledgeGraph:
         logging.debug(f"Added Pod node: {node_id}")
         return node_id
     
-    def add_pvc(self, name: str, namespace: str, **attributes) -> str:
+    def add_gnode_pvc(self, name: str, namespace: str, **attributes) -> str:
         """
         Add a PVC node to the knowledge graph
         
@@ -74,13 +78,14 @@ class KnowledgeGraph:
         Returns:
             str: Node ID
         """
-        node_id = f"PVC:{namespace}/{name}"
+        node_id = f"gnode:PVC:{namespace}/{name}"
         self.graph.add_node(node_id,
-                           entity_type="PVC",
+                           entity_type="gnode",
+                           gnode_subtype="PVC",
                            name=name,
                            namespace=namespace,
                            **attributes)
-        self.entities['pvcs'][node_id] = {
+        self.entities['gnodes']['pvcs'][node_id] = {
             'name': name,
             'namespace': namespace,
             **attributes
@@ -88,7 +93,7 @@ class KnowledgeGraph:
         logging.debug(f"Added PVC node: {node_id}")
         return node_id
     
-    def add_pv(self, name: str, **attributes) -> str:
+    def add_gnode_pv(self, name: str, **attributes) -> str:
         """
         Add a PV node to the knowledge graph
         
@@ -99,19 +104,20 @@ class KnowledgeGraph:
         Returns:
             str: Node ID
         """
-        node_id = f"PV:{name}"
+        node_id = f"gnode:PV:{name}"
         self.graph.add_node(node_id,
-                           entity_type="PV",
+                           entity_type="gnode",
+                           gnode_subtype="PV",
                            name=name,
                            **attributes)
-        self.entities['pvs'][node_id] = {
+        self.entities['gnodes']['pvs'][node_id] = {
             'name': name,
             **attributes
         }
         logging.debug(f"Added PV node: {node_id}")
         return node_id
     
-    def add_drive(self, uuid: str, **attributes) -> str:
+    def add_gnode_drive(self, uuid: str, **attributes) -> str:
         """
         Add a Drive node to the knowledge graph
         
@@ -122,19 +128,20 @@ class KnowledgeGraph:
         Returns:
             str: Node ID
         """
-        node_id = f"Drive:{uuid}"
+        node_id = f"gnode:Drive:{uuid}"
         self.graph.add_node(node_id,
-                           entity_type="Drive",
+                           entity_type="gnode",
+                           gnode_subtype="Drive",
                            uuid=uuid,
                            **attributes)
-        self.entities['drives'][node_id] = {
+        self.entities['gnodes']['drives'][node_id] = {
             'uuid': uuid,
             **attributes
         }
         logging.debug(f"Added Drive node: {node_id}")
         return node_id
     
-    def add_node(self, name: str, **attributes) -> str:
+    def add_gnode_node(self, name: str, **attributes) -> str:
         """
         Add a Node node to the knowledge graph
         
@@ -145,19 +152,20 @@ class KnowledgeGraph:
         Returns:
             str: Node ID
         """
-        node_id = f"Node:{name}"
+        node_id = f"gnode:Node:{name}"
         self.graph.add_node(node_id,
-                           entity_type="Node",
+                           entity_type="gnode",
+                           gnode_subtype="Node",
                            name=name,
                            **attributes)
-        self.entities['nodes'][node_id] = {
+        self.entities['gnodes']['nodes'][node_id] = {
             'name': name,
             **attributes
         }
         logging.debug(f"Added Node node: {node_id}")
         return node_id
     
-    def add_storage_class(self, name: str, **attributes) -> str:
+    def add_gnode_storage_class(self, name: str, **attributes) -> str:
         """
         Add a StorageClass node to the knowledge graph
         
@@ -168,19 +176,20 @@ class KnowledgeGraph:
         Returns:
             str: Node ID
         """
-        node_id = f"StorageClass:{name}"
+        node_id = f"gnode:StorageClass:{name}"
         self.graph.add_node(node_id,
-                           entity_type="StorageClass",
+                           entity_type="gnode",
+                           gnode_subtype="StorageClass",
                            name=name,
                            **attributes)
-        self.entities['storage_classes'][node_id] = {
+        self.entities['gnodes']['storage_classes'][node_id] = {
             'name': name,
             **attributes
         }
         logging.debug(f"Added StorageClass node: {node_id}")
         return node_id
     
-    def add_lvg(self, name: str, **attributes) -> str:
+    def add_gnode_lvg(self, name: str, **attributes) -> str:
         """
         Add a LogicalVolumeGroup node to the knowledge graph
         
@@ -191,19 +200,20 @@ class KnowledgeGraph:
         Returns:
             str: Node ID
         """
-        node_id = f"LVG:{name}"
+        node_id = f"gnode:LVG:{name}"
         self.graph.add_node(node_id,
-                           entity_type="LVG",
+                           entity_type="gnode",
+                           gnode_subtype="LVG",
                            name=name,
                            **attributes)
-        self.entities['lvgs'][node_id] = {
+        self.entities['gnodes']['lvgs'][node_id] = {
             'name': name,
             **attributes
         }
         logging.debug(f"Added LVG node: {node_id}")
         return node_id
     
-    def add_ac(self, name: str, **attributes) -> str:
+    def add_gnode_ac(self, name: str, **attributes) -> str:
         """
         Add an AvailableCapacity node to the knowledge graph
         
@@ -214,19 +224,20 @@ class KnowledgeGraph:
         Returns:
             str: Node ID
         """
-        node_id = f"AC:{name}"
+        node_id = f"gnode:AC:{name}"
         self.graph.add_node(node_id,
-                           entity_type="AC",
+                           entity_type="gnode",
+                           gnode_subtype="AC",
                            name=name,
                            **attributes)
-        self.entities['acs'][node_id] = {
+        self.entities['gnodes']['acs'][node_id] = {
             'name': name,
             **attributes
         }
         logging.debug(f"Added AC node: {node_id}")
         return node_id
     
-    def add_volume(self, name: str, namespace: str, **attributes) -> str:
+    def add_gnode_volume(self, name: str, namespace: str, **attributes) -> str:
         """
         Add a Volume node to the knowledge graph
         
@@ -238,13 +249,14 @@ class KnowledgeGraph:
         Returns:
             str: Node ID
         """
-        node_id = f"Volume:{namespace}/{name}"
+        node_id = f"gnode:Volume:{namespace}/{name}"
         self.graph.add_node(node_id,
-                           entity_type="Volume",
+                           entity_type="gnode",
+                           gnode_subtype="Volume",
                            name=name,
                            namespace=namespace,
                            **attributes)
-        self.entities['volumes'][node_id] = {
+        self.entities['gnodes']['volumes'][node_id] = {
             'name': name,
             'namespace': namespace,
             **attributes
@@ -252,7 +264,7 @@ class KnowledgeGraph:
         logging.debug(f"Added Volume node: {node_id}")
         return node_id
     
-    def add_system_entity(self, entity_name: str, entity_subtype: str, **attributes) -> str:
+    def add_gnode_system_entity(self, entity_name: str, entity_subtype: str, **attributes) -> str:
         """
         Add a System entity node to the knowledge graph (for logs, kernel, services, etc.)
         
@@ -264,18 +276,43 @@ class KnowledgeGraph:
         Returns:
             str: Node ID
         """
-        node_id = f"System:{entity_name}"
+        node_id = f"gnode:System:{entity_name}"
         self.graph.add_node(node_id,
-                           entity_type="System",
+                           entity_type="gnode",
+                           gnode_subtype="System",
                            name=entity_name,
                            subtype=entity_subtype,
                            **attributes)
-        self.entities['system_entities'][node_id] = {
+        self.entities['gnodes']['system_entities'][node_id] = {
             'name': entity_name,
             'subtype': entity_subtype,
             **attributes
         }
         logging.debug(f"Added System entity node: {node_id}")
+        return node_id
+
+    def add_gnode_cluster_node(self, name: str, **attributes) -> str:
+        """
+        Add a ClusterNode node to the knowledge graph
+        
+        Args:
+            name: ClusterNode name
+            **attributes: Additional cluster node attributes
+            
+        Returns:
+            str: Node ID
+        """
+        node_id = f"gnode:ClusterNode:{name}"
+        self.graph.add_node(node_id,
+                           entity_type="gnode",
+                           gnode_subtype="ClusterNode",
+                           name=name,
+                           **attributes)
+        self.entities['gnodes']['cluster_nodes'][node_id] = {
+            'name': name,
+            **attributes
+        }
+        logging.debug(f"Added ClusterNode node: {node_id}")
         return node_id
     
     def add_relationship(self, source_id: str, target_id: str, relationship: str, **attributes):
@@ -343,18 +380,18 @@ class KnowledgeGraph:
         severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
         return sorted(self.issues, key=lambda x: severity_order.get(x['severity'], 4))
     
-    def find_nodes_by_type(self, entity_type: str) -> List[str]:
+    def find_nodes_by_type(self, gnode_subtype: str) -> List[str]:
         """
-        Find all nodes of a specific entity type
+        Find all nodes of a specific gnode subtype
         
         Args:
-            entity_type: Type of entity to find
+            gnode_subtype: Subtype of gnode to find
             
         Returns:
             List[str]: List of node IDs
         """
         return [node_id for node_id, attrs in self.graph.nodes(data=True) 
-                if attrs.get('entity_type') == entity_type]
+                if attrs.get('entity_type') == 'gnode' and attrs.get('gnode_subtype') == gnode_subtype]
     
     def find_connected_nodes(self, node_id: str, relationship: str = None) -> List[str]:
         """
@@ -694,7 +731,7 @@ class KnowledgeGraph:
         }
         
         # Count entities by type
-        for entity_type in ['Pod', 'PVC', 'PV', 'Drive', 'Node', 'StorageClass', 'LVG', 'AC', 'Volume', 'System']:
+        for entity_type in ['Pod', 'PVC', 'PV', 'Drive', 'Node', 'StorageClass', 'LVG', 'AC', 'Volume', 'System', 'ClusterNode']:
             summary['entity_counts'][entity_type] = len(self.find_nodes_by_type(entity_type))
         
         return summary
@@ -745,7 +782,8 @@ class KnowledgeGraph:
             'LVG': '📚',
             'AC': '🏪',
             'Volume': '📦',
-            'System': '⚙️'
+            'System': '⚙️',
+            'ClusterNode': '🌐'
         }
         
         for entity_type, count in summary['entity_counts'].items():
@@ -758,7 +796,7 @@ class KnowledgeGraph:
             output.append("\n🔎 DETAILED ENTITIES:")
             output.append("-" * 40)
             
-            for entity_type in ['Pod', 'PVC', 'PV', 'Drive', 'Node', 'StorageClass', 'LVG', 'AC', 'Volume', 'System']:
+            for entity_type in ['Pod', 'PVC', 'PV', 'Drive', 'Node', 'StorageClass', 'LVG', 'AC', 'Volume', 'System', 'ClusterNode']:
                 nodes = self.find_nodes_by_type(entity_type)
                 if nodes:
                     icon = entity_icons.get(entity_type, '📄')

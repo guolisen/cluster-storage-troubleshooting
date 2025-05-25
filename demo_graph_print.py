@@ -14,12 +14,12 @@ def demo_knowledge_graph_print():
     kg = KnowledgeGraph()
     
     # Add some sample entities
-    pod_id = kg.add_pod("test-pod", "default", volume_path="/mnt/data")
-    pvc_id = kg.add_pvc("test-pvc", "default", storageClass="csi-baremetal-sc")
-    pv_id = kg.add_pv("pv-12345", disk_path="/dev/sdb1")
-    drive_id = kg.add_drive("drive-uuid-123", Health="GOOD", Status="ONLINE", Path="/dev/sdb")
-    node_id = kg.add_node("worker-node-1", Ready=True, DiskPressure=False)
-    sc_id = kg.add_storage_class("csi-baremetal-sc", provisioner="csi-baremetal.dell.com")
+    pod_id = kg.add_gnode_pod("test-pod", "default", volume_path="/mnt/data")
+    pvc_id = kg.add_gnode_pvc("test-pvc", "default", storageClass="csi-baremetal-sc")
+    pv_id = kg.add_gnode_pv("pv-12345", disk_path="/dev/sdb1")
+    drive_id = kg.add_gnode_drive("drive-uuid-123", Health="GOOD", Status="ONLINE", Path="/dev/sdb")
+    node_id = kg.add_gnode_node("worker-node-1", Ready=True, DiskPressure=False)
+    sc_id = kg.add_gnode_storage_class("csi-baremetal-sc", provisioner="csi-baremetal.dell.com")
     
     # Add relationships
     kg.add_relationship(pod_id, pvc_id, "uses")
@@ -33,7 +33,7 @@ def demo_knowledge_graph_print():
     kg.add_issue(drive_id, "disk_health", "Drive showing early signs of wear", "low")
     
     # Add another problematic drive to show patterns
-    bad_drive_id = kg.add_drive("drive-uuid-456", Health="SUSPECT", Status="ONLINE", Path="/dev/sdc")
+    bad_drive_id = kg.add_gnode_drive("drive-uuid-456", Health="SUSPECT", Status="ONLINE", Path="/dev/sdc")
     kg.add_issue(bad_drive_id, "disk_health", "Drive has health status: SUSPECT", "high")
     
     print("=" * 80)

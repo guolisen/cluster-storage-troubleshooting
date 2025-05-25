@@ -28,7 +28,7 @@ class KnowledgeBuilder(MetadataParsers):
         if target_pod and target_namespace:
             # Extract pod metadata
             pod_metadata = self._parse_pod_metadata(target_pod, target_namespace)
-            pod_id = self.knowledge_graph.add_pod(
+            pod_id = self.knowledge_graph.add_gnode_pod(
                 target_pod, target_namespace,
                 volume_path=target_volume_path or '',
                 is_target=True,
@@ -51,27 +51,27 @@ class KnowledgeBuilder(MetadataParsers):
             for pvc_key in volume_chain.get('pvcs', []):
                 namespace, name = pvc_key.split('/', 1)
                 pvc_metadata = self._parse_pvc_metadata(name, namespace)
-                pvc_id = self.knowledge_graph.add_pvc(name, namespace, **pvc_metadata)
+                pvc_id = self.knowledge_graph.add_gnode_pvc(name, namespace, **pvc_metadata)
                 
                 # Link to target pod if it exists
                 if target_pod and target_namespace:
-                    pod_id = f"Pod:{target_namespace}/{target_pod}"
+                    pod_id = f"gnode:Pod:{target_namespace}/{target_pod}"
                     self.knowledge_graph.add_relationship(pod_id, pvc_id, "uses")
             
             # Add PVs with metadata
             for pv_name in volume_chain.get('pvs', []):
                 pv_metadata = self._parse_pv_metadata(pv_name)
-                pv_id = self.knowledge_graph.add_pv(pv_name, **pv_metadata)
+                pv_id = self.knowledge_graph.add_gnode_pv(pv_name, **pv_metadata)
                 
                 # Link to PVCs
                 for pvc_key in volume_chain.get('pvcs', []):
-                    pvc_id = f"PVC:{pvc_key}"
+                    pvc_id = f"gnode:PVC:{pvc_key}"
                     self.knowledge_graph.add_relationship(pvc_id, pv_id, "bound_to")
             
             # Add drives with comprehensive CSI metadata
             for drive_uuid in volume_chain.get('drives', []):
                 drive_info = self._parse_comprehensive_drive_info(drive_uuid)
-                drive_id = self.knowledge_graph.add_drive(drive_uuid, **drive_info)
+                drive_id = self.knowledge_graph.add_gnode_drive(drive_uuid, **drive_info)
                 
                 # Add issues for unhealthy drives
                 if drive_info.get('Health') in ['SUSPECT', 'BAD']:
@@ -93,13 +93,13 @@ class KnowledgeBuilder(MetadataParsers):
                 
                 # Link to PVs
                 for pv_name in volume_chain.get('pvs', []):
-                    pv_id = f"PV:{pv_name}"
+                    pv_id = f"gnode:PV:{pv_name}"
                     self.knowledge_graph.add_relationship(pv_id, drive_id, "maps_to")
             
             # Add nodes with enhanced metadata
             for node_name in volume_chain.get('nodes', []):
                 node_info = self._parse_comprehensive_node_info(node_name)
-                node_id = self.knowledge_graph.add_node(node_name, **node_info)
+                node_id = self.knowledge_graph.add_gnode_node(node_name, **node_info)
                 
                 # Add issues for unhealthy nodes
                 if not node_info.get('Ready') or node_info.get('DiskPressure'):
@@ -112,7 +112,7 @@ class KnowledgeBuilder(MetadataParsers):
                 
                 # Link drives to nodes
                 for drive_uuid in volume_chain.get('drives', []):
-                    drive_id = f"Drive:{drive_uuid}"
+                    drive_id = f"gnode:Drive:{drive_uuid}"
                     self.knowledge_graph.add_relationship(drive_id, node_id, "located_on")
         
         # Add CSI Baremetal specific entities
@@ -188,7 +188,7 @@ class KnowledgeBuilder(MetadataParsers):
                     health = line.split('health:')[-1].strip()
                     
                     # Add LVG to knowledge graph
-                    lvg_id = self.knowledge_graph.add_lvg(current_lvg, Health=health, drive_uuids=current_drives)
+                    lvg_id = self.knowledge_graph.add_gnode_lvg(current_lvg, Health=health, drive_uuids=current_drives)
                     
                     # Add issues for unhealthy LVGs
                     if health not in ['GOOD', 'HEALTHY']:
@@ -214,11 +214,11 @@ class KnowledgeBuilder(MetadataParsers):
     def _finalize_lvg_entity(self, lvg_name: str, drive_uuids: List[str]):
         """Finalize LVG entity with drive relationships"""
         try:
-            lvg_id = f"LVG:{lvg_name}"
+            lvg_id = f"gnode:LVG:{lvg_name}"
             
             # Add LVG→Drive relationships
             for drive_uuid in drive_uuids:
-                drive_id = f"Drive:{drive_uuid}"
+                drive_id = f"gnode:Drive:{drive_uuid}"
                 if self.knowledge_graph.graph.has_node(drive_id):
                     self.knowledge_graph.add_relationship(lvg_id, drive_id, "contains")
                     logging.debug(f"Added LVG→Drive relationship: {lvg_id} → {drive_id}")
@@ -279,7 +279,7 @@ class KnowledgeBuilder(MetadataParsers):
     def _finalize_ac_entity(self, ac_name: str, ac_info: Dict[str, str]):
         """Finalize AC entity with properties"""
         try:
-            ac_id = self.knowledge_graph.add_ac(
+            ac_id = self.knowledge_graph.add_gnode_ac(
                 ac_name,
                 size=ac_info.get('size', ''),
                 storage_class=ac_info.get('storage_class', ''),
@@ -289,7 +289,7 @@ class KnowledgeBuilder(MetadataParsers):
             # Add AC→Node relationship if location is specified
             location = ac_info.get('location')
             if location:
-                node_id = f"Node:{location}"
+                node_id = f"gnode:Node:{location}"
                 if self.knowledge_graph.graph.has_node(node_id):
                     self.knowledge_graph.add_relationship(ac_id, node_id, "available_on")
                     logging.debug(f"Added AC→Node relationship: {ac_id} → {node_id}")
@@ -447,7 +447,7 @@ class KnowledgeBuilder(MetadataParsers):
         """Finalize drive entity with comprehensive information"""
         try:
             # Add drive to knowledge graph with all collected information
-            drive_id = self.knowledge_graph.add_drive(drive_uuid, **drive_info)
+            drive_id = self.knowledge_graph.add_gnode_drive(drive_uuid, **drive_info)
             
             # Add issues for unhealthy drives
             health = drive_info.get('Health', 'UNKNOWN')
@@ -582,7 +582,7 @@ class KnowledgeBuilder(MetadataParsers):
         """Finalize cluster node entity with comprehensive information"""
         try:
             # Add node to knowledge graph with all collected information
-            node_id = self.knowledge_graph.add_node(node_name, **node_info)
+            node_id = self.knowledge_graph.add_gnode_node(node_name, **node_info)
             
             # Add issues for unhealthy nodes
             ready = node_info.get('Ready', True)
@@ -629,7 +629,7 @@ class KnowledgeBuilder(MetadataParsers):
                 node_name = drive_attrs.get('NodeName')
                 
                 if node_name:
-                    node_id = f"Node:{node_name}"
+                    node_id = f"gnode:Node:{node_name}"
                     if self.knowledge_graph.graph.has_node(node_id):
                         self.knowledge_graph.add_relationship(drive_id, node_id, "located_on")
                         logging.debug(f"Added Drive→Node relationship: {drive_id} → {node_id}")
@@ -694,7 +694,7 @@ class KnowledgeBuilder(MetadataParsers):
                 
                 if volume_info:
                     # Create volume entity
-                    volume_id = self.knowledge_graph.add_volume(
+                    volume_id = self.knowledge_graph.add_gnode_volume(
                         volume_info['name'],
                         volume_info['namespace'],
                         **volume_info['attributes']
@@ -922,7 +922,7 @@ class KnowledgeBuilder(MetadataParsers):
                 # Enhanced logic: Determine if location is Drive UUID or LVG UUID
                 if self._is_drive_uuid(location):
                     # Direct Volume → Drive relationship
-                    drive_id = f"Drive:{location}"
+                    drive_id = f"gnode:Drive:{location}"
                     if self.knowledge_graph.graph.has_node(drive_id):
                         self.knowledge_graph.add_relationship(volume_id, drive_id, "bound_to")
                         logging.debug(f"Added Volume→Drive relationship: {volume_id} → {drive_id}")
@@ -930,7 +930,7 @@ class KnowledgeBuilder(MetadataParsers):
                         logging.warning(f"Drive {location} not found for volume {volume_name}")
                 else:
                     # Volume → LVG relationship (location is LVG UUID)
-                    lvg_id = f"LVG:{location}"
+                    lvg_id = f"gnode:LVG:{location}"
                     if self.knowledge_graph.graph.has_node(lvg_id):
                         self.knowledge_graph.add_relationship(volume_id, lvg_id, "bound_to")
                         logging.debug(f"Added Volume→LVG relationship: {volume_id} → {lvg_id}")
@@ -992,28 +992,28 @@ class KnowledgeBuilder(MetadataParsers):
             logging.info("Adding System entities to knowledge graph...")
             
             # Add kernel system entity
-            kernel_id = self.knowledge_graph.add_system_entity(
+            kernel_id = self.knowledge_graph.add_gnode_system_entity(
                 "kernel", "logs",
                 description="Kernel logs and dmesg output",
                 log_sources=["dmesg", "journal"]
             )
             
             # Add kubelet system entity
-            kubelet_id = self.knowledge_graph.add_system_entity(
+            kubelet_id = self.knowledge_graph.add_gnode_system_entity(
                 "kubelet", "service",
                 description="Kubelet service for pod and volume management",
                 service_status="active"
             )
             
             # Add boot system entity
-            boot_id = self.knowledge_graph.add_system_entity(
+            boot_id = self.knowledge_graph.add_gnode_system_entity(
                 "boot", "logs",
                 description="Boot-time hardware and storage initialization",
                 log_sources=["journal"]
             )
             
             # Add storage services system entity
-            storage_services_id = self.knowledge_graph.add_system_entity(
+            storage_services_id = self.knowledge_graph.add_gnode_system_entity(
                 "storage_services", "service",
                 description="Storage-related system services",
                 services=["csi-baremetal-node", "csi-baremetal-controller"]
@@ -1021,7 +1021,7 @@ class KnowledgeBuilder(MetadataParsers):
             
             # Add SMART monitoring system entity if SMART data exists
             if self.collected_data.get('smart_data'):
-                smart_id = self.knowledge_graph.add_system_entity(
+                smart_id = self.knowledge_graph.add_gnode_system_entity(
                     "smart_monitoring", "hardware",
                     description="SMART drive health monitoring",
                     monitored_drives=list(self.collected_data['smart_data'].keys())
@@ -1041,7 +1041,7 @@ class KnowledgeBuilder(MetadataParsers):
             dmesg_issues = self._parse_dmesg_issues()
             for issue in dmesg_issues:
                 # Add system-level issues to a general system entity
-                system_id = "System:kernel"
+                system_id = "gnode:System:kernel"
                 self.knowledge_graph.add_issue(
                     system_id,
                     issue['type'],
@@ -1054,11 +1054,11 @@ class KnowledgeBuilder(MetadataParsers):
             for issue in journal_issues:
                 # Determine entity based on issue source
                 if issue['source'] == 'journal_kubelet':
-                    entity_id = "System:kubelet"
+                    entity_id = "gnode:System:kubelet"
                 elif issue['source'] == 'journal_boot':
-                    entity_id = "System:boot"
+                    entity_id = "gnode:System:boot"
                 else:
-                    entity_id = "System:storage_services"
+                    entity_id = "gnode:System:storage_services"
                 
                 self.knowledge_graph.add_issue(
                     entity_id,
@@ -1093,7 +1093,7 @@ class KnowledgeBuilder(MetadataParsers):
             logging.info("Analyzing SMART data for drive health issues...")
             
             for drive_uuid, smart_output in smart_data.items():
-                drive_id = f"Drive:{drive_uuid}"
+                drive_id = f"gnode:Drive:{drive_uuid}"
                 
                 # Parse SMART data for health indicators
                 smart_issues = self._parse_smart_data_issues(smart_output, drive_uuid)
@@ -1107,7 +1107,7 @@ class KnowledgeBuilder(MetadataParsers):
                     )
                 
                 # Add relationship between drive and SMART monitoring system
-                smart_system_id = "System:smart_monitoring"
+                smart_system_id = "gnode:System:smart_monitoring"
                 if self.knowledge_graph.graph.has_node(smart_system_id):
                     self.knowledge_graph.add_relationship(
                         smart_system_id, drive_id, "monitors"
@@ -1139,7 +1139,7 @@ class KnowledgeBuilder(MetadataParsers):
                     
                     # Add issue to kernel system entity
                     self.knowledge_graph.add_issue(
-                        "System:kernel",
+                        "gnode:System:kernel",
                         "enhanced_log_pattern",
                         f"Enhanced log analysis detected {pattern_type} issues",
                         "medium"
@@ -1150,9 +1150,9 @@ class KnowledgeBuilder(MetadataParsers):
                 if log_output and ('error' in log_output.lower() or 'failed' in log_output.lower()):
                     # Determine system entity based on service
                     if service_name == 'kubelet':
-                        entity_id = "System:kubelet"
+                        entity_id = "gnode:System:kubelet"
                     else:
-                        entity_id = "System:storage_services"
+                        entity_id = "gnode:System:storage_services"
                     
                     self.knowledge_graph.add_issue(
                         entity_id,

@@ -31,6 +31,8 @@ class VolumeDiscovery(InformationCollectorBase):
             'pods': [],
             'pvcs': [],
             'pvs': [],
+            'volumes': [],
+            'lvg': [],
             'drives': [],
             'nodes': [],
             'storage_classes': []
@@ -61,7 +63,11 @@ class VolumeDiscovery(InformationCollectorBase):
                             pvc_name = line.split('claimName:')[-1].strip()
                             if pvc_name:
                                 chain['pvcs'].append(f"{target_namespace}/{pvc_name}")
-                
+                        if 'nodeName:' in line:
+                            node_name = line.split('nodeName:')[-1].strip()
+                            if node_name:
+                                chain['nodes'].append(f"{node_name}")
+               
                 # For each PVC, find bound PV
                 for pvc_key in chain['pvcs']:
                     pvc_name = pvc_key.split('/')[-1]
@@ -83,6 +89,7 @@ class VolumeDiscovery(InformationCollectorBase):
                                 pv_name = line.split('volumeName:')[-1].strip()
                                 if pv_name:
                                     chain['pvs'].append(pv_name)
+                                    chain['volumes'].append(pv_name)
                             elif 'storageClassName:' in line:
                                 sc_name = line.split('storageClassName:')[-1].strip()
                                 if sc_name and sc_name not in chain['storage_classes']:
@@ -113,6 +120,32 @@ class VolumeDiscovery(InformationCollectorBase):
                                     if len(part) > 10 and '-' in part:  # UUID-like pattern
                                         if part not in chain['drives']:
                                             chain['drives'].append(part)
+
+                    vol_output = self._execute_tool_with_validation(
+                        kubectl_get, {
+                            'resource_type': 'volume',
+                            'namespace': target_namespace,
+                            'resource_name': pv_name,
+                            'output_format': 'yaml'
+                        },
+                        'kubectl_get_pv', f'Get PV details for {pv_name}'
+                    )
+                    
+                    if vol_output and not vol_output.startswith("error:") and not vol_output.startswith("Error:"):
+                        # Extract drive UUID and node affinity
+                        lines = vol_output.split('\n')
+                        for line in lines:
+                            if 'location:' in line:
+                                node_name = line.split('kubernetes.io/hostname:')[-1].strip()
+                                if node_name and node_name not in chain['nodes']:
+                                    chain['nodes'].append(node_name)
+                            elif 'baremetal-csi' in line and 'uuid' in line.lower():
+                                # Extract drive UUID (simplified)
+                                for part in line.split():
+                                    if len(part) > 10 and '-' in part:  # UUID-like pattern
+                                        if part not in chain['drives']:
+                                            chain['drives'].append(part)
+
         except Exception as e:
             error_msg = f"Error discovering volume dependency chain: {str(e)}"
             logging.error(error_msg)

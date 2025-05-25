@@ -67,6 +67,8 @@ class ToolExecutors(InformationCollectorBase):
             pvcs_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'pvc',
+                    'resource_name': volume_chain.get('pvcs', []),
+                    'namespace': volume_chain.get('namespace', 'default'),
                     'output_format': 'yaml'
                 },
                 'kubectl_get_pvcs', 'Get all PVC information'
@@ -78,12 +80,60 @@ class ToolExecutors(InformationCollectorBase):
             pvs_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'pv',
+                    'resource_name': volume_chain.get('pvs', []),
+                    'namespace': volume_chain.get('namespace', 'default'),
                     'output_format': 'yaml'
                 },
                 'kubectl_get_pvs', 'Get all PV information'
             )
             self.collected_data['kubernetes']['pvs'] = pvs_output
         
+        if volume_chain.get('volumes'):
+            vol_output = self._execute_tool_with_validation(
+                kubectl_get, {
+                    'resource_type': 'volume',
+                    'resource_name': volume_chain.get('volumes', []),
+                    'namespace': volume_chain.get('namespace', 'default'),
+                    'output_format': 'yaml'
+                },
+                'kubectl_get_volume', 'Get all volume information'
+            )
+            self.collected_data['kubernetes']['volumes'] = vol_output
+
+        if volume_chain.get('lvg'):
+            lvg_output = self._execute_tool_with_validation(
+                kubectl_get, {
+                    'resource_type': 'lvg',
+                    'resource_name': volume_chain.get('lvg', []),
+                    'namespace': volume_chain.get('namespace', 'default'),
+                    'output_format': 'yaml'
+                },
+                'kubectl_get_volume', 'Get all volume information'
+            )
+            self.collected_data['kubernetes']['lvg'] = lvg_output
+
+        if volume_chain.get('drives'):
+            drv_output = self._execute_tool_with_validation(
+                kubectl_get, {
+                    'resource_type': 'drive',
+                    'resource_name': volume_chain.get('drives', []),
+                    'output_format': 'yaml'
+                },
+                'kubectl_get_drive', 'Get all drive information'
+            )
+            self.collected_data['kubernetes']['drives'] = drv_output
+
+        if volume_chain.get('nodes'):
+            drv_output = self._execute_tool_with_validation(
+                kubectl_get, {
+                    'resource_type': 'node',
+                    'resource_name': volume_chain.get('nodes', []),
+                    'output_format': 'yaml'
+                },
+                'kubectl_get_node', 'Get all node information'
+            )
+            self.collected_data['kubernetes']['nodes'] = drv_output
+
         # Get storage classes
         sc_output = self._execute_tool_with_validation(
             kubectl_get_storageclass, {

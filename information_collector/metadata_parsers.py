@@ -102,9 +102,108 @@ class MetadataParsers(InformationCollectorBase):
         
         return metadata
     
+    def _parse_vol_metadata(self, vol_name: str) -> Dict[str, Any]:
+        """Parse volume metadata from tool outputs"""
+        ''' volume example:
+        apiVersion: v1
+        items:
+        - apiVersion: csi-baremetal.dell.com/v1
+        kind: Volume
+        metadata:
+            creationTimestamp: "2025-05-25T07:10:00Z"
+            finalizers:
+            - dell.emc.csi/volume-cleanup
+            generation: 6
+            name: pvc-1466401c-4595-4ae5-add7-4f6273369f9e
+            namespace: default
+            resourceVersion: "4964995"
+            uid: b956f1b6-effa-4709-8901-9f861269d9af
+        spec:
+            CSIStatus: PUBLISHED
+            Health: UNKNOWN
+            Id: pvc-1466401c-4595-4ae5-add7-4f6273369f9e
+            Location: 4924f8a4-6920-4b3f-9c4b-68141ad258dd
+            LocationType: DRIVE
+            Mode: FS
+            NodeId: 45b1ba07-213f-4979-aa0d-5bfc66d8aeda
+            OperationalStatus: MISSING
+            Owners:
+            - test-pod-1-0
+            Size: 3839999606784
+            StorageClass: NVME
+            Type: xfs
+            Usage: IN_USE
+        kind: List
+        metadata:
+        resourceVersion: ""
+        '''
+        metadata = {
+            'CSIStatus': 'UNKNOWN',
+            'Health': 'UNKNOWN',
+            'Id': '',
+            'Location': '',
+            'LocationType': 'UNKNOWN',
+            'Mode': 'UNKNOWN',
+            'NodeId': '',
+            'OperationalStatus': 'UNKNOWN',
+            'Owners': [],
+            'Size': 0,
+            'StorageClass': '',
+            'Type': '',
+            'Usage': 'UNKNOWN'
+        }
+    
+        volumes_output = self.collected_data.get('csi_baremetal', {}).get('volumes', '')
+        if volumes_output and vol_name in volumes_output:
+            try:
+                vol_section = self._extract_yaml_section(volumes_output, vol_name)
+                for line in vol_section:
+                    if 'CSIStatus:' in line:
+                        metadata['CSIStatus'] = line.split('CSIStatus:')[-1].strip()
+                    elif 'Health:' in line:
+                        metadata['Health'] = line.split('Health:')[-1].strip()
+                    elif 'Id:' in line:
+                        metadata['Id'] = line.split('Id:')[-1].strip()
+                    elif 'Location:' in line:
+                        metadata['Location'] = line.split('Location:')[-1].strip()
+                    elif 'LocationType:' in line:
+                        metadata['LocationType'] = line.split('LocationType:')[-1].strip()
+                    elif 'Mode:' in line:
+                        metadata['Mode'] = line.split('Mode:')[-1].strip()
+                    elif 'NodeId:' in line:
+                        metadata['NodeId'] = line.split('NodeId:')[-1].strip()
+                    elif 'OperationalStatus:' in line:
+                        metadata['OperationalStatus'] = line.split('OperationalStatus:')[-1].strip()
+                    elif 'Owners:' in line:
+                        owners = line.split('Owners:')[-1].strip()
+                        if owners.startswith('- '):
+                            metadata['Owners'] = [owner.strip() for owner in owners.split('\n') if owner.strip()]
+                        else:   
+                            metadata['Owners'] = [owners.strip()]
+                    elif 'Size:' in line:
+                        try:
+                            size_str = line.split('Size:')[-1].strip()
+                            metadata['Size'] = int(size_str) if size_str.isdigit() else size_str
+                        except (ValueError, TypeError):
+                            pass
+                    elif 'StorageClass:' in line:
+                        metadata['StorageClass'] = line.split('StorageClass:')[-1].strip()
+                    elif 'Type:' in line:
+                        metadata['Type'] = line.split('Type:')[-1].strip()
+                    elif 'Usage:' in line:
+                        metadata['Usage'] = line.split('Usage:')[-1].strip()
+            except Exception as e:
+                logging.warning(f"Error parsing volume metadata for {vol_name}: {e}")
+                return metadata
+        else:
+            logging.warning(f"Volume {vol_name} not found in CSI Baremetal volumes output")
+
+        return metadata
+
     def _extract_yaml_section(self, yaml_output: str, entity_name: str) -> List[str]:
         """Extract YAML section for a specific entity"""
         lines = yaml_output.split('\n')
+
         section_lines = []
         in_section = False
         indent_level = 0
@@ -147,35 +246,35 @@ class MetadataParsers(InformationCollectorBase):
                 if drive_section:
                     for line in drive_section:
                         line = line.strip()
-                        if 'health:' in line:
-                            drive_info['Health'] = line.split('health:')[-1].strip()
-                        elif 'status:' in line:
-                            drive_info['Status'] = line.split('status:')[-1].strip()
-                        elif 'type:' in line:
-                            drive_info['Type'] = line.split('type:')[-1].strip()
-                        elif 'size:' in line:
+                        if 'Health:' in line:
+                            drive_info['Health'] = line.split('Health:')[-1].strip()
+                        elif 'Status:' in line:
+                            drive_info['Status'] = line.split('Status:')[-1].strip()
+                        elif 'Type:' in line:
+                            drive_info['Type'] = line.split('Type:')[-1].strip()
+                        elif 'Size:' in line:
                             try:
-                                size_str = line.split('size:')[-1].strip()
+                                size_str = line.split('Size:')[-1].strip()
                                 drive_info['Size'] = int(size_str) if size_str.isdigit() else size_str
                             except (ValueError, TypeError):
                                 pass
-                        elif 'usage:' in line:
-                            drive_info['Usage'] = line.split('usage:')[-1].strip()
-                        elif 'isSystem:' in line:
-                            system_str = line.split('isSystem:')[-1].strip().lower()
+                        elif 'Usage:' in line:
+                            drive_info['Usage'] = line.split('Usage:')[-1].strip()
+                        elif 'IsSystem:' in line:
+                            system_str = line.split('IsSystem:')[-1].strip().lower()
                             drive_info['IsSystem'] = system_str in ['true', 'yes', '1']
-                        elif 'path:' in line:
-                            drive_info['Path'] = line.split('path:')[-1].strip()
-                        elif 'serialNumber:' in line:
-                            drive_info['SerialNumber'] = line.split('serialNumber:')[-1].strip()
-                        elif 'firmware:' in line:
-                            drive_info['Firmware'] = line.split('firmware:')[-1].strip()
-                        elif 'vid:' in line:
-                            drive_info['VID'] = line.split('vid:')[-1].strip()
-                        elif 'pid:' in line:
-                            drive_info['PID'] = line.split('pid:')[-1].strip()
-                        elif 'nodeId:' in line:
-                            drive_info['NodeId'] = line.split('nodeId:')[-1].strip()
+                        elif 'Path:' in line:
+                            drive_info['Path'] = line.split('Path:')[-1].strip()
+                        elif 'SerialNumber:' in line:
+                            drive_info['SerialNumber'] = line.split('SerialNumber:')[-1].strip()
+                        elif 'Firmware:' in line:
+                            drive_info['Firmware'] = line.split('Firmware:')[-1].strip()
+                        elif 'VID:' in line:
+                            drive_info['VID'] = line.split('VID:')[-1].strip()
+                        elif 'PID:' in line:
+                            drive_info['PID'] = line.split('PID:')[-1].strip()
+                        elif 'NodeId:' in line:
+                            drive_info['NodeId'] = line.split('NodeId:')[-1].strip()
             except Exception as e:
                 logging.warning(f"Error parsing drive metadata for {drive_uuid}: {e}")
         
@@ -440,19 +539,21 @@ class MetadataParsers(InformationCollectorBase):
         nodes_output = self.collected_data.get('kubernetes', {}).get('nodes', '')
         if nodes_output and node_name in nodes_output:
             try:
-                node_section = self._extract_yaml_section(nodes_output, node_name)
+                #node_section = self._extract_yaml_section(nodes_output, node_name)
+                node_section = lines = nodes_output.split('\n')
                 if node_section:
                     for line in node_section:
                         line = line.strip()
-                        if 'Ready' in line and 'status:' in line:
+                        node_info['Ready'] = 'True'
+                        if 'ready' in line and 'status:' in line:
                             node_info['Ready'] = 'True' in line
-                        elif 'DiskPressure' in line and 'status:' in line:
+                        elif 'diskPressure' in line and 'status:' in line:
                             node_info['DiskPressure'] = 'True' in line
-                        elif 'MemoryPressure' in line and 'status:' in line:
+                        elif 'memoryPressure' in line and 'status:' in line:
                             node_info['MemoryPressure'] = 'True' in line
                         elif 'PIDPressure' in line and 'status:' in line:
                             node_info['PIDPressure'] = 'True' in line
-                        elif 'NetworkUnavailable' in line and 'status:' in line:
+                        elif 'networkUnavailable' in line and 'status:' in line:
                             node_info['NetworkUnavailable'] = 'True' in line
                         elif 'kubeletVersion:' in line:
                             node_info['KubeletVersion'] = line.split('kubeletVersion:')[-1].strip()

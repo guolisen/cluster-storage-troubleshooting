@@ -100,7 +100,8 @@ async def run_information_collection_phase(pod_name: str, namespace: str, volume
             "csi_driver_info": collection_result.get('collected_data', {}).get('csi_baremetal', {}),
             "storage_class_info": {},  # Will be included in kubernetes data
             "system_info": collection_result.get('collected_data', {}).get('system', {}),
-            "knowledge_graph_summary": collection_result.get('context_summary', {})
+            "knowledge_graph_summary": collection_result.get('context_summary', {}),
+            "issues": KNOWLEDGE_GRAPH.issues if KNOWLEDGE_GRAPH else []
         }
         
         # Print Knowledge Graph
@@ -149,7 +150,7 @@ async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds
         logging.info(f"Starting analysis with graph, timeout: {timeout_seconds}s")
         try:
             response = await asyncio.wait_for(
-                graph.ainvoke(formatted_query, config={"recursion_limit": 50}),
+                graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
                 timeout=timeout_seconds
             )
         except Exception as e:

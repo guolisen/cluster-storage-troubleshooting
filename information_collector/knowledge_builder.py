@@ -67,21 +67,74 @@ class KnowledgeBuilder(MetadataParsers):
                 for pvc_key in volume_chain.get('pvcs', []):
                     pvc_id = f"gnode:PVC:{pvc_key}"
                     self.knowledge_graph.add_relationship(pvc_id, pv_id, "bound_to")
-            
+
+            # Add PVs with metadata
+            volume_chain_id = None
+            for vol_name in volume_chain.get('volumes', []):
+                vol_metadata = self._parse_vol_metadata(vol_name)
+                volume_chain_id = self.knowledge_graph.add_gnode_volume(vol_name, target_namespace, **vol_metadata)
+                
+                if vol_metadata.get('Health') not in ['GOOD']:
+                    self.knowledge_graph.add_issue(
+                        volume_chain_id,
+                        "volume_health",
+                        f"Volume health issue: {vol_metadata.get('Health')}",
+                        "critical"
+                    )
+
+                if vol_metadata.get('CSIStatus') in ['FAILED']:
+                    self.knowledge_graph.add_issue(
+                        volume_chain_id,
+                        "volume_health",
+                        f"Volume CSIStatus issue: {vol_metadata.get('CSIStatus')}",
+                        "critical"
+                    )
+
+                if vol_metadata.get('OperationalStatus') not in ['OPERATIVE']:
+                    self.knowledge_graph.add_issue(
+                        volume_chain_id,
+                        "volume_health",
+                        f"Volume OperationalStatus issue: {vol_metadata.get('OperationalStatus')}",
+                        "critical"
+                    )
+
+                self.knowledge_graph.add_relationship(pvc_id, volume_chain_id, "bound_to")
+
             # Add drives with comprehensive CSI metadata
+            drive_id = None
             for drive_uuid in volume_chain.get('drives', []):
                 drive_info = self._parse_comprehensive_drive_info(drive_uuid)
                 drive_id = self.knowledge_graph.add_gnode_drive(drive_uuid, **drive_info)
-                
+
+                # Link drives to volume chains
+                if volume_chain_id:
+                    self.knowledge_graph.add_relationship(volume_chain_id, drive_id, "bound_to")
+
                 # Add issues for unhealthy drives
-                if drive_info.get('Health') in ['SUSPECT', 'BAD']:
+                if drive_info.get('Health') not in ['GOOD']:
                     self.knowledge_graph.add_issue(
                         drive_id,
                         "disk_health",
                         f"Drive health issue: {drive_info.get('Health')}",
                         "critical" if drive_info.get('Health') == 'BAD' else "high"
                     )
-                
+
+                if drive_info.get('Usage') not in ['IN_USE']:
+                    self.knowledge_graph.add_issue(
+                        drive_id,
+                        "disk_health",
+                        f"Drive usage issue: {drive_info.get('Usage')}",
+                        "critical"
+                    )
+
+                if drive_info.get('Status') not in ['ONLINE']:
+                    self.knowledge_graph.add_issue(
+                        drive_id,
+                        "disk_health",
+                        f"Drive status issue: {drive_info.get('Status')}",
+                        "critical"
+                    )
+        
                 # Add issues for system drives under high usage
                 if drive_info.get('IsSystem') and drive_info.get('Usage') == 'IN_USE':
                     self.knowledge_graph.add_issue(
@@ -111,9 +164,9 @@ class KnowledgeBuilder(MetadataParsers):
                     )
                 
                 # Link drives to nodes
-                for drive_uuid in volume_chain.get('drives', []):
-                    drive_id = f"gnode:Drive:{drive_uuid}"
+                if drive_id:
                     self.knowledge_graph.add_relationship(drive_id, node_id, "located_on")
+                    self.knowledge_graph.add_relationship(node_id, drive_id, "related_to")
         
         # Add CSI Baremetal specific entities
         await self._add_csi_baremetal_entities()

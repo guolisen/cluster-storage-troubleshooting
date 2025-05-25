@@ -663,7 +663,9 @@ def kubectl_get(resource_type: str, resource_name: str = None, namespace: str = 
         
     if output_format:
         cmd.extend(["-o", output_format])
-    
+    else:
+        cmd.append("-o=wide")
+
     # Execute command
     try:
         result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

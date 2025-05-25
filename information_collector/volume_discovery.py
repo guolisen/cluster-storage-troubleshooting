@@ -105,21 +105,6 @@ class VolumeDiscovery(InformationCollectorBase):
                         },
                         'kubectl_get_pv', f'Get PV details for {pv_name}'
                     )
-                    
-                    if pv_output and not pv_output.startswith("Error:"):
-                        # Extract drive UUID and node affinity
-                        lines = pv_output.split('\n')
-                        for line in lines:
-                            if 'kubernetes.io/hostname:' in line:
-                                node_name = line.split('kubernetes.io/hostname:')[-1].strip()
-                                if node_name and node_name not in chain['nodes']:
-                                    chain['nodes'].append(node_name)
-                            elif 'baremetal-csi' in line and 'uuid' in line.lower():
-                                # Extract drive UUID (simplified)
-                                for part in line.split():
-                                    if len(part) > 10 and '-' in part:  # UUID-like pattern
-                                        if part not in chain['drives']:
-                                            chain['drives'].append(part)
 
                     vol_output = self._execute_tool_with_validation(
                         kubectl_get, {
@@ -128,23 +113,55 @@ class VolumeDiscovery(InformationCollectorBase):
                             'resource_name': pv_name,
                             'output_format': 'yaml'
                         },
-                        'kubectl_get_pv', f'Get PV details for {pv_name}'
+                        'kubectl_get_volume', f'Get Volume details for {pv_name}'
                     )
                     
                     if vol_output and not vol_output.startswith("error:") and not vol_output.startswith("Error:"):
                         # Extract drive UUID and node affinity
                         lines = vol_output.split('\n')
+                        locType = None
                         for line in lines:
-                            if 'location:' in line:
-                                node_name = line.split('kubernetes.io/hostname:')[-1].strip()
-                                if node_name and node_name not in chain['nodes']:
-                                    chain['nodes'].append(node_name)
-                            elif 'baremetal-csi' in line and 'uuid' in line.lower():
-                                # Extract drive UUID (simplified)
-                                for part in line.split():
-                                    if len(part) > 10 and '-' in part:  # UUID-like pattern
-                                        if part not in chain['drives']:
-                                            chain['drives'].append(part)
+                            if 'LocationType:' in line:
+                                locType = line.split('LocationType:')[-1].strip()
+                        
+                        lvg_name = None
+                        if locType and locType == 'DRIVE':
+                            for line in lines:
+                                if 'Location:' in line:
+                                    drive_name = line.split('Location:')[-1].strip()
+                                    if drive_name and drive_name not in chain['drives']:
+                                        chain['drives'].append(drive_name)
+                        elif locType and locType == 'LVG':
+                            for line in lines:
+                                if 'Location:' in line:
+                                    lvg_name = line.split('Location:')[-1].strip()
+                                    if lvg_name and lvg_name not in chain['lvg']:
+                                        chain['lvg'].append(lvg_name)
+                        
+                        if lvg_name:
+                            lvg_output = self._execute_tool_with_validation(
+                                kubectl_get, {
+                                    'resource_type': 'lvg',
+                                    'namespace': target_namespace,
+                                    'resource_name': lvg_name,
+                                    'output_format': 'yaml'
+                                },
+                                'kubectl_get_lvg', f'Get LVG details for {lvg_name}'
+                            )
+                            if lvg_output and not lvg_output.startswith("Error:"):
+                                # Extract drives from LVG
+                                lines = lvg_output.split('\n')
+                                drivestart = False
+                                for line in lines:
+                                    if 'Locations:' in line and not drivestart:
+                                        drivestart = True
+                                    elif drivestart and line.strip() != '':
+                                        # - 0fcefbaa-7bc9-49b0-96de-bc8067445497
+                                        drive_name = line.strip().lstrip('- ').strip()
+                                        if drive_name and drive_name not in chain['drives']:
+                                            chain['drives'].append(drive_name)
+                                        else:
+                                            drivestart = False
 
         except Exception as e:
             error_msg = f"Error discovering volume dependency chain: {str(e)}"

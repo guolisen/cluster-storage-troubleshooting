@@ -113,11 +113,17 @@ CSI Driver Information:
 System Information:
 {str(collected_info.get('system_info', {}))[:2000]}
 
+<<< Current Issues >>>
+Issues Summary:
+{str(collected_info.get('issues', {}))[:2000]}
+
 === END PRE-COLLECTED CONTEXT ===
 """
         system_message = {
             "role": "system", 
             "content": f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
+
+<<< Note >>>: you only have 50 times to use the tools in this phase, just try to find the Root cause as soon as possible.
 
 {phase_specific_guidance}
 

@@ -66,6 +66,12 @@ class ComprehensiveInformationCollector(VolumeDiscovery, ToolExecutors, Knowledg
             # Node and system discovery tools
             await self._execute_node_system_tools(volume_chain.get('nodes', []))
             
+            # SMART data collection tools
+            await self._execute_smart_data_tools(volume_chain.get('drives', []))
+            
+            # Enhanced log analysis tools
+            await self._execute_enhanced_log_analysis_tools()
+            
             # Step 3: Build enhanced Knowledge Graph from tool outputs
             logging.info("Step 3: Building Knowledge Graph from tool outputs...")
             self.knowledge_graph = await self._build_knowledge_graph_from_tools(

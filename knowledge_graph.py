@@ -29,7 +29,9 @@ class KnowledgeGraph:
             'nodes': {},
             'storage_classes': {},
             'lvgs': {},
-            'acs': {}
+            'acs': {},
+            'volumes': {},
+            'system_entities': {}
         }
         self.issues = []
         logging.info("Knowledge Graph initialized")
@@ -222,6 +224,58 @@ class KnowledgeGraph:
             **attributes
         }
         logging.debug(f"Added AC node: {node_id}")
+        return node_id
+    
+    def add_volume(self, name: str, namespace: str, **attributes) -> str:
+        """
+        Add a Volume node to the knowledge graph
+        
+        Args:
+            name: Volume name
+            namespace: Volume namespace
+            **attributes: Additional volume attributes (Health, LocationType, size, storage class, location, Usage, etc.)
+            
+        Returns:
+            str: Node ID
+        """
+        node_id = f"Volume:{namespace}/{name}"
+        self.graph.add_node(node_id,
+                           entity_type="Volume",
+                           name=name,
+                           namespace=namespace,
+                           **attributes)
+        self.entities['volumes'][node_id] = {
+            'name': name,
+            'namespace': namespace,
+            **attributes
+        }
+        logging.debug(f"Added Volume node: {node_id}")
+        return node_id
+    
+    def add_system_entity(self, entity_name: str, entity_subtype: str, **attributes) -> str:
+        """
+        Add a System entity node to the knowledge graph (for logs, kernel, services, etc.)
+        
+        Args:
+            entity_name: System entity name (e.g., "kernel", "kubelet", "boot")
+            entity_subtype: System entity subtype (e.g., "logs", "service", "hardware")
+            **attributes: Additional system entity attributes
+            
+        Returns:
+            str: Node ID
+        """
+        node_id = f"System:{entity_name}"
+        self.graph.add_node(node_id,
+                           entity_type="System",
+                           name=entity_name,
+                           subtype=entity_subtype,
+                           **attributes)
+        self.entities['system_entities'][node_id] = {
+            'name': entity_name,
+            'subtype': entity_subtype,
+            **attributes
+        }
+        logging.debug(f"Added System entity node: {node_id}")
         return node_id
     
     def add_relationship(self, source_id: str, target_id: str, relationship: str, **attributes):
@@ -640,7 +694,7 @@ class KnowledgeGraph:
         }
         
         # Count entities by type
-        for entity_type in ['Pod', 'PVC', 'PV', 'Drive', 'Node', 'StorageClass', 'LVG', 'AC']:
+        for entity_type in ['Pod', 'PVC', 'PV', 'Drive', 'Node', 'StorageClass', 'LVG', 'AC', 'Volume', 'System']:
             summary['entity_counts'][entity_type] = len(self.find_nodes_by_type(entity_type))
         
         return summary
@@ -689,7 +743,9 @@ class KnowledgeGraph:
             'Node': '🖥️',
             'StorageClass': '📁',
             'LVG': '📚',
-            'AC': '🏪'
+            'AC': '🏪',
+            'Volume': '📦',
+            'System': '⚙️'
         }
         
         for entity_type, count in summary['entity_counts'].items():
@@ -702,7 +758,7 @@ class KnowledgeGraph:
             output.append("\n🔎 DETAILED ENTITIES:")
             output.append("-" * 40)
             
-            for entity_type in ['Pod', 'PVC', 'PV', 'Drive', 'Node', 'StorageClass', 'LVG', 'AC']:
+            for entity_type in ['Pod', 'PVC', 'PV', 'Drive', 'Node', 'StorageClass', 'LVG', 'AC', 'Volume', 'System']:
                 nodes = self.find_nodes_by_type(entity_type)
                 if nodes:
                     icon = entity_icons.get(entity_type, '📄')
@@ -729,6 +785,20 @@ class KnowledgeGraph:
                             if node_attrs.get('DiskPressure', False):
                                 status_indicators.append('⚠️ Disk Pressure')
                         elif entity_type == 'Pod':
+                            if 'issues' in node_attrs and node_attrs['issues']:
+                                status_indicators.append(f"⚠️ {len(node_attrs['issues'])} issues")
+                        elif entity_type == 'Volume':
+                            health = node_attrs.get('Health', 'UNKNOWN')
+                            if health == 'GOOD':
+                                status_indicators.append('✅ Healthy')
+                            elif health in ['SUSPECT', 'BAD']:
+                                status_indicators.append(f'❌ {health}')
+                            usage = node_attrs.get('Usage', 'UNKNOWN')
+                            if usage:
+                                status_indicators.append(f'📊 {usage}')
+                        elif entity_type == 'System':
+                            subtype = node_attrs.get('subtype', 'unknown')
+                            status_indicators.append(f'🔧 {subtype}')
                             if 'issues' in node_attrs and node_attrs['issues']:
                                 status_indicators.append(f"⚠️ {len(node_attrs['issues'])} issues")
                         

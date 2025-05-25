@@ -201,3 +201,90 @@ class ToolExecutors(InformationCollectorBase):
             'journalctl_boot', 'Collect boot-time logs for hardware and storage initialization'
         )
         self.collected_data['system']['journal_boot_logs'] = journal_boot_output
+    
+    async def _execute_smart_data_tools(self, drives: List[str]):
+        """Execute SMART data collection tools for drive health monitoring"""
+        logging.info("Executing SMART data collection tools")
+        
+        # Get SMART data for all drives
+        for drive_uuid in drives:
+            # Get drive path from CSI Baremetal drive info
+            drive_path = self._get_drive_path_from_uuid(drive_uuid)
+            if drive_path:
+                smart_output = self._execute_tool_with_validation(
+                    self._execute_smartctl_command, {
+                        'device_path': drive_path,
+                        'options': '-a'
+                    },
+                    f'smartctl_{drive_uuid}', f'Collect SMART data for drive {drive_uuid}'
+                )
+                if 'smart_data' not in self.collected_data:
+                    self.collected_data['smart_data'] = {}
+                self.collected_data['smart_data'][drive_uuid] = smart_output
+    
+    def _get_drive_path_from_uuid(self, drive_uuid: str) -> str:
+        """Extract drive path from CSI Baremetal drive information"""
+        drives_output = self.collected_data.get('csi_baremetal', {}).get('drives', '')
+        if drives_output and drive_uuid in drives_output:
+            lines = drives_output.split('\n')
+            in_drive_section = False
+            for line in lines:
+                if f'name: {drive_uuid}' in line:
+                    in_drive_section = True
+                elif in_drive_section and 'path:' in line:
+                    return line.split('path:')[-1].strip()
+                elif in_drive_section and line.strip() and 'name:' in line and drive_uuid not in line:
+                    break
+        return None
+    
+    def _execute_smartctl_command(self, device_path: str, options: str = '-a') -> str:
+        """Execute smartctl command to get SMART data"""
+        try:
+            import subprocess
+            cmd = ['smartctl', options, device_path]
+            result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            return result.stdout
+        except Exception as e:
+            return f"Error executing smartctl: {str(e)}"
+    
+    async def _execute_enhanced_log_analysis_tools(self):
+        """Execute enhanced log analysis tools for comprehensive storage issue detection"""
+        logging.info("Executing enhanced log analysis tools")
+        
+        # Enhanced dmesg analysis with more specific patterns
+        enhanced_dmesg_patterns = [
+            "nvme.*error",
+            "ssd.*fail",
+            "disk.*timeout",
+            "scsi.*error",
+            "ata.*error",
+            "bad.*sector",
+            "i/o.*error",
+            "filesystem.*error",
+            "mount.*fail",
+            "csi.*error"
+        ]
+        
+        for pattern in enhanced_dmesg_patterns:
+            dmesg_output = self._execute_tool_with_validation(
+                dmesg_command, {
+                    'options': f'| grep -iE "{pattern}" | tail -20'
+                },
+                f'dmesg_{pattern.replace(".*", "_")}', f'Check kernel logs for {pattern} issues'
+            )
+            if 'enhanced_logs' not in self.collected_data:
+                self.collected_data['enhanced_logs'] = {}
+            self.collected_data['enhanced_logs'][f'dmesg_{pattern}'] = dmesg_output
+        
+        # Enhanced journal analysis for CSI and storage services
+        csi_services = ['csi-baremetal-node', 'csi-baremetal-controller', 'kubelet']
+        for service in csi_services:
+            journal_output = self._execute_tool_with_validation(
+                journalctl_command, {
+                    'options': f'-u {service} -n 50 --no-pager'
+                },
+                f'journalctl_{service}', f'Collect {service} service logs for CSI issues'
+            )
+            if 'service_logs' not in self.collected_data:
+                self.collected_data['service_logs'] = {}
+            self.collected_data['service_logs'][service] = journal_output

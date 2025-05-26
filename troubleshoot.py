@@ -183,7 +183,11 @@ async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds
                 parsed_json = json.loads(json_str)
                 root_cause = parsed_json.get("root_cause", "Unknown root cause")
                 fix_plan = parsed_json.get("fix_plan", "No fix plan provided")
-                logging.info(f"Root cause identified: {root_cause}")
+                #logging.info(f"Root cause identified: {root_cause}")
+                formated_json_root_cause = json.dumps(root_cause, indent=2) 
+                formated_json_fix_plan = json.dumps(fix_plan, indent=2)
+                logging.info(f"Root cause identified: {formated_json_root_cause}")
+                logging.info(f"Fix plan generated: {formated_json_fix_plan}")
             else:
                 # If no JSON found, use heuristic to extract information
                 if "root cause" in final_message.lower():
@@ -222,7 +226,7 @@ async def run_analysis_phase_with_context(pod_name: str, namespace: str, volume_
     
     try:
         # Create troubleshooting graph with pre-collected context
-        graph = create_troubleshooting_graph_with_context(collected_info, phase="analysis", config_data=CONFIG_DATA)
+        graph = create_troubleshooting_graph_with_context(collected_info, phase="phase1", config_data=CONFIG_DATA)
         
         # Initial query for ReAct investigation phase
         query = f"""Phase 1 - ReAct Investigation: Actively investigate the volume I/O error in pod {pod_name} in namespace {namespace} at volume path {volume_path} using available tools.
@@ -285,7 +289,7 @@ async def run_remediation_phase(root_cause: str, fix_plan: str, collected_info: 
     
     try:
         # Create troubleshooting graph for remediation
-        graph = create_troubleshooting_graph_with_context(collected_info, phase="remediation", config_data=CONFIG_DATA)
+        graph = create_troubleshooting_graph_with_context(collected_info, phase="phase2", config_data=CONFIG_DATA)
         
         # Remediation query
         query = f"""Phase 2 - Remediation: Execute the fix plan to resolve the identified issue.

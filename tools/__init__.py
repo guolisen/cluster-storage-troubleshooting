@@ -15,6 +15,9 @@ from tools.registry import (
     get_knowledge_graph_tools,
     get_kubernetes_tools,
     get_diagnostic_tools,
+    get_phase1_tools,
+    get_phase2_tools,
+    get_testing_tools,
     get_remediation_tools,
     define_remediation_tools
 )
@@ -79,6 +82,9 @@ __all__ = [
     'get_knowledge_graph_tools',
     'get_kubernetes_tools',
     'get_diagnostic_tools',
+    'get_phase1_tools',
+    'get_phase2_tools',
+    'get_testing_tools',
     'get_remediation_tools',
     'define_remediation_tools',
     

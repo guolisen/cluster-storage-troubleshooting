@@ -22,13 +22,13 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_openai import ChatOpenAI
 
 
-def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "analysis", config_data: Dict[str, Any] = None):
+def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "phase1", config_data: Dict[str, Any] = None):
     """
     Create a LangGraph ReAct graph for troubleshooting with pre-collected context
     
     Args:
         collected_info: Pre-collected diagnostic information from Phase 0
-        phase: Current troubleshooting phase ("analysis" or "remediation")
+        phase: Current troubleshooting phase ("phase1" for investigation, "phase2" for action)
         config_data: Configuration data
         
     Returns:
@@ -52,9 +52,22 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
         
         # Add comprehensive system prompt with pre-collected context
         phase_specific_guidance = ""
-        if phase == "analysis":
+        if phase == "phase1":
             phase_specific_guidance = """
-You are currently in Phase 1 (Analysis). Your primary task is to perform comprehensive root cause analysis and generate a detailed, step-by-step fix plan.
+You are currently in Phase 1 (Investigation). Your primary task is to perform comprehensive root cause analysis and evidence collection using investigation tools only.
+
+PHASE 1 TOOLS AVAILABLE (24 investigation tools):
+- Knowledge Graph Analysis (7 tools): kg_get_entity_info, kg_get_related_entities, kg_get_all_issues, kg_find_path, kg_get_summary, kg_analyze_issues, kg_print_graph
+- Read-only Kubernetes (4 tools): kubectl_get, kubectl_describe, kubectl_logs, kubectl_exec (read-only)
+- CSI Baremetal Info (6 tools): kubectl_get_drive, kubectl_get_csibmnode, kubectl_get_availablecapacity, kubectl_get_logicalvolumegroup, kubectl_get_storageclass, kubectl_get_csidrivers
+- System Information (5 tools): df_command, lsblk_command, mount_command, dmesg_command, journalctl_command
+- Hardware Information (2 tools): smartctl_check, ssh_execute (read-only)
+
+PHASE 1 RESTRICTIONS:
+- NO destructive operations (no kubectl_apply, kubectl_delete, fsck_check)
+- NO test resource creation
+- NO hardware modifications
+- FOCUS on comprehensive investigation and root cause analysis
 
 ROOT CAUSE ANALYSIS REQUIREMENTS:
 1. Knowledge Graph Analysis
@@ -166,15 +179,51 @@ EXECUTION GUIDELINES:
 
 Remember: You have 50 tool usage attempts. Prioritize critical issues and gather comprehensive evidence before proposing fixes.
 """
-        elif phase == "remediation":
+        elif phase == "phase2":
             phase_specific_guidance = """
-You are currently in Phase 2 (Remediation). Your task is to:
-1. Execute the fix plan from Phase 1 using available tools
-2. Respect command validation and interactive mode settings
-3. Verify that issues are resolved after implementing fixes
-4. Report final resolution status
+You are currently in Phase 2 (Action/Remediation). You have access to all Phase 1 investigation tools PLUS action tools for implementing fixes.
 
-Implement the fix plan safely and effectively while following security constraints.
+PHASE 2 TOOLS AVAILABLE (34+ tools):
+All Phase 1 tools (24 investigation tools) PLUS:
+- Kubernetes Action Tools (2): kubectl_apply, kubectl_delete
+- Hardware Action Tools (2): fio_performance_test, fsck_check
+- Test Pod Creation (3): create_test_pod, create_test_pvc, create_test_storage_class
+- Volume Testing (4): run_volume_io_test, validate_volume_mount, test_volume_permissions, run_volume_stress_test
+- Resource Cleanup (5): cleanup_test_resources, list_test_resources, cleanup_specific_test_pod, cleanup_orphaned_pvs, force_cleanup_stuck_resources
+
+PHASE 2 CAPABILITIES:
+- Execute remediation actions based on Phase 1 findings
+- Create test resources to validate fixes
+- Run comprehensive volume testing
+- Perform hardware diagnostics and repairs
+- Clean up test resources after validation
+
+REMEDIATION PROCESS:
+1. Review Phase 1 findings and root cause analysis
+2. Implement fixes in order of priority and dependencies
+3. Create test resources to validate each fix
+4. Run volume tests to ensure functionality
+5. Clean up test resources
+6. Verify final resolution status
+
+SAFETY REQUIREMENTS:
+- Always backup data before destructive operations
+- Use test resources for validation before affecting production
+- Follow proper cleanup procedures
+- Verify each step before proceeding to the next
+- Document all changes and their outcomes
+
+OUTPUT REQUIREMENTS:
+Provide a detailed remediation report that includes:
+1. Actions Taken: List of all remediation steps executed
+2. Test Results: Results from validation tests
+3. Resolution Status: Whether issues were resolved
+4. Remaining Issues: Any unresolved problems
+5. Recommendations: Suggestions for ongoing monitoring or future improvements
+"""
+        else:
+            phase_specific_guidance = """
+You are in a legacy mode. Please specify either 'phase1' for investigation or 'phase2' for action/remediation.
 """
         
         # Prepare context from collected information
@@ -309,7 +358,7 @@ Fix Plan:
             "role": "system", 
             "content": f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
 
-<<< Note >>>: you only have 50 times to use the tools in this phase, just try to find the Root cause as soon as possible.
+<<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
 
 {phase_specific_guidance}
 
@@ -407,9 +456,20 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         else:
             state["messages"] = [system_message]
         
-        # Import tools for both phases now
-        from tools import define_remediation_tools
-        tools = define_remediation_tools()
+        # Select tools based on phase
+        if phase == "phase1":
+            from tools import get_phase1_tools
+            tools = get_phase1_tools()
+            logging.info(f"Using Phase 1 tools: {len(tools)} investigation tools")
+        elif phase == "phase2":
+            from tools import get_phase2_tools
+            tools = get_phase2_tools()
+            logging.info(f"Using Phase 2 tools: {len(tools)} investigation + action tools")
+        else:
+            # Fallback to all tools for backward compatibility
+            from tools import define_remediation_tools
+            tools = define_remediation_tools()
+            logging.info(f"Using all tools (fallback): {len(tools)} tools")
         
         # Call the model with tools for both phases (Phase 1 now actively investigates)
         response = model.bind_tools(tools).invoke(state["messages"])

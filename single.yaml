@@ -49,7 +49,7 @@ spec:
           name: test-pod-1
         volumeMounts:
         - name: www-1
-          mountPath: /usr/share/storop-nginx/html-1
+          mountPath: /log
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -73,6 +73,6 @@ spec:
       volumeMode: Filesystem
       resources:
         requests:
-          storage: 3Gi
-      storageClassName: csi-baremetal-sc-nvme
+          storage: 30M
+      storageClassName: standard
 

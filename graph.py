@@ -476,15 +476,71 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         
         logging.info(f"Model response: {response.content}...")
         
-        # Log tool usage if applicable
+        # Log tool usage and thinking process with rich formatting
         if hasattr(response, 'additional_kwargs') and 'tool_calls' in response.additional_kwargs:
-            for tool_call in response.additional_kwargs['tool_calls']:
-                logging.info(f"Model invoking tool: {tool_call['function']['name']}")
-                if 'arguments' in tool_call['function']:
-                    logging.info(f"Tool arguments: {tool_call['function']['arguments']}")
-                else:
-                    logging.info("No arguments provided for tool call")
-                #logging.info(f"Tool parameters: {json.dumps(json.loads(tool_call['function']['arguments']), indent=2)}")
+            try:
+                from rich.console import Console
+                from rich.panel import Panel
+                
+                # Create console for rich output
+                console = Console()
+                file_console = Console(file=open('troubleshoot.log', 'a'))
+                
+                # Display thinking process
+                console.print(Panel(
+                    f"[bold cyan]🧠 LangGraph thinking process:[/bold cyan]",
+                    border_style="cyan"
+                ))
+                
+                for tool_call in response.additional_kwargs['tool_calls']:
+                    tool_name = tool_call['function']['name']
+                    
+                    # Format the tool usage in a nice way
+                    if 'arguments' in tool_call['function']:
+                        args = tool_call['function']['arguments']
+                        try:
+                            # Try to parse and format JSON arguments
+                            args_json = json.loads(args)
+                            formatted_args = json.dumps(args_json, indent=2)
+                        except:
+                            # Use the raw string if not valid JSON
+                            formatted_args = args
+                            
+                        # Print to console and log file
+                        tool_panel = Panel(
+                            f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
+                            f"[bold yellow]Arguments:[/bold yellow]\n[blue]{formatted_args}[/blue]",
+                            title="[bold magenta]Thinking Step",
+                            border_style="magenta"
+                        )
+                        console.print(tool_panel)
+                        file_console.print(tool_panel)
+                    else:
+                        # Simple version for tools without arguments
+                        tool_panel = Panel(
+                            f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
+                            f"[bold yellow]Arguments:[/bold yellow] None",
+                            title="[bold magenta]Thinking Step",
+                            border_style="magenta"
+                        )
+                        console.print(tool_panel)
+                        file_console.print(tool_panel)
+                        
+                    # Log to standard logger as well
+                    logging.info(f"Model invoking tool: {tool_name}")
+                    if 'arguments' in tool_call['function']:
+                        logging.info(f"Tool arguments: {tool_call['function']['arguments']}")
+                    else:
+                        logging.info("No arguments provided for tool call")
+            except Exception as e:
+                # Fall back to regular logging if rich formatting fails
+                logging.warning(f"Rich formatting failed for tool output: {e}")
+                for tool_call in response.additional_kwargs['tool_calls']:
+                    logging.info(f"Model invoking tool: {tool_call['function']['name']}")
+                    if 'arguments' in tool_call['function']:
+                        logging.info(f"Tool arguments: {tool_call['function']['arguments']}")
+                    else:
+                        logging.info("No arguments provided for tool call")
         
         return {"messages": state["messages"] + [response]}
     

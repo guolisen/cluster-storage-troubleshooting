@@ -737,7 +737,8 @@ class KnowledgeGraph:
         return summary
     
     def print_graph(self, include_detailed_entities: bool = True, include_relationships: bool = True, 
-                   include_issues: bool = True, include_analysis: bool = True) -> str:
+                   include_issues: bool = True, include_analysis: bool = True,
+                   use_rich: bool = True) -> str:
         """
         Print the knowledge graph in a nice formatted way
         
@@ -746,28 +747,96 @@ class KnowledgeGraph:
             include_relationships: Whether to include relationship details
             include_issues: Whether to include issues breakdown
             include_analysis: Whether to include analysis and patterns
+            use_rich: Whether to use rich formatting for enhanced visual output
             
         Returns:
             str: Formatted graph representation
         """
+        # Import rich components if available
+        try:
+            from rich.console import Console
+            from rich.panel import Panel
+            from rich.table import Table
+            from rich.tree import Tree
+            from rich import print as rprint
+            rich_available = True
+        except ImportError:
+            rich_available = False
+            use_rich = False
+            
+        # Create console for rich output
+        if use_rich and rich_available:
+            console = Console(record=True)
+            file_console = Console(file=open('troubleshoot.log', 'a'))
+        
         output = []
         
         # Header
-        output.append("=" * 80)
-        output.append("📊 KUBERNETES STORAGE KNOWLEDGE GRAPH")
-        output.append("=" * 80)
+        if use_rich and rich_available:
+            console.print(Panel(
+                "[bold cyan]📊 KUBERNETES STORAGE KNOWLEDGE GRAPH[/bold cyan]",
+                border_style="blue",
+                width=80
+            ))
+        else:
+            output.append("=" * 80)
+            output.append("📊 KUBERNETES STORAGE KNOWLEDGE GRAPH")
+            output.append("=" * 80)
         
         # Summary Statistics
         summary = self.get_summary()
-        output.append("\n🔍 GRAPH SUMMARY:")
-        output.append("-" * 40)
-        output.append(f"📦 Total Nodes: {summary['total_nodes']}")
-        output.append(f"🔗 Total Edges: {summary['total_edges']}")
-        output.append(f"⚠️  Total Issues: {summary['total_issues']}")
-        output.append(f"🔴 Critical Issues: {summary['critical_issues']}")
-        output.append(f"🟠 High Issues: {summary['high_issues']}")
-        output.append(f"🟡 Medium Issues: {summary['medium_issues']}")
-        output.append(f"🟢 Low Issues: {summary['low_issues']}")
+        if use_rich and rich_available:
+            # Create summary table
+            summary_table = Table(
+                title="[bold]🔍 GRAPH SUMMARY",
+                show_header=True,
+                header_style="bold cyan",
+                box=True,
+                border_style="blue"
+            )
+            
+            summary_table.add_column("Metric", style="dim")
+            summary_table.add_column("Value", justify="right")
+            
+            def safe_format(value: Any) -> str:
+                """Safely convert any value to a string for rich formatting"""
+                try:
+                    return str(value)
+                except Exception:
+                    return "N/A"
+
+            summary_table.add_row("Total Nodes", f"[blue]{safe_format(summary['total_nodes'])}[/blue]")
+            summary_table.add_row("Total Edges", f"[blue]{safe_format(summary['total_edges'])}[/blue]")
+            summary_table.add_row("Total Issues", f"[yellow]{safe_format(summary['total_issues'])}[/yellow]")
+            summary_table.add_row("Critical Issues", f"[red]{safe_format(summary['critical_issues'])}[/red]")
+            summary_table.add_row("High Issues", f"[orange3]{safe_format(summary['high_issues'])}[/orange3]")
+            summary_table.add_row("Medium Issues", f"[yellow]{safe_format(summary['medium_issues'])}[/yellow]")
+            summary_table.add_row("Low Issues", f"[green]{safe_format(summary['low_issues'])}[/green]")
+            
+            try:
+                console.print(summary_table)
+            except Exception as e:
+                logging.error(f"Error printing rich summary table: {e}")
+                # Fallback to plain text
+                output.append("\n🔍 GRAPH SUMMARY:")
+                output.append("-" * 40)
+                output.append(f"📦 Total Nodes: {summary['total_nodes']}")
+                output.append(f"🔗 Total Edges: {summary['total_edges']}")
+                output.append(f"⚠️  Total Issues: {summary['total_issues']}")
+                output.append(f"🔴 Critical Issues: {summary['critical_issues']}")
+                output.append(f"🟠 High Issues: {summary['high_issues']}")
+                output.append(f"🟡 Medium Issues: {summary['medium_issues']}")
+                output.append(f"🟢 Low Issues: {summary['low_issues']}")
+        else:
+            output.append("\n🔍 GRAPH SUMMARY:")
+            output.append("-" * 40)
+            output.append(f"📦 Total Nodes: {summary['total_nodes']}")
+            output.append(f"🔗 Total Edges: {summary['total_edges']}")
+            output.append(f"⚠️  Total Issues: {summary['total_issues']}")
+            output.append(f"🔴 Critical Issues: {summary['critical_issues']}")
+            output.append(f"🟠 High Issues: {summary['high_issues']}")
+            output.append(f"🟡 Medium Issues: {summary['medium_issues']}")
+            output.append(f"🟢 Low Issues: {summary['low_issues']}")
         
         # Entity Breakdown
         output.append("\n📋 ENTITY BREAKDOWN:")

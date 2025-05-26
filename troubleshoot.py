@@ -23,6 +23,17 @@ from langgraph.graph import StateGraph
 from kubernetes import config
 from graph import create_troubleshooting_graph_with_context
 from information_collector import ComprehensiveInformationCollector
+from rich.logging import RichHandler
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.panel import Panel
+from rich.table import Table
+from rich.tree import Tree
+from rich import print as rprint
+
+# Initialize rich console
+console = Console()
+file_console = Console(file=open('troubleshoot.log', 'w'))
 
 # Global variables
 CONFIG_DATA = None
@@ -45,19 +56,39 @@ def load_config():
         sys.exit(1)
 
 def setup_logging(config_data):
-    """Configure logging based on configuration"""
+    """Configure logging based on configuration with rich formatting"""
     log_file = config_data['logging']['file']
     log_to_stdout = config_data['logging']['stdout']
     
     handlers = []
     if log_file:
-        handlers.append(logging.FileHandler(log_file))
-    if log_to_stdout:
-        handlers.append(logging.StreamHandler())
+        # File handler for regular log file with timestamps
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s'
+        ))
+        handlers.append(file_handler)
+        
+        # Rich console file handler for enhanced log file
+        file_console.log("Starting enhanced logging to troubleshoot.log")
     
+    if log_to_stdout:
+        # Rich console handler for beautiful terminal output
+        rich_handler = RichHandler(
+            rich_tracebacks=True,
+            console=console,
+            show_time=True,
+            show_level=True,
+            show_path=False,
+            enable_link_path=False
+        )
+        handlers.append(rich_handler)
+    
+    # Configure the root logger
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
+        format='%(message)s',
+        datefmt='[%X]',
         handlers=handlers
     )
 
@@ -104,14 +135,47 @@ async def run_information_collection_phase(pod_name: str, namespace: str, volume
             "issues": KNOWLEDGE_GRAPH.issues if KNOWLEDGE_GRAPH else []
         }
         
-        # Print Knowledge Graph
-        print("=" * 80)
-        print("PHASE 0: INFORMATION COLLECTION - KNOWLEDGE GRAPH")
-        print("=" * 80)
-        print()
-        formatted_output = KNOWLEDGE_GRAPH.print_graph()
-        print(formatted_output)
-        print("\n" + "=" * 80)
+        # Print Knowledge Graph with rich formatting
+        console.print("\n")
+        console.print(Panel(
+            "[bold white]Building and analyzing knowledge graph...",
+            title="[bold cyan]PHASE 0: INFORMATION COLLECTION - KNOWLEDGE GRAPH",
+            border_style="cyan",
+            padding=(1, 2)
+        ))
+        
+        try:
+            # Try to use rich formatting with proper error handling
+            formatted_output = KNOWLEDGE_GRAPH.print_graph(use_rich=True)
+            
+            # Handle different output types
+            if formatted_output is None:
+                # If there was a silent success (no return value)
+                console.print("[green]Knowledge graph built successfully[/green]")
+            elif isinstance(formatted_output, str):
+                # Regular string output - print as is
+                print(formatted_output)
+            else:
+                # For any other type of output
+                console.print("[green]Knowledge graph analysis complete[/green]")
+        except Exception as e:
+            # Fall back to plain text if rich formatting fails
+            logging.error(f"Error in rich formatting, falling back to plain text: {str(e)}")
+            try:
+                # Try plain text formatting
+                formatted_output = KNOWLEDGE_GRAPH.print_graph(use_rich=False)
+                print(formatted_output)
+            except Exception as e2:
+                # Last resort fallback
+                logging.error(f"Error in plain text formatting: {str(e2)}")
+                print("=" * 80)
+                print("KNOWLEDGE GRAPH SUMMARY (FALLBACK FORMAT)")
+                print("=" * 80)
+                print(f"Total nodes: {KNOWLEDGE_GRAPH.graph.number_of_nodes()}")
+                print(f"Total edges: {KNOWLEDGE_GRAPH.graph.number_of_edges()}")
+                print(f"Total issues: {len(KNOWLEDGE_GRAPH.issues)}")
+        
+        console.print("\n")
         
         return collected_info
         
@@ -133,7 +197,7 @@ async def run_information_collection_phase(pod_name: str, namespace: str, volume
 
 async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds: int = 60) -> Tuple[str, str]:
     """
-    Run an analysis using the provided LangGraph StateGraph
+    Run an analysis using the provided LangGraph StateGraph with enhanced progress tracking
     
     Args:
         query: The initial query to send to the graph
@@ -146,19 +210,35 @@ async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds
     try:
         formatted_query = {"messages": [{"role": "user", "content": query}]}
         
-        # Run graph with timeout
-        logging.info(f"Starting analysis with graph, timeout: {timeout_seconds}s")
-        try:
-            response = await asyncio.wait_for(
-                graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
-                timeout=timeout_seconds
-            )
-        except Exception as e:
-            logging.error(f"Error during graph execution: {str(e)}")
-            return (
-                "Analysis encountered an error during graph execution",
-                "Review collected diagnostic information manually for troubleshooting"
-            )
+        response = None
+        # Show thinking process with rich progress display
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console
+        ) as progress:
+            task = progress.add_task("[cyan]LangGraph thinking process...", total=None)
+            
+            # Run graph with timeout
+            console.print(Panel(
+                "[yellow]Starting analysis with LangGraph...", 
+                title="[bold blue]Analysis Phase",
+                border_style="blue"
+            ))
+            
+            try:
+                response = await asyncio.wait_for(
+                    graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
+                    timeout=timeout_seconds
+                )
+                progress.update(task, description="[green]Analysis complete!")
+            except asyncio.TimeoutError:
+                progress.update(task, description="[red]Analysis timed out!")
+                raise
+            except Exception as e:
+                progress.update(task, description="[red]Analysis failed!")
+                raise
         
         # Extract analysis results
         if response["messages"]:
@@ -169,7 +249,7 @@ async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds
         else:
             final_message = "Failed to generate analysis results"
         
-        # Parse root cause and fix plan
+        # Parse root cause and fix plan with enhanced formatting
         root_cause = "Unknown"
         fix_plan = "No specific fix plan generated"
 
@@ -183,11 +263,25 @@ async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds
                 parsed_json = json.loads(json_str)
                 root_cause = parsed_json.get("root_cause", "Unknown root cause")
                 fix_plan = parsed_json.get("fix_plan", "No fix plan provided")
-                #logging.info(f"Root cause identified: {root_cause}")
-                formated_json_root_cause = json.dumps(root_cause, indent=2) 
-                formated_json_fix_plan = json.dumps(fix_plan, indent=2)
-                logging.info(f"Root cause identified: {formated_json_root_cause}")
-                logging.info(f"Fix plan generated: {formated_json_fix_plan}")
+                
+                # Enhanced logging with rich formatting
+                root_cause_panel = Panel(
+                    f"[bold yellow]{root_cause}[/bold yellow]",
+                    title="[bold red]Root Cause Analysis",
+                    border_style="red"
+                )
+                fix_plan_panel = Panel(
+                    f"[bold green]{fix_plan}[/bold green]",
+                    title="[bold blue]Fix Plan",
+                    border_style="blue"
+                )
+                
+                console.print(root_cause_panel)
+                console.print(fix_plan_panel)
+                
+                # Log to file
+                file_console.print(root_cause_panel)
+                file_console.print(fix_plan_panel)
             else:
                 # If no JSON found, use heuristic to extract information
                 if "root cause" in final_message.lower():
@@ -251,6 +345,8 @@ f. **Check Permissions**: Verify file system permissions and SecurityContext set
 g. **Inspect Control Plane**: Check controller and scheduler logs if needed
 h. **Test Hardware Disk**: Use smartctl_check, fio_performance_test, and fsck_check tools
 i. **Propose Remediations**: Based on investigation results, provide specific remediation steps
+
+<<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
 
 Use available tools actively to investigate step by step. The pre-collected data provides the starting context, but you should verify and expand your understanding through active tool use.
 """
@@ -348,13 +444,15 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
     
     try:
         # Phase 0: Information Collection
-        print("=" * 80)
-        print("STARTING COMPREHENSIVE KUBERNETES VOLUME TROUBLESHOOTING")
-        print("=" * 80)
-        print(f"Pod: {namespace}/{pod_name}")
-        print(f"Volume Path: {volume_path}")
-        print(f"Start Time: {results['start_time']}")
-        print()
+        console.print("\n")
+        console.print(Panel(
+            f"[bold white]Starting troubleshooting for Pod: [green]{namespace}/{pod_name}[/green]\n"
+            f"Volume Path: [blue]{volume_path}[/blue]\n"
+            f"Start Time: [yellow]{results['start_time']}[/yellow]",
+            title="[bold cyan]KUBERNETES VOLUME TROUBLESHOOTING",
+            border_style="cyan",
+            padding=(1, 2)
+        ))
         
         collected_info = await run_information_collection_phase(pod_name, namespace, volume_path)
         results["phases"]["phase_0_collection"] = {
@@ -371,11 +469,13 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
         phase_1_start = time.time()
         
         # Phase 1: ReAct Investigation
-        print("=" * 80)
-        print("PHASE 1: REACT INVESTIGATION")
-        print("=" * 80)
-        print("Actively investigating volume I/O issue using tools...")
-        print()
+        console.print("\n")
+        console.print(Panel(
+            "[bold white]Actively investigating volume I/O issue using available tools...",
+            title="[bold magenta]PHASE 1: REACT INVESTIGATION",
+            border_style="magenta",
+            padding=(1, 2)
+        ))
         
         root_cause, fix_plan = await run_analysis_phase_with_context(
             pod_name, namespace, volume_path, collected_info
@@ -395,11 +495,13 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
         phase_2_start = time.time()
         
         # Phase 2: Remediation
-        print("=" * 80)
-        print("PHASE 2: REMEDIATION")
-        print("=" * 80)
-        print("Executing fix plan...")
-        print()
+        console.print("\n")
+        console.print(Panel(
+            "[bold white]Executing fix plan to resolve identified issues...",
+            title="[bold green]PHASE 2: REMEDIATION",
+            border_style="green",
+            padding=(1, 2)
+        ))
         
         remediation_result = await run_remediation_phase(root_cause, fix_plan, collected_info)
         
@@ -417,17 +519,63 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
         results["total_duration"] = total_duration
         results["status"] = "completed"
         
-        print("=" * 80)
-        print("TROUBLESHOOTING SUMMARY")
-        print("=" * 80)
-        print(f"Total Duration: {total_duration:.2f} seconds")
-        print(f"Phase 0 (Collection): {results['phases']['phase_0_collection']['duration']:.2f}s")
-        print(f"Phase 1 (ReAct Investigation): {results['phases']['phase_1_analysis']['duration']:.2f}s")
-        print(f"Phase 2 (Remediation): {results['phases']['phase_2_remediation']['duration']:.2f}s")
-        print()
-        print(f"Root Cause: {root_cause}")
-        print(f"Resolution Status: {remediation_result}")
-        print("=" * 80)
+        # Create a rich formatted summary table
+        summary_table = Table(
+            title="[bold]TROUBLESHOOTING SUMMARY",
+            show_header=True,
+            header_style="bold cyan",
+            box=True,
+            border_style="blue"
+        )
+        
+        # Add columns
+        summary_table.add_column("Phase", style="dim")
+        summary_table.add_column("Duration", justify="right")
+        summary_table.add_column("Status", justify="center")
+        
+        # Add rows for each phase
+        summary_table.add_row(
+            "Phase 0: Information Collection", 
+            f"{results['phases']['phase_0_collection']['duration']:.2f}s",
+            "[green]Completed"
+        )
+        summary_table.add_row(
+            "Phase 1: ReAct Investigation", 
+            f"{results['phases']['phase_1_analysis']['duration']:.2f}s",
+            "[green]Completed"
+        )
+        summary_table.add_row(
+            "Phase 2: Remediation", 
+            f"{results['phases']['phase_2_remediation']['duration']:.2f}s",
+            "[green]Completed"
+        )
+        summary_table.add_row(
+            "Total", 
+            f"{total_duration:.2f}s", 
+            "[bold green]Completed"
+        )
+        
+        # Create root cause and resolution panels
+        root_cause_panel = Panel(
+            f"[bold yellow]{root_cause}",
+            title="[bold red]Root Cause",
+            border_style="red",
+            padding=(1, 2)
+        )
+        
+        resolution_panel = Panel(
+            f"[bold green]{remediation_result}",
+            title="[bold blue]Resolution Status",
+            border_style="green",
+            padding=(1, 2)
+        )
+        
+        console.print("\n")
+        console.print(summary_table)
+        console.print("\n")
+        console.print(root_cause_panel)
+        console.print("\n")
+        console.print(resolution_panel)
         
         return results
         

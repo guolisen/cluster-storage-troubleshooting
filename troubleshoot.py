@@ -283,35 +283,30 @@ async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds
     try:
         formatted_query = {"messages": [{"role": "user", "content": query}]}
         
-        response = None
-        # Show thinking process with rich progress display
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TimeElapsedColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task("[cyan]LangGraph thinking process...", total=None)
-            
-            # Run graph with timeout
-            console.print(Panel(
-                "[yellow]Starting analysis with LangGraph...", 
-                title="[bold blue]Analysis Phase",
-                border_style="blue"
-            ))
-            
-            try:
-                response = await asyncio.wait_for(
-                    graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
-                    timeout=timeout_seconds
-                )
-                progress.update(task, description="[green]Analysis complete!")
-            except asyncio.TimeoutError:
-                progress.update(task, description="[red]Analysis timed out!")
-                raise
-            except Exception as e:
-                progress.update(task, description="[red]Analysis failed!")
-                raise
+        # First show the analysis panel
+        console.print("\n")
+        console.print(Panel(
+            "[yellow]Starting analysis with LangGraph...\nThis may take a few minutes to complete.", 
+            title="[bold blue]Analysis Phase",
+            border_style="blue"
+        ))
+        
+        # Simple status message instead of progress bar
+        console.print("[cyan]LangGraph thinking process starting...[/cyan]")
+        
+        # Run graph with timeout
+        try:
+            response = await asyncio.wait_for(
+                graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
+                timeout=timeout_seconds
+            )
+            console.print("[green]Analysis complete![/green]")
+        except asyncio.TimeoutError:
+            console.print("[red]Analysis timed out![/red]")
+            raise
+        except Exception as e:
+            console.print(f"[red]Analysis failed: {str(e)}[/red]")
+            raise
         
         # Extract analysis results
         if response["messages"]:
@@ -338,6 +333,7 @@ async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds
                 fix_plan = parsed_json.get("fix_plan", "No fix plan provided")
                 
                 # Enhanced logging with rich formatting
+                console.print("\n")
                 root_cause_panel = Panel(
                     f"[bold yellow]{root_cause}[/bold yellow]",
                     title="[bold red]Root Cause Analysis",

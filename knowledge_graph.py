@@ -807,6 +807,10 @@ class KnowledgeGraph:
             def safe_format(value: Any) -> str:
                 """Safely convert any value to a string for rich formatting"""
                 try:
+                    # Explicitly handle boolean values first
+                    if isinstance(value, bool):
+                        return "True" if value else "False"
+                    # For all other types, convert to string
                     return str(value)
                 except Exception:
                     return "N/A"

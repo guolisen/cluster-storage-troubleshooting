@@ -35,6 +35,71 @@ from rich import print as rprint
 console = Console()
 file_console = Console(file=open('troubleshoot.log', 'w'))
 
+# Custom filter for internal logging
+class InternalLogFilter(logging.Filter):
+    """Filter out internal logging messages from console output"""
+    def filter(self, record):
+        # Check if this is an internal log that should be filtered from console
+        
+        # Filter out logs from LangGraph module
+        if 'LangGraph' in record.msg or getattr(record, 'name', '').startswith('langgraph'):
+            return False
+            
+        # Filter out logs from standard logging modules
+        if getattr(record, 'name', '') in ['kubernetes', 'urllib3', 'asyncio', 'langchain', 'httpx']:
+            return False
+            
+        # Filter out specific log patterns that are meant for internal debugging
+        internal_patterns = [
+            'Executing command:',
+            'Command output:',
+            'Starting enhanced logging',
+            'Loaded',
+            'Building',
+            'Adding node',
+            'Adding edge',
+            'Adding conditional',
+            'Compiling graph',
+            'Model response:',
+            'Model invoking tool:',
+            'Tool arguments:',
+            'Using Phase',
+            'Processing state',
+            'Graph compilation',
+            'Running',
+            'Starting'
+        ]
+        
+        if any(pattern in record.msg for pattern in internal_patterns):
+            return False
+            
+        # Allow all other logs to pass to console
+        return True
+
+# Set up logging handlers for module-specific loggers
+def configure_module_loggers():
+    """Set up file handlers for module-specific loggers"""
+    # Create file handler for log file
+    file_handler = logging.FileHandler('troubleshoot.log', mode='a')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    
+    # Configure langgraph logger
+    langgraph_logger = logging.getLogger('langgraph')
+    langgraph_logger.addHandler(file_handler)
+    
+    # Configure knowledge_graph logger
+    kg_logger = logging.getLogger('knowledge_graph')
+    kg_logger.addHandler(file_handler)
+    
+    # Configure knowledge_graph.tools logger
+    kg_tools_logger = logging.getLogger('knowledge_graph.tools')
+    kg_tools_logger.addHandler(file_handler)
+    
+    # Configure other module loggers as needed
+    for module in ['tools', 'information_collector', 'kubernetes', 'urllib3']:
+        module_logger = logging.getLogger(module)
+        module_logger.addHandler(file_handler)
+
 # Global variables
 CONFIG_DATA = None
 INTERACTIVE_MODE = False
@@ -73,7 +138,7 @@ def setup_logging(config_data):
         file_console.log("Starting enhanced logging to troubleshoot.log")
     
     if log_to_stdout:
-        # Rich console handler for beautiful terminal output
+        # Rich console handler for beautiful terminal output - with filter
         rich_handler = RichHandler(
             rich_tracebacks=True,
             console=console,
@@ -82,6 +147,8 @@ def setup_logging(config_data):
             show_path=False,
             enable_link_path=False
         )
+        # Add filter to prevent internal logs from going to console
+        rich_handler.addFilter(InternalLogFilter())
         handlers.append(rich_handler)
     
     # Configure the root logger
@@ -91,6 +158,12 @@ def setup_logging(config_data):
         datefmt='[%X]',
         handlers=handlers
     )
+    
+    # Configure module-specific loggers
+    configure_module_loggers()
+    
+    # Log startup message to file only
+    logging.info("Logging initialized - internal logs redirected to log file only")
 
 async def run_information_collection_phase(pod_name: str, namespace: str, volume_path: str) -> Dict[str, Any]:
     """

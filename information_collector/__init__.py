@@ -13,6 +13,14 @@ Components:
 - MetadataParsers: Tool output parsing and metadata extraction
 """
 
+import logging
+
+# Configure logger for information collector
+collector_logger = logging.getLogger('information_collector')
+collector_logger.setLevel(logging.INFO)
+# Don't propagate to root logger to avoid console output
+collector_logger.propagate = False
+
 from .collector import ComprehensiveInformationCollector
 
 __all__ = ['ComprehensiveInformationCollector']

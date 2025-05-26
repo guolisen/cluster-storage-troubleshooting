@@ -9,11 +9,11 @@ used in the analysis and remediation phases of Kubernetes volume troubleshooting
 import json
 import logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] LangGraph: %(message)s'
-)
+# Configure logging (file only, no console output)
+logger = logging.getLogger('langgraph')
+logger.setLevel(logging.INFO)
+# Don't propagate to root logger to avoid console output
+logger.propagate = False
 
 from typing import Dict, List, Any
 

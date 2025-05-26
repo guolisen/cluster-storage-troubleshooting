@@ -12,6 +12,12 @@ import networkx as nx
 from typing import Dict, List, Any, Optional, Tuple
 import json
 
+# Configure logger for knowledge graph operations
+kg_logger = logging.getLogger('knowledge_graph')
+kg_logger.setLevel(logging.INFO)
+# Don't propagate to root logger to avoid console output
+kg_logger.propagate = False
+
 
 class KnowledgeGraph:
     """
@@ -37,7 +43,7 @@ class KnowledgeGraph:
             }
         }
         self.issues = []
-        logging.info("Knowledge Graph initialized")
+        kg_logger.info("Knowledge Graph initialized")
     
     def add_gnode_pod(self, name: str, namespace: str, **attributes) -> str:
         """
@@ -63,7 +69,7 @@ class KnowledgeGraph:
             'namespace': namespace,
             **attributes
         }
-        logging.debug(f"Added Pod node: {node_id}")
+        kg_logger.debug(f"Added Pod node: {node_id}")
         return node_id
     
     def add_gnode_pvc(self, name: str, namespace: str, **attributes) -> str:
@@ -90,7 +96,7 @@ class KnowledgeGraph:
             'namespace': namespace,
             **attributes
         }
-        logging.debug(f"Added PVC node: {node_id}")
+        kg_logger.debug(f"Added PVC node: {node_id}")
         return node_id
     
     def add_gnode_pv(self, name: str, **attributes) -> str:
@@ -114,7 +120,7 @@ class KnowledgeGraph:
             'name': name,
             **attributes
         }
-        logging.debug(f"Added PV node: {node_id}")
+        kg_logger.debug(f"Added PV node: {node_id}")
         return node_id
     
     def add_gnode_drive(self, uuid: str, **attributes) -> str:
@@ -138,7 +144,7 @@ class KnowledgeGraph:
             'uuid': uuid,
             **attributes
         }
-        logging.debug(f"Added Drive node: {node_id}")
+        kg_logger.debug(f"Added Drive node: {node_id}")
         return node_id
     
     def add_gnode_node(self, name: str, **attributes) -> str:
@@ -162,7 +168,7 @@ class KnowledgeGraph:
             'name': name,
             **attributes
         }
-        logging.debug(f"Added Node node: {node_id}")
+        kg_logger.debug(f"Added Node node: {node_id}")
         return node_id
     
     def add_gnode_storage_class(self, name: str, **attributes) -> str:
@@ -186,7 +192,7 @@ class KnowledgeGraph:
             'name': name,
             **attributes
         }
-        logging.debug(f"Added StorageClass node: {node_id}")
+        kg_logger.debug(f"Added StorageClass node: {node_id}")
         return node_id
     
     def add_gnode_lvg(self, name: str, **attributes) -> str:
@@ -210,7 +216,7 @@ class KnowledgeGraph:
             'name': name,
             **attributes
         }
-        logging.debug(f"Added LVG node: {node_id}")
+        kg_logger.debug(f"Added LVG node: {node_id}")
         return node_id
     
     def add_gnode_ac(self, name: str, **attributes) -> str:
@@ -234,7 +240,7 @@ class KnowledgeGraph:
             'name': name,
             **attributes
         }
-        logging.debug(f"Added AC node: {node_id}")
+        kg_logger.debug(f"Added AC node: {node_id}")
         return node_id
     
     def add_gnode_volume(self, name: str, namespace: str, **attributes) -> str:
@@ -261,7 +267,7 @@ class KnowledgeGraph:
             'namespace': namespace,
             **attributes
         }
-        logging.debug(f"Added Volume node: {node_id}")
+        kg_logger.debug(f"Added Volume node: {node_id}")
         return node_id
     
     def add_gnode_system_entity(self, entity_name: str, entity_subtype: str, **attributes) -> str:
@@ -288,7 +294,7 @@ class KnowledgeGraph:
             'subtype': entity_subtype,
             **attributes
         }
-        logging.debug(f"Added System entity node: {node_id}")
+        kg_logger.debug(f"Added System entity node: {node_id}")
         return node_id
 
     def add_gnode_cluster_node(self, name: str, **attributes) -> str:
@@ -312,7 +318,7 @@ class KnowledgeGraph:
             'name': name,
             **attributes
         }
-        logging.debug(f"Added ClusterNode node: {node_id}")
+        kg_logger.debug(f"Added ClusterNode node: {node_id}")
         return node_id
     
     def add_relationship(self, source_id: str, target_id: str, relationship: str, **attributes):
@@ -328,7 +334,7 @@ class KnowledgeGraph:
         self.graph.add_edge(source_id, target_id,
                            relationship=relationship,
                            **attributes)
-        logging.debug(f"Added relationship: {source_id} --{relationship}--> {target_id}")
+        kg_logger.debug(f"Added relationship: {source_id} --{relationship}--> {target_id}")
     
     def add_issue(self, node_id: str, issue_type: str, description: str, severity: str = "medium"):
         """
@@ -356,7 +362,7 @@ class KnowledgeGraph:
             current_issues.append(issue)
             self.graph.nodes[node_id]['issues'] = current_issues
         
-        logging.info(f"Added {severity} severity issue to {node_id}: {description}")
+        kg_logger.info(f"Added {severity} severity issue to {node_id}: {description}")
     
     def get_issues_by_severity(self, severity: str) -> List[Dict]:
         """
@@ -466,7 +472,7 @@ class KnowledgeGraph:
         # Identify issue patterns
         analysis['issue_patterns'] = self._identify_patterns()
         
-        logging.info(f"Knowledge Graph analysis completed: {analysis['total_issues']} issues found")
+        kg_logger.info(f"Knowledge Graph analysis completed: {analysis['total_issues']} issues found")
         return analysis
     
     def _identify_root_causes(self) -> List[Dict]:
@@ -709,7 +715,7 @@ class KnowledgeGraph:
                     'affected_entities': pattern['pods']
                 })
         
-        logging.info(f"Generated fix plan with {len(fix_plan)} steps")
+        kg_logger.info(f"Generated fix plan with {len(fix_plan)} steps")
         return fix_plan
     
     def get_summary(self) -> Dict[str, Any]:
@@ -816,7 +822,7 @@ class KnowledgeGraph:
             try:
                 console.print(summary_table)
             except Exception as e:
-                logging.error(f"Error printing rich summary table: {e}")
+                kg_logger.error(f"Error printing rich summary table: {e}")
                 # Fallback to plain text
                 output.append("\n🔍 GRAPH SUMMARY:")
                 output.append("-" * 40)
@@ -1038,7 +1044,7 @@ class KnowledgeGraph:
         formatted_output = '\n'.join(output)
         
         # Also log the formatted output
-        logging.info("Knowledge Graph formatted output generated")
+        kg_logger.info("Knowledge Graph formatted output generated")
         
         return formatted_output
     

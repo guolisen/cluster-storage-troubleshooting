@@ -16,6 +16,9 @@ from typing import Dict, List, Any, Optional, Set, Tuple
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
+# Get logger configured in __init__.py
+from . import collector_logger
+
 from .base import InformationCollectorBase
 from .volume_discovery import VolumeDiscovery
 from .tool_executors import ToolExecutors
@@ -28,7 +31,7 @@ class ComprehensiveInformationCollector(VolumeDiscovery, ToolExecutors, Knowledg
     def __init__(self, config_data: Dict[str, Any]):
         """Initialize the Enhanced Information Collector"""
         super().__init__(config_data)
-        logging.info("Enhanced Volume-Focused Information Collector initialized")
+        collector_logger.info("Enhanced Volume-Focused Information Collector initialized")
     
     async def comprehensive_collect(self, 
                                    target_pod: str = None, 
@@ -40,18 +43,18 @@ class ComprehensiveInformationCollector(VolumeDiscovery, ToolExecutors, Knowledg
         This is the main entry point for Phase 0: Information-Collection Phase
         Executes diagnostic LangGraph tools according to parameter's volume path and pod
         """
-        logging.info("=== PHASE 0: INFORMATION-COLLECTION - Starting volume-focused data collection ===")
+        collector_logger.info("=== PHASE 0: INFORMATION-COLLECTION - Starting volume-focused data collection ===")
         start_time = time.time()
         
         try:
             # Step 1: Discover volume dependency chain
-            logging.info("Step 1: Discovering volume dependency chain...")
+            collector_logger.info("Step 1: Discovering volume dependency chain...")
             volume_chain = {}
             if target_pod and target_namespace:
                 volume_chain = self._discover_volume_dependency_chain(target_pod, target_namespace)
             
             # Step 2: Execute volume-focused tools based on discovered chain
-            logging.info("Step 2: Executing volume-focused diagnostic tools...")
+            collector_logger.info("Step 2: Executing volume-focused diagnostic tools...")
             
             # Pod discovery tools
             if target_pod and target_namespace:
@@ -73,13 +76,13 @@ class ComprehensiveInformationCollector(VolumeDiscovery, ToolExecutors, Knowledg
             await self._execute_enhanced_log_analysis_tools()
             
             # Step 3: Build enhanced Knowledge Graph from tool outputs
-            logging.info("Step 3: Building Knowledge Graph from tool outputs...")
+            collector_logger.info("Step 3: Building Knowledge Graph from tool outputs...")
             self.knowledge_graph = await self._build_knowledge_graph_from_tools(
                 target_pod, target_namespace, target_volume_path, volume_chain
             )
             
             # Step 4: Perform analysis
-            logging.info("Step 4: Analyzing Knowledge Graph...")
+            collector_logger.info("Step 4: Analyzing Knowledge Graph...")
             analysis = self.knowledge_graph.analyze_issues()
             fix_plan = self.knowledge_graph.generate_fix_plan(analysis)
             
@@ -105,12 +108,12 @@ class ComprehensiveInformationCollector(VolumeDiscovery, ToolExecutors, Knowledg
                 }
             }
             
-            logging.info(f"=== PHASE 0: INFORMATION-COLLECTION completed in {collection_time:.2f} seconds ===")
-            logging.info(f"Executed {len(self.collected_data['tool_outputs'])} tools, discovered {len(volume_chain.get('pvcs', []))} PVCs")
+            collector_logger.info(f"=== PHASE 0: INFORMATION-COLLECTION completed in {collection_time:.2f} seconds ===")
+            collector_logger.info(f"Executed {len(self.collected_data['tool_outputs'])} tools, discovered {len(volume_chain.get('pvcs', []))} PVCs")
             return result
             
         except Exception as e:
             error_msg = f"Error during volume-focused collection: {str(e)}"
-            logging.error(error_msg)
+            collector_logger.error(error_msg)
             self.collected_data['errors'].append(error_msg)
             raise

@@ -11,6 +11,12 @@ import logging
 from typing import Any
 from langchain_core.tools import tool
 
+# Configure logger for knowledge graph tools
+kg_tools_logger = logging.getLogger('knowledge_graph.tools')
+kg_tools_logger.setLevel(logging.INFO)
+# Don't propagate to root logger to avoid console output
+kg_tools_logger.propagate = False
+
 # Import Knowledge Graph
 from knowledge_graph import KnowledgeGraph
 
@@ -31,10 +37,10 @@ def initialize_knowledge_graph(kg_instance: 'KnowledgeGraph' = None) -> 'Knowled
     
     if kg_instance:
         KNOWLEDGE_GRAPH = kg_instance
-        logging.info("Using provided Knowledge Graph instance")
+        kg_tools_logger.info("Using provided Knowledge Graph instance")
     elif KNOWLEDGE_GRAPH is None:
         KNOWLEDGE_GRAPH = KnowledgeGraph()
-        logging.info("Created new Knowledge Graph instance")
+        kg_tools_logger.info("Created new Knowledge Graph instance")
     
     return KNOWLEDGE_GRAPH
 

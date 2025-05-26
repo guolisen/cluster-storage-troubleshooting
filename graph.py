@@ -54,28 +54,117 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
         phase_specific_guidance = ""
         if phase == "analysis":
             phase_specific_guidance = """
-You are currently in Phase 1 (Analysis). You have pre-collected diagnostic information from Phase 0 as base knowledge, but you must now use ReAct methodology to actively investigate the volume I/O issue step by step using available tools.
+You are currently in Phase 1 (Analysis). Your primary task is to perform comprehensive root cause analysis and generate a detailed, step-by-step fix plan.
 
-Your task is to:
-1. Use the pre-collected data as base knowledge to understand the initial context
-2. Follow the structured diagnostic process (steps a-i below) using ReAct tools for active investigation
-3. Execute tools step-by-step to gather additional evidence and verify findings
-4. Identify root cause(s) based on both pre-collected data and active investigation results
-5. Generate a comprehensive fix plan
-6. Present findings as JSON with "root_cause" and "fix_plan" keys
+ROOT CAUSE ANALYSIS REQUIREMENTS:
+1. Knowledge Graph Analysis
+   - MUST use kg_get_all_issues first to identify existing issues
+   - Use kg_analyze_issues to identify patterns and relationships
+   - Cross-reference issues with system metrics and logs
+   - Calculate probability scores for each potential cause
 
-Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
-a. **Confirm Issue**: Use kubectl_logs and kubectl_describe tools to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount")
-b. **Verify Configurations**: Check Pod, PVC, and PV with kubectl_get tool. Confirm PV uses local volume, valid disk path, and correct nodeAffinity
-c. **Check CSI Baremetal Driver and Resources**: Use kubectl_get tools to verify driver pods, drive status, csibmnode, available capacity, and logical volume groups
-d. **Test Driver**: Consider creating test resources if needed for verification
-e. **Verify Node Health**: Use kubectl_describe for nodes and check for DiskPressure
-f. **Check Permissions**: Verify file system permissions and SecurityContext settings
-g. **Inspect Control Plane**: Check controller and scheduler logs if needed
-h. **Test Hardware Disk**: Use system diagnostic tools to check disk health and performance
-i. **Propose Remediations**: Based on investigation results, provide specific remediation steps
+2. Issue Classification
+   - Categorize issues by:
+     * Severity (critical/high/medium/low)
+     * Type (hardware/software/configuration/permission)
+     * Scope (pod/node/cluster level)
+   - Identify primary and secondary issues
+   - Calculate impact radius for each issue
 
-Use available tools actively to investigate step by step - don't just rely on pre-collected data.
+3. Evidence Collection
+   - List all supporting evidence for each issue
+   - Include relevant logs, metrics, and events
+   - Document relationship patterns between components
+   - Track issue occurrence frequency and timing
+
+4. Impact Analysis
+   - Document affected components
+   - Calculate service impact percentage
+   - Identify potential cascade effects
+   - Estimate time-to-impact if not addressed
+
+DIAGNOSTIC PROCESS:
+Follow this structured process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
+a. **Knowledge Graph Analysis**: First use kg_get_all_issues and kg_analyze_issues
+b. **Confirm Issue**: Use kubectl_logs and kubectl_describe for error identification
+c. **Verify Configurations**: Check Pod, PVC, PV configurations and relationships
+d. **Check CSI Driver**: Verify driver status and resources
+e. **Verify Node Health**: Check for node-level issues
+f. **Check Permissions**: Verify security settings
+g. **Inspect Control Plane**: Review controller/scheduler logs
+h. **Test Hardware**: Check disk health and performance
+i. **Pattern Analysis**: Identify recurring patterns and relationships
+
+OUTPUT REQUIREMENTS:
+Provide a detailed investigation report that includes:
+
+1. Summary of Findings:
+   - Brief overview of the main issues discovered
+   - Severity assessment of the overall situation
+
+2. Detailed Analysis:
+   - Primary Issues:
+     * Description of each major problem identified
+     * Evidence supporting each issue (logs, metrics, events)
+     * Impact assessment on the system and services
+     * Probability or confidence level in the diagnosis
+   - Secondary Issues:
+     * Description of minor or related problems
+     * Potential consequences if left unaddressed
+   - System Metrics:
+     * Key performance indicators and their current values
+     * Any metrics that deviate from normal ranges
+   - Environmental Factors:
+     * External conditions that may be contributing to the issues
+
+3. Relationship Analysis:
+   - Connections between different issues
+   - How components of the system are affecting each other
+
+4. Investigation Process:
+   - Steps taken during the troubleshooting
+   - Tools and commands used
+   - Reasoning behind each investigative action
+
+5. Potential Root Causes:
+   - List of possible underlying causes
+   - Evidence supporting each potential root cause
+   - Likelihood assessment for each cause
+
+6. Open Questions:
+   - Any unresolved aspects of the investigation
+   - Areas that require further examination
+
+7. Next Steps:
+   - Recommended further diagnostic actions
+   - Suggestions for additional data collection or analysis
+
+Remember to provide clear, concise explanations and avoid technical jargon where possible. The goal is to present a comprehensive understanding of the current state of the system and the issues it's facing.
+
+EXECUTION GUIDELINES:
+1. Root Cause Analysis:
+   - Start with Knowledge Graph tools
+   - Progress from high-severity to low-severity issues
+   - Document all possible causes with probability rankings
+   - Include comprehensive evidence for each cause
+   - List all potential impacts and risks
+
+2. Fix Plan Generation:
+   - Order steps by priority and dependencies
+   - Include clear success criteria for each step
+   - Provide specific commands and parameters
+   - Include verification steps after each action
+   - Document rollback procedures
+   - Estimate time for each step
+
+3. Quality Requirements:
+   - All steps must be specific and actionable
+   - Include command parameters and expected outputs
+   - Provide clear verification methods
+   - Document prerequisites and dependencies
+   - Include safety checks and validations
+
+Remember: You have 50 tool usage attempts. Prioritize critical issues and gather comprehensive evidence before proposing fixes.
 """
         elif phase == "remediation":
             phase_specific_guidance = """
@@ -121,6 +210,101 @@ Issues Summary:
 
 === END PRE-COLLECTED CONTEXT ===
 """
+
+        final_output_example = """ 
+=== FINAL OUTPUT EXAMPLE ===
+1. Summary of Findings:
+- The pod "test-pod-1-0" in namespace "default" is running and ready, with the volume mounted at /usr/share/storop-nginx/html-1.
+- The PVC "www-1-test-pod-1-0" and PV "pvc-8005fc35-9987-4874-a1a0-929c439d3cf7" are bound and use local path provisioner storage class "standard".
+- The PV uses a hostPath volume at /var/local-path-provisioner/pvc-8005fc35-9987-4874-a1a0-929c439d3cf7_default_www-1-test-pod-1-0 on node "kind-control-plane".
+- The node "kind-control-plane" is Ready with no disk pressure or memory pressure.
+- The volume is mounted on /dev/sda2 partition on the node, which has 72% usage.
+- The Knowledge Graph shows no issues related to drives, CSI Baremetal resources, or volumes.
+- However, enhanced log analysis detected multiple medium severity kernel log patterns on the node related to nvme errors, ssd failures, disk timeouts, scsi errors, ata errors, bad sectors, I/O errors, filesystem errors, mount failures, and CSI errors.
+- The CSI Baremetal driver resources (drives, csibmnode, available capacity, lvg, volumes) are not present in the cluster, indicating the CSI Baremetal driver may not be installed or active.
+- The storage class used is "rancher.io/local-path", which is a local path provisioner, not CSI Baremetal.
+
+2. Detailed Analysis:
+Primary Issues:
+- The volume is provisioned using rancher.io/local-path provisioner, not CSI Baremetal. This means the volume is a hostPath directory on the node's filesystem (/var/local-path-provisioner/...), backed by the node's local disk partition /dev/sda2.
+- The node's kernel logs show multiple medium severity disk-related errors (nvme, ssd, disk timeout, scsi, ata, bad sectors, I/O, filesystem, mount, CSI errors). These indicate underlying hardware or driver issues on the node's local disk subsystem.
+- The CSI Baremetal driver resources are missing, so the CSI Baremetal driver is not managing any drives or volumes in this cluster.
+- The pod's volume mount permissions are wide open (drwxrwxrwx), so permission issues are unlikely.
+- The node is healthy from Kubernetes perspective (Ready, no disk pressure), but kernel logs indicate disk subsystem problems.
+
+Secondary Issues:
+- The absence of CSI Baremetal driver resources suggests the cluster is not using CSI Baremetal for local volumes, which may be a misconfiguration if CSI Baremetal is expected.
+- The local path provisioner may not handle disk errors or recovery as robustly as CSI Baremetal.
+
+System Metrics:
+- Disk usage on /dev/sda2 is 72%, which is moderate.
+- No other abnormal system metrics reported.
+
+Environmental Factors:
+- The node is a single node cluster (kind-control-plane).
+- The storage class is rancher.io/local-path, not CSI Baremetal.
+
+3. Relationship Analysis:
+- The pod uses a PVC bound to a PV that uses local path provisioner storage class.
+- The PV maps to a hostPath directory on the node's local disk partition.
+- Kernel logs on the node show disk errors that could cause volume I/O errors in the pod.
+- The absence of CSI Baremetal driver resources means no CSI Baremetal management or monitoring of drives.
+
+4. Investigation Process:
+- Checked pod status and volume mounts.
+- Retrieved PVC and PV details to confirm volume provisioning method.
+- Checked node status and disk usage.
+- Reviewed kernel log pattern issues from pre-collected data.
+- Checked CSI Baremetal driver resources presence.
+- Verified storage class used by PVC/PV.
+
+5. Potential Root Causes:
+- Underlying hardware or driver issues on node's local disk (/dev/sda2) causing I/O errors.
+- Use of local path provisioner instead of CSI Baremetal driver, leading to lack of advanced volume management and error handling.
+- Missing or not installed CSI Baremetal driver in the cluster.
+
+Likelihood:
+- High confidence in disk hardware/driver issues due to kernel log patterns.
+- High confidence in misconfiguration or absence of CSI Baremetal driver.
+
+6. Open Questions:
+- Is CSI Baremetal driver intended to be used in this cluster?
+- Are there any recent hardware changes or failures on the node?
+- Are there any pod logs showing specific I/O errors?
+
+7. Next Steps:
+- Verify if CSI Baremetal driver is installed and configured properly in the cluster.
+- If CSI Baremetal is intended, install and configure it to manage local volumes.
+- Check node kernel logs in detail for disk errors (dmesg, journalctl).
+- Run smartctl on /dev/sda to check disk health.
+- Run fio performance test on /dev/sda to check disk I/O performance.
+- Consider migrating volumes to CSI Baremetal managed volumes for better reliability.
+- Backup data before any disk repair or fsck operations.
+
+Root Cause:
+- The volume I/O errors are likely caused by underlying disk hardware or driver issues on the node's local disk (/dev/sda2), as indicated by multiple kernel log error patterns.
+- Additionally, the cluster is not using the CSI Baremetal driver for local volume management, instead using rancher.io/local-path provisioner, which may lack advanced error handling and monitoring.
+
+Fix Plan:
+1. Verify CSI Baremetal driver installation:
+   - Command: kubectl get pods -n kube-system -l app=csi-baremetal
+   - Expected: CSI Baremetal driver pods running
+2. If not installed, install CSI Baremetal driver according to documentation.
+3. Check node kernel logs for disk errors:
+   - Command: journalctl -k -b | grep -iE "nvme|ssd|disk|scsi|ata|error|fail|timeout|sector|i/o|filesystem|mount|csi"
+4. Check disk health with smartctl:
+   - Command: smartctl -a /dev/sda (run via SSH on node)
+5. Run fio performance test:
+   - Command: fio --name=read_test --filename=/dev/sda --rw=read --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting
+6. Consider migrating PVCs to CSI Baremetal managed volumes.
+7. Backup data before any disk repair.
+8. If disk health is bad, plan disk replacement.
+9. Monitor pod logs for I/O errors after remediation.
+=== END FINAL OUTPUT EXAMPLE ===
+
+"""
+
+
         system_message = {
             "role": "system", 
             "content": f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
@@ -145,10 +329,6 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
    - Never execute commands in `commands.disallowed` (e.g., `fsck`, `chmod`, `dd`, `kubectl delete pod`) unless explicitly enabled in `config.yaml` and approved by the user in interactive mode.
    - Validate all commands for safety and relevance before execution.
    - Log all SSH commands and outputs for auditing, using secure credential handling as specified in `config.yaml`.
-
-3. **Interactive Mode**:
-   - If `troubleshoot.interactive_mode` is `true` in `config.yaml`, prompt the user before executing any command or tool with: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)". Include a clear purpose (e.g., "Check drive health with kubectl get drive").
-   - If disabled, execute allowed commands automatically, respecting `config.yaml` restrictions.
 
 4. **Troubleshooting Process**:
    - Use the LangGraph ReAct module to reason about volume I/O errors based on parameters: `PodName`, `PodNamespace`, and `VolumePath`.
@@ -180,6 +360,7 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
         - File system corruption: Recommend `fsck` (if enabled/approved) after data backup.
         - Driver issues: Suggest restarting CSI Baremetal driver pod (if enabled/approved) if logs indicate errors.
    - Only propose remediations after analyzing diagnostic data. Ensure write/change commands (e.g., `fsck`, `kubectl delete pod`) are allowed and approved.
+   - Try to find all of possible root causes before proposing any remediation steps. 
 
 5. **Error Handling**:
    - Log all actions, command outputs, SSH results, and errors to the configured log file and stdout (if enabled).
@@ -199,11 +380,17 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
    - Always recommend data backup before suggesting write/change operations (e.g., `fsck`).
 
 8. **Output**:
+   - Try to find all of possible root causes before proposing any remediation steps.
    - Provide clear, concise explanations of diagnostic steps, findings, and remediation proposals.
    - In interactive mode, format prompts as: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)".
    - Include performance benchmarks in reports (e.g., HDD: 100–200 IOPS, SSD: thousands, NVMe: tens of thousands).
    - Log all outputs with timestamps and context for traceability.
+9. **Output Example**:
 
+{final_output_example}
+
+
+Current Context Summary:
 {context_summary}
 
 You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.
@@ -227,7 +414,7 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         # Call the model with tools for both phases (Phase 1 now actively investigates)
         response = model.bind_tools(tools).invoke(state["messages"])
         
-        logging.info(f"Model response: {response.content[:200]}...")
+        logging.info(f"Model response: {response.content}...")
         
         # Log tool usage if applicable
         if hasattr(response, 'additional_kwargs') and 'tool_calls' in response.additional_kwargs:

@@ -609,11 +609,11 @@ def define_remediation_tools() -> List[Any]:
         kg_print_graph,
         
         # Kubernetes tools
-        #kubectl_get,
-        #kubectl_describe,
+        kubectl_get,
+        kubectl_describe,
         #kubectl_apply,
         #kubectl_delete,
-        #kubectl_exec,
+        kubectl_exec,
         #kubectl_logs,
         #kubectl_get_drive,
         #kubectl_get_csibmnode,

@@ -815,16 +815,20 @@ class KnowledgeGraph:
                 except Exception:
                     return "N/A"
 
-            summary_table.add_row("Total Nodes", f"[blue]{safe_format(summary['total_nodes'])}[/blue]")
-            summary_table.add_row("Total Edges", f"[blue]{safe_format(summary['total_edges'])}[/blue]")
-            summary_table.add_row("Total Issues", f"[yellow]{safe_format(summary['total_issues'])}[/yellow]")
-            summary_table.add_row("Critical Issues", f"[red]{safe_format(summary['critical_issues'])}[/red]")
-            summary_table.add_row("High Issues", f"[orange3]{safe_format(summary['high_issues'])}[/orange3]")
-            summary_table.add_row("Medium Issues", f"[yellow]{safe_format(summary['medium_issues'])}[/yellow]")
-            summary_table.add_row("Low Issues", f"[green]{safe_format(summary['low_issues'])}[/green]")
+            # Ensure all values are explicitly converted to strings
+            summary_table.add_row("Total Nodes", f"[blue]{str(summary['total_nodes'])}[/blue]")
+            summary_table.add_row("Total Edges", f"[blue]{str(summary['total_edges'])}[/blue]")
+            summary_table.add_row("Total Issues", f"[yellow]{str(summary['total_issues'])}[/yellow]")
+            summary_table.add_row("Critical Issues", f"[red]{str(summary['critical_issues'])}[/red]")
+            summary_table.add_row("High Issues", f"[orange3]{str(summary['high_issues'])}[/orange3]")
+            summary_table.add_row("Medium Issues", f"[yellow]{str(summary['medium_issues'])}[/yellow]")
+            summary_table.add_row("Low Issues", f"[green]{str(summary['low_issues'])}[/green]")
             
             try:
-                console.print(summary_table)
+                console.print(Panel(
+                    summary_table,
+                    safe_box=True  # Explicitly set safe_box to True
+                ))
             except Exception as e:
                 kg_logger.error(f"Error printing rich summary table: {e}")
                 # Fallback to plain text

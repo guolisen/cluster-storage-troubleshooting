@@ -594,7 +594,8 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
             show_header=True,
             header_style="bold cyan",
             box=True,
-            border_style="blue"
+            border_style="blue",
+            safe_box=True  # Explicitly set safe_box to True
         )
         
         # Add columns
@@ -624,19 +625,25 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
             "[bold green]Completed"
         )
         
-        # Create root cause and resolution panels
+        # Create root cause and resolution panels - ensure strings for content
+        # Convert values to strings first to avoid 'bool' has no attribute 'substitute' errors
+        root_cause_str = str(root_cause) if root_cause is not None else "Unknown"
+        remediation_result_str = str(remediation_result) if remediation_result is not None else "No result"
+        
         root_cause_panel = Panel(
-            f"[bold yellow]{root_cause}",
+            f"[bold yellow]{root_cause_str}",
             title="[bold red]Root Cause",
             border_style="red",
-            padding=(1, 2)
+            padding=(1, 2),
+            safe_box=True  # Explicitly set safe_box to True
         )
         
         resolution_panel = Panel(
-            f"[bold green]{remediation_result}",
+            f"[bold green]{remediation_result_str}",
             title="[bold blue]Resolution Status",
             border_style="green",
-            padding=(1, 2)
+            padding=(1, 2),
+            safe_box=True  # Explicitly set safe_box to True
         )
         
         console.print("\n")

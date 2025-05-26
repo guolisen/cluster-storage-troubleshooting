@@ -489,7 +489,8 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
                 # Display thinking process
                 console.print(Panel(
                     f"[bold cyan]🧠 LangGraph thinking process:[/bold cyan]",
-                    border_style="cyan"
+                    border_style="cyan",
+                    safe_box=True
                 ))
                 
                 for tool_call in response.additional_kwargs['tool_calls']:
@@ -511,7 +512,8 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
                             f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
                             f"[bold yellow]Arguments:[/bold yellow]\n[blue]{formatted_args}[/blue]",
                             title="[bold magenta]Thinking Step",
-                            border_style="magenta"
+                            border_style="magenta",
+                            safe_box=True
                         )
                         console.print(tool_panel)
                         file_console.print(tool_panel)
@@ -521,7 +523,8 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
                             f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
                             f"[bold yellow]Arguments:[/bold yellow] None",
                             title="[bold magenta]Thinking Step",
-                            border_style="magenta"
+                            border_style="magenta",
+                            safe_box=True
                         )
                         console.print(tool_panel)
                         file_console.print(tool_panel)

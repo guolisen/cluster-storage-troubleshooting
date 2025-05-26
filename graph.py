@@ -91,6 +91,8 @@ Implement the fix plan safely and effectively while following security constrain
         # Prepare context from collected information
         context_summary = f"""
 === PRE-COLLECTED DIAGNOSTIC CONTEXT ===
+Instructions:
+    You can use the pre-collected diagnostic information to understand the current state of the Kubernetes cluster and the volume I/O issues being faced. Use this information to guide your troubleshooting process.
 
 Knowledge Graph Summary:
 {json.dumps(collected_info.get('knowledge_graph_summary', {}), indent=2)}
@@ -186,7 +188,7 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 
 6. **Knowledge Graph Usage**:
    - Use kg_print_graph to get a human-readable overview of the entire system state.
-   - First check issues with kg_get_all_issues before running diagnostic commands.
+   - First check issues with kg_get_all_issues before running diagnostic commands. this issue is critical inforamtion to find root cause
    - Use kg_get_summary to get high-level statistics about the cluster state.
    - For root cause analysis, use kg_analyze_issues to identify patterns across the system.
 

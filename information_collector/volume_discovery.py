@@ -106,6 +106,21 @@ class VolumeDiscovery(InformationCollectorBase):
                         'kubectl_get_pv', f'Get PV details for {pv_name}'
                     )
 
+                    if pv_output and not pv_output.startswith("Error:"):
+                        # Extract node affinity and drive UUID
+                        lines = pv_output.split('\n')
+                        for line in lines:
+                            if 'nodeAffinity:' in line:
+                                # Extract node name from node affinity
+                                node_name = line.split('nodeAffinity:')[-1].strip()
+                                #if node_name and node_name not in chain['nodes']:
+                                #    chain['nodes'].append(node_name)
+                            elif 'csi.storage.k8s.io/volume-id:' in line:
+                                # Extract drive UUID from PV annotations
+                                drive_uuid = line.split('csi.storage.k8s.io/volume-id:')[-1].strip()
+                                #if drive_uuid and drive_uuid not in chain['drives']:
+                                #    chain['drives'].append(drive_uuid)
+
                     vol_output = self._execute_tool_with_validation(
                         kubectl_get, {
                             'resource_type': 'volume',
@@ -162,6 +177,8 @@ class VolumeDiscovery(InformationCollectorBase):
                                             chain['drives'].append(drive_name)
                                         else:
                                             drivestart = False
+                    else:
+                        chain['volumes'] = []
 
         except Exception as e:
             error_msg = f"Error discovering volume dependency chain: {str(e)}"

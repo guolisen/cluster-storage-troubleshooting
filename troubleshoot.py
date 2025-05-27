@@ -463,6 +463,8 @@ Root Cause: {root_cause}
 
 Fix Plan: {fix_plan}
 
+<<< Note >>>: Please try to fix issue within 30 tool calls.
+
 Please implement the fix plan step by step. Use available tools if needed, but respect security constraints and interactive mode settings.
 Provide a final status report on whether the issues have been resolved.
 """
@@ -557,9 +559,9 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
             "duration": time.time() - phase_1_start
         }
         
-        print(f"Root Cause: {root_cause}")
-        print(f"Fix Plan: {fix_plan}")
-        print()
+        #print(f"Root Cause: {root_cause}")
+        #print(f"Fix Plan: {fix_plan}")
+        #print()
         
         phase_2_start = time.time()
         

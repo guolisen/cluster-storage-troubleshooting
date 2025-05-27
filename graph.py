@@ -434,6 +434,7 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
    - In interactive mode, format prompts as: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)".
    - Include performance benchmarks in reports (e.g., HDD: 100–200 IOPS, SSD: thousands, NVMe: tens of thousands).
    - Log all outputs with timestamps and context for traceability.
+   - **Don't output with JSON format, use plain text for better readability.**
 9. **Output Example**:
 
 {final_output_example}
@@ -476,23 +477,31 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         
         logging.info(f"Model response: {response.content}...")
         
+        from rich.console import Console
+        from rich.panel import Panel
+        
+        # Create console for rich output
+        console = Console()
+        file_console = Console(file=open('troubleshoot.log', 'a'))
+        
+        # Display thinking process
+        console.print(Panel(
+            f"[bold cyan]LangGraph thinking process:[/bold cyan]",
+            border_style="cyan",
+            safe_box=True
+        ))
+
+        if response.content:
+            console.print(Panel(
+                f"[bold green]{response.content}[/bold green]",
+                title="[bold magenta]Thinking step",
+                border_style="magenta",
+                safe_box=True
+            ))
+
         # Log tool usage and thinking process with rich formatting
         if hasattr(response, 'additional_kwargs') and 'tool_calls' in response.additional_kwargs:
             try:
-                from rich.console import Console
-                from rich.panel import Panel
-                
-                # Create console for rich output
-                console = Console()
-                file_console = Console(file=open('troubleshoot.log', 'a'))
-                
-                # Display thinking process
-                console.print(Panel(
-                    f"[bold cyan]🧠 LangGraph thinking process:[/bold cyan]",
-                    border_style="cyan",
-                    safe_box=True
-                ))
-                
                 for tool_call in response.additional_kwargs['tool_calls']:
                     tool_name = tool_call['function']['name']
                     

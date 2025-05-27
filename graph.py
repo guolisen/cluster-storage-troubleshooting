@@ -261,7 +261,7 @@ Issues Summary:
 """
 
         final_output_example = """ 
-=== FINAL OUTPUT EXAMPLE ===
+=== GRAPH END OUTPUT EXAMPLE ===
 1. Summary of Findings:
 - The pod "test-pod-1-0" in namespace "default" is running and ready, with the volume mounted at /usr/share/storop-nginx/html-1.
 - The PVC "www-1-test-pod-1-0" and PV "pvc-8005fc35-9987-4874-a1a0-929c439d3cf7" are bound and use local path provisioner storage class "standard".
@@ -349,7 +349,7 @@ Fix Plan:
 7. Backup data before any disk repair.
 8. If disk health is bad, plan disk replacement.
 9. Monitor pod logs for I/O errors after remediation.
-=== END FINAL OUTPUT EXAMPLE ===
+=== GRAPH END OUTPUT EXAMPLE ===
 
 """
 
@@ -440,7 +440,7 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 {final_output_example}
 
 
-Current Context Summary:
+Current System Resource Context Summary:
 {context_summary}
 
 You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.

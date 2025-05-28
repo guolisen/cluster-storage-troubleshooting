@@ -291,9 +291,6 @@ async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds
             border_style="blue"
         ))
         
-        # Simple status message instead of progress bar
-        console.print("[cyan]LangGraph thinking process starting...[/cyan]")
-        
         # Run graph with timeout
         try:
             response = await asyncio.wait_for(
@@ -398,11 +395,12 @@ You have pre-collected diagnostic information from Phase 0 as base knowledge, bu
 
 Your task is to:
 1. Use the pre-collected data as base knowledge to understand the initial context
-2. Follow the structured diagnostic process (steps a-i) using ReAct tools for active investigation
-3. Execute tools step-by-step to gather additional evidence and verify findings
-4. Identify root cause(s) based on both pre-collected data and active investigation results
-5. Generate a comprehensive fix plan
-6. Present findings as JSON with "root_cause" and "fix_plan" keys
+2. double-check the pre-collected data for any obvious issues, make a investigation plan based on the pre-collected data return this plan to the user
+3. Follow the structured diagnostic process (steps a-i) using ReAct tools for active investigation
+4. Execute tools step-by-step to gather additional evidence and verify findings
+5. Identify root cause(s) based on both pre-collected data and active investigation results
+6. Generate a comprehensive fix plan
+7. If pre-collected data as base knowledge has sufficient information, you can skip some steps, but still follow the structured process (a-i)
 
 Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
 a. **Confirm Issue**: Use kubectl_logs and kubectl_describe tools to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount")
@@ -558,10 +556,6 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
             "fix_plan": fix_plan,
             "duration": time.time() - phase_1_start
         }
-        
-        #print(f"Root Cause: {root_cause}")
-        #print(f"Fix Plan: {fix_plan}")
-        #print()
         
         phase_2_start = time.time()
         

@@ -28,8 +28,11 @@ dependencies = [
     "langchain>=0.3.25",
     "langchain-openai>=0.3.17",
     "langgraph",
+    "networkx>=3.4.2",
     "paramiko",
     "pyyaml",
+    "rich>=14.0.0",
+    "wheel>=0.45.1",
 ]
 
 [project.optional-dependencies]

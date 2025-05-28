@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-Kubernetes Volume I/O Error Troubleshooting Script
+Kubernetes Volume I/O Error Troubleshooting Script with Phase 0 Information Collection
 
-This script uses LangGraph ReAct to diagnose and resolve volume I/O errors
-in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver.
+This script uses a 3-phase approach:
+- Phase 0: Information Collection - Pre-collect all diagnostic data upfront
+- Phase 1: ReAct Investigation - Actively investigate using tools with pre-collected data as base knowledge
+- Phase 2: Remediation - Execute fix plan based on analysis
+
+Enhanced with Knowledge Graph integration and ReAct methodology for comprehensive root cause analysis.
 """
 
 import os
@@ -12,23 +16,100 @@ import yaml
 import logging
 import asyncio
 import time
-import subprocess
 import json
-import paramiko
-import uuid
-import shlex # Added import for shlex
+import argparse
 from typing import Dict, List, Any, Optional, Tuple
-from kubernetes import client, config
-from kubernetes.client.rest import ApiException
-from langgraph.graph import StateGraph, MessagesState, START, END
-from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_core.tools import tool # Changed import for @tool
-from langchain.chat_models import init_chat_model
+from langgraph.graph import StateGraph
+from kubernetes import config
+from graph import create_troubleshooting_graph_with_context
+from information_collector import ComprehensiveInformationCollector
+from rich.logging import RichHandler
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.panel import Panel
+from rich.table import Table
+from rich.tree import Tree
+from rich import print as rprint
+
+# Initialize rich console
+console = Console()
+file_console = Console(file=open('troubleshoot.log', 'w'))
+
+# Custom filter for internal logging
+class InternalLogFilter(logging.Filter):
+    """Filter out internal logging messages from console output"""
+    def filter(self, record):
+        # Check if this is an internal log that should be filtered from console
+        
+        # Filter out logs from LangGraph module
+        if 'LangGraph' in record.msg or getattr(record, 'name', '').startswith('langgraph'):
+            return False
+            
+        # Filter out logs from standard logging modules
+        if getattr(record, 'name', '') in ['kubernetes', 'urllib3', 'asyncio', 'langchain', 'httpx']:
+            return False
+            
+        # Filter out specific log patterns that are meant for internal debugging
+        internal_patterns = [
+            'Executing command:',
+            'Command output:',
+            'Starting enhanced logging',
+            'Loaded',
+            'Building',
+            'Adding node',
+            'Adding edge',
+            'Adding conditional',
+            'Compiling graph',
+            'Model response:',
+            'Model invoking tool:',
+            'Tool arguments:',
+            'Using Phase',
+            'Processing state',
+            'Graph compilation',
+            'Running',
+            'Starting'
+        ]
+        
+        if any(pattern in record.msg for pattern in internal_patterns):
+            return False
+            
+        # Allow all other logs to pass to console
+        return True
+
+# Set up logging handlers for module-specific loggers
+def configure_module_loggers():
+    """Set up file handlers for module-specific loggers"""
+    # Create file handler for log file
+    file_handler = logging.FileHandler('troubleshoot.log', mode='a')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    
+    # Configure langgraph logger
+    langgraph_logger = logging.getLogger('langgraph')
+    langgraph_logger.addHandler(file_handler)
+    
+    # Configure knowledge_graph logger
+    kg_logger = logging.getLogger('knowledge_graph')
+    kg_logger.addHandler(file_handler)
+    
+    # Configure knowledge_graph.tools logger
+    kg_tools_logger = logging.getLogger('knowledge_graph.tools')
+    kg_tools_logger.addHandler(file_handler)
+    
+    # Configure other module loggers as needed
+    for module in ['tools', 'information_collector', 'kubernetes', 'urllib3']:
+        module_logger = logging.getLogger(module)
+        module_logger.addHandler(file_handler)
 
 # Global variables
 CONFIG_DATA = None
 INTERACTIVE_MODE = False
 SSH_CLIENTS = {}
+KNOWLEDGE_GRAPH = None
+
+os.environ['LANGCHAIN_TRACING_V2'] = "true"   
+os.environ['LANGCHAIN_ENDPOINT'] = "https://api.smith.langchain.com"   
+os.environ['LANGCHAIN_API_KEY'] = "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"   
+os.environ['LANGCHAIN_PROJECT'] = "pr-silver-bank-1"
 
 def load_config():
     """Load configuration from config.yaml"""
@@ -40,1211 +121,636 @@ def load_config():
         sys.exit(1)
 
 def setup_logging(config_data):
-    """Configure logging based on configuration"""
+    """Configure logging based on configuration with rich formatting"""
     log_file = config_data['logging']['file']
     log_to_stdout = config_data['logging']['stdout']
     
     handlers = []
     if log_file:
-        handlers.append(logging.FileHandler(log_file))
-    if log_to_stdout:
-        handlers.append(logging.StreamHandler())
+        # File handler for regular log file with timestamps
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s'
+        ))
+        handlers.append(file_handler)
+        
+        # Rich console file handler for enhanced log file
+        file_console.log("Starting enhanced logging to troubleshoot.log")
     
+    if log_to_stdout:
+        # Rich console handler for beautiful terminal output - with filter
+        rich_handler = RichHandler(
+            rich_tracebacks=True,
+            console=console,
+            show_time=True,
+            show_level=True,
+            show_path=False,
+            enable_link_path=False
+        )
+        # Add filter to prevent internal logs from going to console
+        rich_handler.addFilter(InternalLogFilter())
+        handlers.append(rich_handler)
+    
+    # Configure the root logger
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
+        format='%(message)s',
+        datefmt='[%X]',
         handlers=handlers
     )
+    
+    # Configure module-specific loggers
+    configure_module_loggers()
+    
+    # Log startup message to file only
+    logging.info("Logging initialized - internal logs redirected to log file only")
 
-def init_kubernetes_client():
-    """Initialize Kubernetes client"""
+async def run_information_collection_phase(pod_name: str, namespace: str, volume_path: str) -> Dict[str, Any]:
+    """
+    Run Phase 0: Information Collection - Gather all necessary data upfront
+    
+    Args:
+        pod_name: Name of the pod with the error
+        namespace: Namespace of the pod
+        volume_path: Path of the volume with I/O error
+        
+    Returns:
+        Dict[str, Any]: Pre-collected diagnostic information
+    """
+    global CONFIG_DATA, KNOWLEDGE_GRAPH
+    
+    logging.info("Starting Phase 0: Information Collection")
+    
     try:
-        # Try to load in-cluster config first (when running inside a pod)
-        if 'KUBERNETES_SERVICE_HOST' in os.environ:
-            config.load_incluster_config()
-            logging.info("Using in-cluster Kubernetes configuration")
-        else:
-            # Fall back to kubeconfig file
-            config.load_kube_config()
-            logging.info("Using kubeconfig file for Kubernetes configuration")
+        # Initialize information collector
+        info_collector = ComprehensiveInformationCollector(CONFIG_DATA)
         
-        return client.CoreV1Api()
-    except Exception as e:
-        logging.error(f"Failed to initialize Kubernetes client: {e}")
-        sys.exit(1)
-
-def validate_command(command: str) -> bool:
-    return True
-    """
-    Validate if a command is allowed based on configuration with prefix/wildcard matching
-    
-    Args:
-        command: Command to validate
-        
-    Returns:
-        bool: True if command is allowed, False otherwise
-    """
-    global CONFIG_DATA
-    
-    # Ensure command_to_validate is a string, as it's now just the executable
-    if not isinstance(command, str):
-        logging.error(f"Invalid type for command validation: {type(command)}. Expected string.")
-        return False
-
-    # Check if command is explicitly disallowed (exact match first, then prefix/wildcard)
-    for disallowed in CONFIG_DATA['commands']['disallowed']:
-        # Handle exact match
-        if disallowed == command:
-            logging.warning(f"Command '{command}' is explicitly disallowed")
-            return False
-            
-        # Handle wildcards
-        if disallowed.endswith('*'):
-            prefix = disallowed[:-1]  # Remove the * character
-            if command.startswith(prefix):
-                logging.warning(f"Command '{command}' matches disallowed wildcard pattern '{disallowed}'")
-                return False
-    
-    # Check if command is allowed (exact match first, then prefix/wildcard)
-    for allowed in CONFIG_DATA['commands']['allowed']:
-        # Handle exact match
-        if allowed == command:
-            return True
-            
-        # Handle wildcards
-        if allowed.endswith('*'):
-            prefix = allowed[:-1]  # Remove the * character
-            if command.startswith(prefix):
-                return True
-    
-    logging.warning(f"Command '{command}' is not in the allowed list")
-    return False
-
-def prompt_for_approval(command_display: str, purpose: str) -> bool:
-    """
-    Prompt user for command approval in interactive mode
-    
-    Args:
-        command_display: The command string to display to the user for approval
-        purpose: Purpose of the command
-        
-    Returns:
-        bool: True if approved, False otherwise
-    """
-    print(f"\nProposed command: {command_display}")
-    print(f"Purpose: {purpose}")
-    response = input("Approve? (y/n): ").strip().lower()
-    return response == 'y' or response == 'yes'
-
-def execute_command(command_list: List[str], purpose: str, requires_approval: bool = True) -> str:
-    """
-    Execute a command and return its output
-    
-    Args:
-        command_list: Command to execute as a list of strings
-        purpose: Purpose of the command
-        requires_approval: Whether this command requires user approval in interactive mode
-        
-    Returns:
-        str: Command output
-    """
-    global CONFIG_DATA, INTERACTIVE_MODE
-    
-    if not command_list:
-        logging.error("execute_command received an empty command_list")
-        return "Error: Empty command list provided"
-
-    executable = command_list[0]
-    command_display_str = ' '.join(command_list) # For logging and prompting
-
-    # Check if command is explicitly disallowed
-    if CONFIG_DATA['commands']['disallowed']:
-        for disallowed in CONFIG_DATA['commands']['disallowed']:
-            # Handle exact match
-            if disallowed == executable:
-                logging.warning(f"Command '{executable}' is explicitly disallowed")
-                return f"Error: Command executable '{executable}' is not allowed"
-                
-            # Handle wildcards
-            if disallowed.endswith('*'):
-                prefix = disallowed[:-1]  # Remove the * character
-                if executable.startswith(prefix):
-                    logging.warning(f"Command '{executable}' matches disallowed wildcard pattern '{disallowed}'")
-                    return f"Error: Command executable '{executable}' is not allowed"
-    
-    # Prompt for approval in interactive mode if required
-    if INTERACTIVE_MODE and requires_approval:
-        if not prompt_for_approval(command_display_str, purpose):
-            return "Command execution cancelled by user"
-    
-    # Execute command
-    try:
-        logging.info(f"Executing command: {command_display_str}")
-        result = subprocess.run(command_list, shell=False, check=True, 
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               universal_newlines=True)
-        output = result.stdout
-        logging.debug(f"Command output: {output}")
-        return output
-    except subprocess.CalledProcessError as e:
-        error_msg = f"Command failed with exit code {e.returncode}: {e.stderr}"
-        logging.error(error_msg)
-        return f"Error: {error_msg}"
-    except FileNotFoundError:
-        error_msg = f"Command not found: {executable}"
-        logging.error(error_msg)
-        return f"Error: {error_msg}"
-    except Exception as e:
-        error_msg = f"Failed to execute command {command_display_str}: {str(e)}"
-        logging.error(error_msg)
-        return f"Error: {error_msg}"
-
-def get_ssh_client(node: str) -> Optional[paramiko.SSHClient]:
-    """
-    Get or create an SSH client for a node
-    
-    Args:
-        node: Node hostname
-        
-    Returns:
-        paramiko.SSHClient: SSH client or None if failed
-    """
-    global CONFIG_DATA, SSH_CLIENTS
-    
-    # Check if SSH is enabled
-    if not CONFIG_DATA['troubleshoot']['ssh']['enabled']:
-        logging.warning("SSH is disabled in configuration")
-        return None
-    
-    # Check if node is in allowed nodes
-    if node not in CONFIG_DATA['troubleshoot']['ssh']['nodes']:
-        logging.warning(f"Node '{node}' is not in the allowed SSH nodes list")
-        return None
-    
-    # Return existing client if available
-    if node in SSH_CLIENTS:
-        return SSH_CLIENTS[node]
-    
-    # Create new SSH client
-    ssh_config = CONFIG_DATA['troubleshoot']['ssh']
-    client = paramiko.SSHClient()
-    # client.set_missing_host_key_policy(paramiko.AutoAddPolicy()) # Removed
-    client.load_system_host_keys()
-    client.set_missing_host_key_policy(paramiko.RejectPolicy())
-    
-    # Try to connect with retries
-    retries = ssh_config['retries']
-    retry_backoff = ssh_config['retry_backoff_seconds']
-    
-    for attempt in range(retries + 1):
-        try:
-            client.connect(
-                node,
-                username=ssh_config['user'],
-                key_filename=ssh_config['key_path']
-            )
-            SSH_CLIENTS[node] = client
-            logging.info(f"SSH connection established to {node}")
-            return client
-        except Exception as e:
-            if attempt < retries:
-                wait_time = retry_backoff * (2 ** attempt)
-                logging.warning(f"SSH connection to {node} failed: {e}. Retrying in {wait_time} seconds (attempt {attempt+1}/{retries})")
-                time.sleep(wait_time)
-            else:
-                logging.error(f"SSH connection to {node} failed after {retries} attempts: {e}")
-                return None
-
-def ssh_execute(node: str, command: str, purpose: str) -> str:
-    """
-    Execute a command on a remote node via SSH
-    
-    Args:
-        node: Node hostname
-        command: Command to execute
-        purpose: Purpose of the command
-        
-    Returns:
-        str: Command output
-    """
-    global INTERACTIVE_MODE
-    
-    # Validate command
-    executable = ""
-    if command: # Ensure command is not an empty string
-        executable = command.split()[0]
-        if not validate_command(executable):
-            return f"Error: SSH command executable '{executable}' is not allowed"
-    else:
-        return "Error: Empty command provided for SSH execution"
-            
-    # Prompt for approval in interactive mode
-    if INTERACTIVE_MODE:
-        ssh_command_display = f"ssh {node} '{command}'"
-        if not prompt_for_approval(ssh_command_display, purpose):
-            return "Command execution cancelled by user"
-    
-    # Get SSH client
-    client = get_ssh_client(node)
-    if not client:
-        return f"Error: Failed to establish SSH connection to {node}"
-    
-    # Execute command
-    try:
-        logging.info(f"Executing SSH command on {node}: {command}")
-        stdin, stdout, stderr = client.exec_command(command)
-        output = stdout.read().decode('utf-8')
-        error = stderr.read().decode('utf-8')
-        
-        if error:
-            logging.warning(f"SSH command produced errors: {error}")
-            return f"Output:\n{output}\n\nErrors:\n{error}"
-        
-        logging.debug(f"SSH command output: {output}")
-        return output
-    except Exception as e:
-        error_msg = f"Failed to execute SSH command: {str(e)}"
-        logging.error(error_msg)
-        return f"Error: {error_msg}"
-
-def close_ssh_connections():
-    """Close all SSH connections"""
-    global SSH_CLIENTS
-    
-    for node, client in SSH_CLIENTS.items():
-        try:
-            client.close()
-            logging.info(f"SSH connection to {node} closed")
-        except Exception as e:
-            logging.warning(f"Error closing SSH connection to {node}: {e}")
-    
-    SSH_CLIENTS = {}
-
-# Define tools for the LangGraph ReAct agent
-
-@tool
-def kubectl_get(resource: str, name: Optional[str] = None, namespace: Optional[str] = None) -> str:
-    """Get Kubernetes resources in YAML format"""
-    # First check if this is a custom resource by checking if it's singular
-    if resource.lower() in ["drive", "drives", "csibmnode", "csibmnodes", "ac", "acs", "lvg", "lvgs", "acr", "acrs"]:
-        # Try to verify CRD exists first
-        crd_check = execute_command(
-            ["kubectl", "get", "crd", f"{resource}.csi-baremetal.dell.com"],
-            f"Check if CRD {resource}.csi-baremetal.dell.com exists"
+        # Run comprehensive collection
+        collection_result = await info_collector.comprehensive_collect(
+            target_pod=pod_name,
+            target_namespace=namespace,
+            target_volume_path=volume_path
         )
-        if crd_check.startswith("Error:"):
-            return f"Resource type '{resource}' is not available in this cluster. This may be because the CSI Baremetal driver is not installed or its CRDs are not properly registered. Continuing with other diagnostics. Error details: {crd_check}"
-    
-    # Execute the original command
-    result = execute_command(
-        (
-            ["kubectl", "get", resource] +
-            ([name] if name else []) +
-            (["-n", namespace] if namespace else []) +
-            ["-o", "yaml"]
-        ),
-        f"Get {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''} in YAML format",
-        requires_approval=False
-    )
-    
-    # If the command failed with "resource type not found" error, provide a more helpful message
-    if "the server doesn't have a resource type" in result:
-        return f"Resource type '{resource}' is not available in this cluster. This may be because the CSI Baremetal driver is not installed or its CRDs are not properly registered. Continuing with other diagnostics."
-    
-    return result
-
-@tool
-def kubectl_describe(resource: str, name: Optional[str] = None, namespace: Optional[str] = None) -> str:
-    """Describe Kubernetes resources"""
-    return execute_command(
-        (
-            ["kubectl", "describe", resource] +
-            ([name] if name else []) +
-            (["-n", namespace] if namespace else [])
-        ),
-        f"Describe {resource} {name or 'all'} {f'in namespace {namespace}' if namespace else ''}",
-        requires_approval=False
-    )
-
-@tool
-def kubectl_logs(pod_name: str, namespace: str, container: Optional[str] = None, tail: Optional[int] = None) -> str:
-    """Get logs from a pod"""
-    return execute_command(
-        (
-            ["kubectl", "logs", pod_name] +
-            (["-c", container] if container else []) +
-            ["-n", namespace] +
-            ([f"--tail={tail}"] if tail is not None else [])
-        ),
-        f"Get logs from pod {namespace}/{pod_name} {f'container {container}' if container else ''}",
-        requires_approval=False
-    )
-
-@tool
-def kubectl_exec(pod_name: str, namespace: str, command: str) -> str:
-    """Execute a command in a pod"""
-    return execute_command(
-        (["kubectl", "exec", pod_name, "-n", namespace, "--"] + shlex.split(command)),
-        f"Execute command '{command}' in pod {namespace}/{pod_name}",
-        requires_approval=False
-    )
-
-@tool
-def kubectl_top(resource_type: str, name: Optional[str] = None, namespace: Optional[str] = None) -> str:
-    """Get resource usage metrics using kubectl top command"""
-    return execute_command(
-        (
-            ["kubectl", "top", resource_type] +
-            ([name] if name else []) +
-            (["-n", namespace] if namespace else [])
-        ),
-        f"Get resource metrics for {resource_type} {name or 'all'} {f'in namespace {namespace}' if namespace else ''}",
-        requires_approval=False
-    )
-
-@tool
-def kubectl_cp(source: str, destination: str, container: Optional[str] = None, namespace: Optional[str] = None) -> str:
-    """Copy files between pod and local filesystem using kubectl cp command"""
-    cmd = ["kubectl", "cp"]
-    if namespace:
-        cmd.extend(["-n", namespace])
-    if container:
-        cmd.extend(["-c", container])
-    cmd.extend([source, destination])
-    
-    return execute_command(
-        cmd,
-        f"Copy files between {source} and {destination}",
-        requires_approval=False
-    )
-
-@tool
-def df_h() -> str:
-    """Show disk space usage with human-readable sizes"""
-    return execute_command(
-        ["df", "-h"],
-        "Show disk space usage with human-readable sizes",
-        requires_approval=False
-    )
-
-@tool
-def lsblk() -> str:
-    """List information about block devices"""
-    return execute_command(
-        ["lsblk"],
-        "List information about block devices",
-        requires_approval=False
-    )
-
-@tool
-def cat_proc_mounts() -> str:
-    """Display mounted file systems from /proc/mounts"""
-    return execute_command(
-        ["cat", "/proc/mounts"],
-        "Display mounted file systems from /proc/mounts",
-        requires_approval=False
-    )
-
-@tool
-def smartctl_a(device_path: str) -> str:
-    """Run SMART check on the specified device"""
-    return execute_command(
-        ["smartctl", "-a", device_path],
-        f"Run SMART check on device {device_path}",
-        requires_approval=False
-    )
-
-@tool
-def fio_read_test(params: str) -> str:
-    """Run FIO read test with the specified parameters"""
-    cmd = ["fio", "--name=read_test"] + shlex.split(params)
-    return execute_command(
-        cmd,
-        f"Run FIO read performance test with parameters: {params}",
-        requires_approval=False
-    )
-
-@tool
-def fio_write_test(params: str) -> str:
-    """Run FIO write test with the specified parameters"""
-    cmd = ["fio", "--name=write_test"] + shlex.split(params)
-    return execute_command(
-        cmd,
-        f"Run FIO write performance test with parameters: {params}",
-        requires_approval=False
-    )
-
-@tool
-def dmesg_grep_disk() -> str:
-    """Get disk-related kernel messages from dmesg"""
-    return execute_command(
-        ["sh", "-c", "dmesg | grep -i disk"],
-        "Get disk-related kernel messages from dmesg",
-        requires_approval=False
-    )
-
-@tool
-def dmesg_grep_error() -> str:
-    """Get error-related kernel messages from dmesg"""
-    return execute_command(
-        ["sh", "-c", "dmesg | grep -i error"],
-        "Get error-related kernel messages from dmesg",
-        requires_approval=False
-    )
-
-@tool
-def dmesg_grep_xfs() -> str:
-    """Get XFS-related kernel messages from dmesg"""
-    return execute_command(
-        ["sh", "-c", "dmesg | grep -i xfs"],
-        "Get XFS-related kernel messages from dmesg",
-        requires_approval=False
-    )
-
-@tool
-def journalctl_kubelet(params: str = "") -> str:
-    """Get kubelet logs from journalctl"""
-    cmd = ["journalctl", "-u", "kubelet"]
-    if params:
-        cmd.extend(shlex.split(params))
-    
-    return execute_command(
-        cmd,
-        f"Get kubelet logs from journalctl with parameters: {params if params else 'none'}",
-        requires_approval=False
-    )
-
-@tool
-def xfs_repair_n(device_path: str) -> str:
-    """Run XFS repair in diagnostic mode (no changes)"""
-    return execute_command(
-        ["xfs_repair", "-n", device_path],
-        f"Run XFS repair in diagnostic mode on {device_path}",
-        requires_approval=False
-    )
-
-@tool
-def ssh_command(node: str, command: str) -> str:
-    """Execute a command on a remote node via SSH"""
-    return ssh_execute(
-        node,
-        command,
-        f"Execute command '{command}' on node {node}"
-    )
-
-@tool
-def create_test_pod_tool(name: str, namespace: str, pvc_name: str, node_name: str, test_type: str, storage_class: Optional[str] = None, storage_size: Optional[str] = None) -> str:
-    """Create a test pod to validate storage functionality"""
-    # Note: The original tool name was "create_test_pod".
-    # We append "_tool" to avoid conflict with the helper function `create_test_pod`
-    return create_test_pod(
-        name, namespace, pvc_name, node_name, test_type, storage_class, storage_size
-    )
-
-def define_tools(pod_name: str, namespace: str, volume_path: str) -> List[Any]: # Changed return type
-    """
-    Define tools for the LangGraph ReAct agent
-    
-    Args:
-        pod_name: Name of the pod with the error (unused in this refactored version but kept for signature consistency)
-        namespace: Namespace of the pod (unused in this refactored version but kept for signature consistency)
-        volume_path: Path of the volume with I/O error (unused in this refactored version but kept for signature consistency)
         
-    Returns:
-        List[Any]: List of tool callables
-    """
-    tools = [
-        # Original tools
-        kubectl_get,
-        kubectl_describe,
-        kubectl_logs,
-        kubectl_exec,
-        ssh_command,
-        create_test_pod_tool,
+        # Update the global knowledge graph
+        KNOWLEDGE_GRAPH = collection_result.get('knowledge_graph')
         
-        # New tools converted from allowed commands
-        kubectl_top,
-        kubectl_cp,
-        df_h,
-        lsblk,
-        cat_proc_mounts,
-        smartctl_a,
-        fio_read_test,
-        fio_write_test,
-        dmesg_grep_disk,
-        dmesg_grep_error,
-        dmesg_grep_xfs,
-        journalctl_kubelet,
-        xfs_repair_n
-    ]
-    return tools
-
-def create_test_pod(name: str, namespace: str, pvc_name: str, node_name: str, 
-                   test_type: str, storage_class: Optional[str] = None, 
-                   storage_size: Optional[str] = None) -> str:
-    """
-    Create a test pod and optionally a PVC to validate storage functionality
-    
-    Args:
-        name: Pod name
-        namespace: Pod namespace
-        pvc_name: PVC name to use or create
-        node_name: Node name for pod scheduling
-        test_type: Test type ('read_write' or 'disk_speed')
-        storage_class: Storage class for new PVC (optional)
-        storage_size: Storage size for new PVC (optional)
-        
-    Returns:
-        str: Result of the operation
-    """
-    global INTERACTIVE_MODE
-    
-    unique_suffix = str(uuid.uuid4().hex)[:8]
-    pvc_filename_full_path = None # Initialize to None
-    pod_filename_full_path = f"{name}-{unique_suffix}.yaml" # pod_filename is always generated
-
-    # Check if we need to create a new PVC
-    create_pvc = storage_class is not None and storage_size is not None
-    
-    if create_pvc:
-        pvc_filename_full_path = f"{pvc_name}-{unique_suffix}.yaml"
-        pvc_yaml = f"""
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {pvc_name}
-  namespace: {namespace}
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: {storage_size}
-  storageClassName: {storage_class}
-"""
-    
-    # Define Pod YAML based on test type
-    if test_type == "read_write":
-        pod_yaml = f"""
-apiVersion: v1
-kind: Pod
-metadata:
-  name: {name}
-  namespace: {namespace}
-spec:
-  containers:
-  - name: test-container
-    image: busybox
-    command: ["/bin/sh", "-c", "echo 'Test' > /mnt/test.txt && cat /mnt/test.txt && sleep 3600"]
-    volumeMounts:
-    - mountPath: "/mnt"
-      name: test-volume
-  volumes:
-  - name: test-volume
-    persistentVolumeClaim:
-      claimName: {pvc_name}
-  nodeName: {node_name}
-"""
-    elif test_type == "disk_speed":
-        pod_yaml = f"""
-apiVersion: v1
-kind: Pod
-metadata:
-  name: {name}
-  namespace: {namespace}
-spec:
-  containers:
-  - name: test-container
-    image: busybox
-    command: ["/bin/sh", "-c", "dd if=/dev/zero of=/mnt/testfile bs=1M count=100 && echo 'Write OK' && dd if=/mnt/testfile of=/dev/null bs=1M && echo 'Read OK' && sleep 3600"]
-    volumeMounts:
-    - mountPath: "/mnt"
-      name: test-volume
-  volumes:
-  - name: test-volume
-    persistentVolumeClaim:
-      claimName: {pvc_name}
-  nodeName: {node_name}
-"""
-    else:
-        return f"Error: Invalid test type '{test_type}'"
-    
-    
-    try:
-        # --- Start of try block ---
-        if create_pvc and pvc_filename_full_path:
-            logging.debug(f"Writing temporary PVC YAML to: {pvc_filename_full_path}")
-            with open(pvc_filename_full_path, "w") as f:
-                f.write(pvc_yaml)
-        
-        logging.debug(f"Writing temporary Pod YAML to: {pod_filename_full_path}")
-        with open(pod_filename_full_path, "w") as f:
-            f.write(pod_yaml)
-        
-        # Apply YAML files
-        result = ""
-        if create_pvc and pvc_filename_full_path:
-            pvc_display_name = pvc_filename_full_path.split('/')[-1]
-            pvc_apply_cmd = ["kubectl", "apply", "-f", pvc_filename_full_path]
-            pvc_purpose = f"Create PVC {namespace}/{pvc_display_name}"
-            if INTERACTIVE_MODE:
-                if not prompt_for_approval(' '.join(pvc_apply_cmd), pvc_purpose):
-                    return "Operation cancelled by user" # Cleanup will happen in finally
-            
-            pvc_result = execute_command(pvc_apply_cmd, pvc_purpose)
-            result += f"PVC creation result:\n{pvc_result}\n\n"
-        
-        pod_display_name = pod_filename_full_path.split('/')[-1]
-        pod_apply_cmd = ["kubectl", "apply", "-f", pod_filename_full_path]
-        pod_purpose = f"Create test pod {namespace}/{pod_display_name}"
-        if INTERACTIVE_MODE:
-            if not prompt_for_approval(' '.join(pod_apply_cmd), pod_purpose):
-                return "Operation cancelled by user" # Cleanup will happen in finally
-        
-        pod_result = execute_command(pod_apply_cmd, pod_purpose)
-        result += f"Pod creation result:\n{pod_result}\n\n"
-        
-        # Wait for pod to start
-        result += "Waiting for pod to start...\n"
-        time.sleep(5) # time module is imported
-        
-        # Get pod status
-        pod_get_cmd = ["kubectl", "get", "pod", name, "-n", namespace]
-        pod_get_purpose = f"Check status of pod {namespace}/{name}"
-        pod_status = execute_command(pod_get_cmd, pod_get_purpose)
-        result += f"Pod status:\n{pod_status}\n\n"
-        
-        return result
-        # --- End of try block ---
-    except Exception as e: # Catching broader exceptions during pod/PVC creation steps
-        error_msg = f"Failed during test pod/PVC creation or execution: {str(e)}"
-        logging.error(error_msg)
-        return f"Error: {error_msg}" # The error string will be returned, and finally will execute
-    finally:
-        # --- Start of finally block ---
-        if pvc_filename_full_path and os.path.exists(pvc_filename_full_path):
-            try:
-                os.remove(pvc_filename_full_path)
-                logging.debug(f"Successfully deleted temporary file: {pvc_filename_full_path}")
-            except Exception as e:
-                logging.warning(f"Failed to delete temporary file {pvc_filename_full_path}: {e}")
-            
-        if os.path.exists(pod_filename_full_path): # pod_filename_full_path is always defined
-            try:
-                os.remove(pod_filename_full_path)
-                logging.debug(f"Successfully deleted temporary file: {pod_filename_full_path}")
-            except Exception as e:
-                logging.warning(f"Failed to delete temporary file {pod_filename_full_path}: {e}")
-        # --- End of finally block ---
-
-def create_troubleshooting_graph(pod_name: str, namespace: str, volume_path: str, phase: str = "analysis"):
-    """
-    Create a LangGraph ReAct graph for troubleshooting
-    
-    Args:
-        pod_name: Name of the pod with the error
-        namespace: Namespace of the pod
-        volume_path: Path of the volume with I/O error
-        phase: Current troubleshooting phase ("analysis" or "remediation")
-        
-    Returns:
-        StateGraph: LangGraph StateGraph
-    """
-    global CONFIG_DATA
-    
-    # Initialize language model
-    model = init_chat_model(
-        CONFIG_DATA['llm']['model'],
-        api_key=CONFIG_DATA['llm']['api_key'],
-        base_url=CONFIG_DATA['llm']['api_endpoint'],
-        temperature=CONFIG_DATA['llm']['temperature'],
-        max_tokens=CONFIG_DATA['llm']['max_tokens']
-    )
-    
-    # Get tools
-    tools = define_tools(pod_name, namespace, volume_path)
-    
-    # Define function to call the model
-    def call_model(state: MessagesState):
-        # Add system prompt with CSI Baremetal knowledge and phase-specific guidance
-        phase_specific_guidance = ""
-        if phase == "analysis":
-            phase_specific_guidance = """
-You are currently in Phase 1 (Analysis). Your task is to:
-1. Diagnose the root cause of the volume I/O error.
-2. Create a clear fix plan with step-by-step remediation actions.
-3. Present your findings as a JSON object with two keys: "root_cause" and "fix_plan". For example:
-   {
-     "root_cause": "The disk is full due to excessive log files.",
-     "fix_plan": "Step 1: Identify large log files in volume X. Step 2: Archive and delete old log files. Step 3: Implement log rotation."
-   }
-4. Ensure this JSON object is the final part of your response.
-5. DO NOT attempt to execute any remediation actions yet.
-
-Focus only on diagnostics and analysis in this phase. The remediation actions will be executed in Phase 2 if approved.
-"""
-        elif phase == "remediation":
-            phase_specific_guidance = """
-You are currently in Phase 2 (Remediation). Your task is to:
-1. Execute the fix plan from Phase 1
-2. Implement remediation actions while respecting allowed/disallowed commands
-3. Verify that the issue is resolved after implementing fixes
-4. Report the final resolution status
-
-Focus on implementing the fix plan safely and effectively. Validate that each fix resolves the underlying issue.
-"""
-        
-        system_message = {
-            "role": "system",
-            "content": f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
-
-{phase_specific_guidance}
-
-Follow these strict guidelines for safe, reliable, and effective troubleshooting:
-
-1. **Safety and Security**:
-   - Only execute commands listed in `commands.allowed` in `config.yaml` (e.g., `kubectl get drive`, `smartctl -a`, `fio`).
-   - Never execute commands in `commands.disallowed` (e.g., `fsck`, `chmod`, `dd`, `kubectl delete pod`) unless explicitly enabled in `config.yaml` and approved by the user in interactive mode.
-   - Validate all commands for safety and relevance before execution.
-   - Log all SSH commands and outputs for auditing, using secure credential handling as specified in `config.yaml`.
-
-2. **Interactive Mode**:
-   - If `troubleshoot.interactive_mode` is `true` in `config.yaml`, prompt the user before executing any command or tool with: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)". Include a clear purpose (e.g., "Check drive health with kubectl get drive").
-   - If disabled, execute allowed commands automatically, respecting `config.yaml` restrictions.
-
-3. **Troubleshooting Process**:
-   - Use the LangGraph ReAct module to reason about volume I/O errors based on parameters: `PodName`, `PodNamespace`, and `VolumePath`.
-   - Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
-     a. **Confirm Issue**: Run `kubectl logs <pod-name> -n <namespace>` and `kubectl describe pod <pod-name> -n <namespace>` to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount").
-     b. **Verify Configurations**: Check Pod, PVC, and PV with `kubectl get pod/pvc/pv -o yaml`. Confirm PV uses local volume, valid disk path (e.g., `/dev/sda`), and correct `nodeAffinity`. Verify mount points with `kubectl exec <pod-name> -n <namespace> -- df -h` and `ls -ld <mount-path>`.
-     c. **Check CSI Baremetal Driver and Resources**:
-        - Identify driver: `kubectl get storageclass <storageclass-name> -o yaml` (e.g., `csi-baremetal-sc-ssd`).
-        - Verify driver pod: `kubectl get pods -n kube-system -l app=csi-baremetal` and `kubectl logs <driver-pod-name> -n kube-system`. Check for errors like "failed to mount".
-        - Confirm driver registration: `kubectl get csidrivers`.
-        - Check drive status: `kubectl get drive -o wide` and `kubectl get drive <drive-uuid> -o yaml`. Verify `Health: GOOD`, `Status: ONLINE`, `Usage: IN_USE`, and match `Path` (e.g., `/dev/sda`) with `VolumePath`.
-        - Map drive to node: `kubectl get csibmnode` to correlate `NodeId` with hostname/IP.
-        - Check AvailableCapacity: `kubectl get ac -o wide` to confirm size, storage class, and location (drive UUID).
-        - Check LogicalVolumeGroup: `kubectl get lvg` to verify `Health: GOOD` and associated drive UUIDs.
-     d. **Test Driver**: Create a test PVC/Pod using `csi-baremetal-sc-ssd` storage class (use provided YAML template). Check logs and events for read/write errors.
-     e. **Verify Node Health**: Run `kubectl describe node <node-name>` to ensure `Ready` state and no `DiskPressure`. Verify disk mounting via SSH: `mount | grep <disk-path>`.
-     f. **Check Permissions**: Verify file system permissions with `kubectl exec <pod-name> -n <namespace> -- ls -ld <mount-path>` and Pod `SecurityContext` settings.
-     g. **Inspect Control Plane**: Check `kube-controller-manager` and `kube-scheduler` logs for provisioning/scheduling issues.
-     h. **Test Hardware Disk**:
-        - Identify disk: `kubectl get pv -o yaml` and `kubectl get drive <drive-uuid> -o yaml` to confirm `Path`.
-        - Check health: `kubectl get drive <drive-uuid> -o yaml` and `ssh <node-name> sudo smartctl -a /dev/<disk-device>`. Verify `Health: GOOD`, zero `Reallocated_Sector_Ct` or `Current_Pending_Sector`.
-        - Test performance: `ssh <node-name> sudo fio --name=read_test --filename=/dev/<disk-device> --rw=read --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting`.
-        - Check file system (if unmounted): `ssh <node-name> sudo fsck /dev/<disk-device>` (requires approval).
-        - Test via Pod: Create a test Pod (use provided YAML) and check logs for "Write OK" and "Read OK".
-     i. **Propose Remediations**:
-        - Bad sectors: Recommend disk replacement if `kubectl get drive` or SMART shows `Health: BAD` or non-zero `Reallocated_Sector_Ct`.
-        - Performance issues: Suggest optimizing I/O scheduler or replacing disk if `fio` results show low IOPS (HDD: 100–200, SSD: thousands, NVMe: tens of thousands).
-        - File system corruption: Recommend `fsck` (if enabled/approved) after data backup.
-        - Driver issues: Suggest restarting CSI Baremetal driver pod (if enabled/approved) if logs indicate errors.
-   - Only propose remediations after analyzing diagnostic data. Ensure write/change commands (e.g., `fsck`, `kubectl delete pod`) are allowed and approved.
-
-4. **Error Handling**:
-   - Log all actions, command outputs, SSH results, and errors to the configured log file and stdout (if enabled).
-   - Handle Kubernetes API or SSH failures with retries as specified in `config.yaml`.
-   - EXPECT that some commands may fail and be prepared to handle failures gracefully.
-   - If a command fails (e.g., "resource type not found"), log the error, then TRY ALTERNATIVE approaches to gather similar information.
-   - For CSI Baremetal driver resources, verify resource availability with `kubectl get crd | grep csi-baremetal` before trying to access custom resources.
-   - If unresolved, provide a detailed report of findings (e.g., logs, drive status, SMART data, test results) and suggest manual intervention.
-   - ALWAYS provide a useful final response summarizing what was discovered, even if some commands failed.
-
-5. **Constraints**:
-   - Restrict operations to the Kubernetes cluster and configured worker nodes; do not access external networks or resources.
-   - Do not modify cluster state (e.g., delete pods, change configurations) unless explicitly allowed and approved.
-   - Adhere to `troubleshoot.timeout_seconds` for the troubleshooting workflow.
-   - Always recommend data backup before suggesting write/change operations (e.g., `fsck`).
-
-6. **Output**:
-   - Provide clear, concise explanations of diagnostic steps, findings, and remediation proposals.
-   - In interactive mode, format prompts as: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)".
-   - Include performance benchmarks in reports (e.g., HDD: 100–200 IOPS, SSD: thousands, NVMe: tens of thousands).
-   - Log all outputs with timestamps and context for traceability.
-
-You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.
-"""
+        # Format collected data into expected structure
+        collected_info = {
+            "pod_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('pods', {}),
+            "pvc_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('pvcs', {}),
+            "pv_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('pvs', {}),
+            "node_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('nodes', {}),
+            "csi_driver_info": collection_result.get('collected_data', {}).get('csi_baremetal', {}),
+            "storage_class_info": {},  # Will be included in kubernetes data
+            "system_info": collection_result.get('collected_data', {}).get('system', {}),
+            "knowledge_graph_summary": collection_result.get('context_summary', {}),
+            "issues": KNOWLEDGE_GRAPH.issues if KNOWLEDGE_GRAPH else []
         }
         
-        # Handle case where state["messages"] might be a HumanMessage object (not subscriptable)
-        # Check if state["messages"] exists and is a list before trying to access elements
-        if state["messages"]:
-            # Check if state["messages"] is a list
-            if isinstance(state["messages"], list):
-                # If it's a list and the first message is not a system message, add the system message
-                if state["messages"][0].type != "system":
-                    state["messages"] = [system_message] + state["messages"]
+        # Print Knowledge Graph with rich formatting
+        console.print("\n")
+        console.print(Panel(
+            "[bold white]Building and analyzing knowledge graph...",
+            title="[bold cyan]PHASE 0: INFORMATION COLLECTION - KNOWLEDGE GRAPH",
+            border_style="cyan",
+            padding=(1, 2)
+        ))
+        
+        try:
+            # Try to use rich formatting with proper error handling
+            formatted_output = KNOWLEDGE_GRAPH.print_graph(use_rich=True)
+            
+            # Handle different output types
+            if formatted_output is None:
+                # If there was a silent success (no return value)
+                console.print("[green]Knowledge graph built successfully[/green]")
+            elif isinstance(formatted_output, str):
+                # Regular string output - print as is
+                print(formatted_output)
             else:
-                # If it's not a list (likely a HumanMessage object), convert to a list with system message first
-                state["messages"] = [system_message, state["messages"]]
-        else:
-            # If state["messages"] is empty or None, initialize with just the system message
-            state["messages"] = [system_message]
+                # For any other type of output
+                console.print("[green]Knowledge graph analysis complete[/green]")
+        except Exception as e:
+            # Fall back to plain text if rich formatting fails
+            logging.error(f"Error in rich formatting, falling back to plain text: {str(e)}")
+            try:
+                # Try plain text formatting
+                formatted_output = KNOWLEDGE_GRAPH.print_graph(use_rich=False)
+                print(formatted_output)
+            except Exception as e2:
+                # Last resort fallback
+                logging.error(f"Error in plain text formatting: {str(e2)}")
+                print("=" * 80)
+                print("KNOWLEDGE GRAPH SUMMARY (FALLBACK FORMAT)")
+                print("=" * 80)
+                print(f"Total nodes: {KNOWLEDGE_GRAPH.graph.number_of_nodes()}")
+                print(f"Total edges: {KNOWLEDGE_GRAPH.graph.number_of_edges()}")
+                print(f"Total issues: {len(KNOWLEDGE_GRAPH.issues)}")
         
-        # Call the model and bind tools
-        response = model.bind_tools(tools).invoke(state["messages"])
-        return {"messages": state["messages"] + [response]}
-    
-    # Build state graph
-    builder = StateGraph(MessagesState)
-    builder.add_node("call_model", call_model)
-    builder.add_node("tools", ToolNode(tools))
-    builder.add_edge(START, "call_model")
-    builder.add_conditional_edges(
-        "call_model",
-        tools_condition,
-        {
-            "tools": "tools",
-            "none": END
+        console.print("\n")
+        
+        return collected_info
+        
+    except Exception as e:
+        error_msg = f"Error during information collection phase: {str(e)}"
+        logging.error(error_msg)
+        collected_info = {
+            "collection_error": error_msg,
+            "pod_info": {},
+            "pvc_info": {},
+            "pv_info": {},
+            "node_info": {},
+            "csi_driver_info": {},
+            "storage_class_info": {},
+            "system_info": {},
+            "knowledge_graph_summary": {}
         }
-    )
-    builder.add_edge("tools", "call_model")
-    graph = builder.compile()
-    
-    return graph
+        return collected_info
 
-async def run_analysis_phase(pod_name: str, namespace: str, volume_path: str) -> Tuple[str, str]:
+async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds: int = 60) -> Tuple[str, str]:
     """
-    Run Phase 1: Analysis to identify root cause and generate fix plan
+    Run an analysis using the provided LangGraph StateGraph with enhanced progress tracking
     
     Args:
-        pod_name: Name of the pod with the error
-        namespace: Namespace of the pod
-        volume_path: Path of the volume with I/O error
+        query: The initial query to send to the graph
+        graph: LangGraph StateGraph to use
+        timeout_seconds: Maximum execution time in seconds
         
     Returns:
         Tuple[str, str]: Root cause and fix plan
     """
-    global CONFIG_DATA
-    
     try:
-        # Create troubleshooting graph for analysis phase
-        graph = create_troubleshooting_graph(pod_name, namespace, volume_path, phase="analysis")
-        
-        # Initial query with problem details for analysis phase
-        query = f"""Phase 1 - Analysis: Identify the root cause of volume I/O error for pod {pod_name} in namespace {namespace} at volume path {volume_path}.
-
-Important: 
-1. Some commands may fail due to missing resources or permissions. This is normal and expected.
-2. If a command fails (e.g., "kubectl get drive" with "resource type not found"), continue with alternative approaches.
-3. For CSI Baremetal driver resources, verify resource availability with "kubectl get crd | grep csi-baremetal" first.
-4. Even if some diagnostic commands fail, provide your best analysis based on available information.
-5. Focus on diagnosis and root cause analysis ONLY. Do not attempt to fix the issue yet.
-"""
         formatted_query = {"messages": [{"role": "user", "content": query}]}
         
-        # Set timeout
-        timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
+        # First show the analysis panel
+        console.print("\n")
+        console.print(Panel(
+            "[yellow]Starting analysis with LangGraph...\nThis may take a few minutes to complete.", 
+            title="[bold blue]Analysis Phase",
+            border_style="blue"
+        ))
         
-        # Run graph to process analysis with timeout
-        logging.info(f"Starting analysis phase with timeout of {timeout_seconds} seconds")
+        # Simple status message instead of progress bar
+        console.print("[cyan]LangGraph thinking process starting...[/cyan]")
+        
+        # Run graph with timeout
         try:
             response = await asyncio.wait_for(
-                graph.ainvoke(formatted_query),
+                graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
                 timeout=timeout_seconds
             )
+            console.print("[green]Analysis complete![/green]")
+        except asyncio.TimeoutError:
+            console.print("[red]Analysis timed out![/red]")
+            raise
         except Exception as e:
-            logging.error(f"Error during graph execution: {str(e)}")
-            return (
-                "The CSI Baremetal driver resources might not be available in this cluster",
-                "Verify CSI Baremetal driver installation and CRD registration with 'kubectl get crd | grep csi-baremetal'"
-            )
+            console.print(f"[red]Analysis failed: {str(e)}[/red]")
+            raise
         
         # Extract analysis results
-        # Handle case where response["messages"] might not be a list or might be empty
         if response["messages"]:
             if isinstance(response["messages"], list):
-                final_message = response["messages"][-1]["content"]
+                final_message = response["messages"][-1].content
             else:
-                # If it's not a list (e.g., a single message object), try to get content directly
-                final_message = response["messages"].get("content", "Failed to extract content from non-list messages")
+                final_message = response["messages"].content
         else:
             final_message = "Failed to generate analysis results"
         
-        # Parse root cause and fix plan from the analysis results
-        final_message_content = final_message # Assuming final_message is the string content
-        root_cause = "Unknown" # Default value
-        fix_plan = "No specific fix plan generated" # Default value
+        # Parse root cause and fix plan with enhanced formatting
+        root_cause = "Unknown"
+        fix_plan = "No specific fix plan generated"
 
         try:
-            # Attempt to find and parse the JSON block
-            json_start_index = final_message_content.find('{')
-            # Ensure rfind starts search from where json_start_index was found, if found.
-            json_end_index = final_message_content.rfind('}', json_start_index if json_start_index != -1 else 0) + 1
+            # Look for JSON block in the response
+            json_start = final_message.find('{')
+            json_end = final_message.rfind('}') + 1
             
-            if json_start_index != -1 and json_end_index != -1 and json_start_index < json_end_index:
-                json_str = final_message_content[json_start_index:json_end_index]
+            if json_start != -1 and json_end > json_start:
+                json_str = final_message[json_start:json_end]
                 parsed_json = json.loads(json_str)
-                root_cause = parsed_json.get("root_cause", "Unknown root cause (key 'root_cause' missing from JSON)")
-                fix_plan = parsed_json.get("fix_plan", "No fix plan provided (key 'fix_plan' missing from JSON)")
-                logging.info("Successfully parsed root cause and fix plan from LLM JSON output.")
+                root_cause = parsed_json.get("root_cause", "Unknown root cause")
+                fix_plan = parsed_json.get("fix_plan", "No fix plan provided")
+                
+                # Enhanced logging with rich formatting
+                console.print("\n")
+                root_cause_panel = Panel(
+                    f"[bold yellow]{root_cause}[/bold yellow]",
+                    title="[bold red]Root Cause Analysis",
+                    border_style="red"
+                )
+                fix_plan_panel = Panel(
+                    f"[bold green]{fix_plan}[/bold green]",
+                    title="[bold blue]Fix Plan",
+                    border_style="blue"
+                )
+                
+                console.print(root_cause_panel)
+                console.print(fix_plan_panel)
+                
+                # Log to file
+                file_console.print(root_cause_panel)
+                file_console.print(fix_plan_panel)
             else:
-                # This custom exception helps differentiate from json.loads actual decoding error
-                raise json.JSONDecodeError("No JSON object found in LLM output", final_message_content, 0)
-
-        except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse LLM output as JSON: {e}. Content: '{final_message_content}'")
-            logging.info("Attempting fallback to string parsing for root cause and fix plan.")
-            # Fallback to old string parsing method
-            if "Root cause:" in final_message_content:
-                parts = final_message_content.split("Root cause:", 1)
-                if len(parts) > 1:
-                    root_cause_section = parts[1].strip()
-                    if "Fix plan:" in root_cause_section:
-                        root_cause = root_cause_section.split("Fix plan:", 1)[0].strip()
-                        fix_plan = root_cause_section.split("Fix plan:", 1)[1].strip()
-                    else:
-                        root_cause = root_cause_section
-                else: # Should not happen if "Root cause:" is in final_message_content
-                    root_cause = "Unknown (fallback parsing error after 'Root cause:' detected)"
-                    fix_plan = "Unknown (fallback parsing error after 'Root cause:' detected)"
-            else:
-                root_cause = "Unknown (Failed to parse LLM output, no JSON or 'Root cause:' keyword)"
-                fix_plan = "Unknown (Failed to parse LLM output, no JSON or 'Root cause:' keyword)"
-        
-        logging.info(f"Analysis completed for pod {namespace}/{pod_name}, volume {volume_path}")
-        logging.info(f"Root cause: {root_cause}")
-        logging.info(f"Fix plan: {fix_plan}")
+                # If no JSON found, use heuristic to extract information
+                if "root cause" in final_message.lower():
+                    root_parts = final_message.lower().split("root cause")
+                    if len(root_parts) > 1:
+                        root_cause = root_parts[1].strip().split("\n")[0]
+                
+                if "fix plan" in final_message.lower():
+                    fix_parts = final_message.lower().split("fix plan")
+                    if len(fix_parts) > 1:
+                        fix_plan = fix_parts[1].strip().split("\n")[0]
+        except Exception as e:
+            logging.warning(f"Error parsing LLM response: {str(e)}")
+            # Return raw message if parsing fails
+            return final_message, final_message
         
         return root_cause, fix_plan
-        
-    except asyncio.TimeoutError:
-        error_msg = f"Analysis phase timed out after {timeout_seconds} seconds"
-        logging.error(error_msg)
-        return f"Error: {error_msg}", "Timeout occurred during analysis"
     except Exception as e:
-        error_msg = f"Error during analysis phase: {str(e)}"
-        logging.error(error_msg)
-        return f"Error: {error_msg}", "Error occurred during analysis"
+        logging.error(f"Error in run_analysis_with_graph: {str(e)}")
+        return "Error in analysis", str(e)
 
-async def run_remediation_phase(pod_name: str, namespace: str, volume_path: str, root_cause: str, fix_plan: str) -> str:
+async def run_analysis_phase_with_context(pod_name: str, namespace: str, volume_path: str, collected_info: Dict[str, Any]) -> Tuple[str, str]:
     """
-    Run Phase 2: Remediation to resolve the identified issue
+    Run Phase 1: ReAct Investigation with pre-collected information as base knowledge
     
     Args:
         pod_name: Name of the pod with the error
         namespace: Namespace of the pod
         volume_path: Path of the volume with I/O error
-        root_cause: Identified root cause from analysis phase
-        fix_plan: Generated fix plan from analysis phase
+        collected_info: Pre-collected diagnostic information from Phase 0
         
     Returns:
-        str: Result of remediation
+        Tuple[str, str]: Root cause and fix plan
     """
-    global CONFIG_DATA
+    global CONFIG_DATA, KNOWLEDGE_GRAPH
     
     try:
-        # Create troubleshooting graph for remediation phase
-        graph = create_troubleshooting_graph(pod_name, namespace, volume_path, phase="remediation")
+        # Create troubleshooting graph with pre-collected context
+        graph = create_troubleshooting_graph_with_context(collected_info, phase="phase1", config_data=CONFIG_DATA)
         
-        # Initial query with problem details for remediation phase
-        query = f"""Phase 2 - Remediation: Resolve volume I/O error for pod {pod_name} in namespace {namespace} at volume path {volume_path}.
-Root cause: {root_cause}
-Fix plan: {fix_plan}
+        # Initial query for ReAct investigation phase
+        query = f"""Phase 1 - ReAct Investigation: Actively investigate the volume I/O error in pod {pod_name} in namespace {namespace} at volume path {volume_path} using available tools.
 
-Important:
-1. Some commands may fail due to missing resources or permissions. This is normal and expected.
-2. If a command fails, continue with alternative approaches where possible.
-3. For CSI Baremetal driver resources, verify resource availability before trying to access them.
-4. Even if some commands fail, provide a summary of what was attempted and what succeeded.
+You have pre-collected diagnostic information from Phase 0 as base knowledge, but you must now use ReAct methodology to actively investigate the volume I/O issue step by step using available tools.
 
-Implement the fix plan while respecting allowed/disallowed commands. After implementing fixes, verify that the issue is resolved."""
-        formatted_query = {"messages": [{"role": "user", "content": query}]}
+Your task is to:
+1. Use the pre-collected data as base knowledge to understand the initial context
+2. Follow the structured diagnostic process (steps a-i) using ReAct tools for active investigation
+3. Execute tools step-by-step to gather additional evidence and verify findings
+4. Identify root cause(s) based on both pre-collected data and active investigation results
+5. Generate a comprehensive fix plan
+6. Present findings as JSON with "root_cause" and "fix_plan" keys
+
+Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
+a. **Confirm Issue**: Use kubectl_logs and kubectl_describe tools to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount")
+b. **Verify Configurations**: Check Pod, PVC, and PV with kubectl_get tool. Confirm PV uses local volume, valid disk path, and correct nodeAffinity
+c. **Check CSI Baremetal Driver and Resources**: Use kubectl_get_drive, kubectl_get_csibmnode, kubectl_get_availablecapacity, kubectl_get_logicalvolumegroup tools
+d. **Test Driver**: Consider creating test resources if needed for verification
+e. **Verify Node Health**: Use kubectl_describe for nodes and check for DiskPressure
+f. **Check Permissions**: Verify file system permissions and SecurityContext settings
+g. **Inspect Control Plane**: Check controller and scheduler logs if needed
+h. **Test Hardware Disk**: Use smartctl_check, fio_performance_test, and fsck_check tools
+i. **Propose Remediations**: Based on investigation results, provide specific remediation steps
+
+<<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
+
+Use available tools actively to investigate step by step. The pre-collected data provides the starting context, but you should verify and expand your understanding through active tool use.
+"""
+        # Set timeout
+        timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
+        
+        # Run analysis using the tools module
+        root_cause, fix_plan = await run_analysis_with_graph(
+            query=query,
+            graph=graph,
+            timeout_seconds=timeout_seconds
+        )
+        
+        return root_cause, fix_plan
+
+    except Exception as e:
+        error_msg = f"Error during analysis phase: {str(e)}"
+        logging.error(error_msg)
+        return error_msg, "Unable to generate fix plan due to analysis error"
+
+async def run_remediation_phase(root_cause: str, fix_plan: str, collected_info: Dict[str, Any]) -> str:
+    """
+    Run Phase 2: Remediation based on analysis results
+    
+    Args:
+        root_cause: Root cause identified in Phase 1
+        fix_plan: Fix plan generated in Phase 1
+        collected_info: Pre-collected diagnostic information from Phase 0
+        
+    Returns:
+        str: Remediation result
+    """
+    global CONFIG_DATA, INTERACTIVE_MODE
+    
+    logging.info("Starting Phase 2: Remediation")
+    
+    try:
+        # Create troubleshooting graph for remediation
+        graph = create_troubleshooting_graph_with_context(collected_info, phase="phase2", config_data=CONFIG_DATA)
+        
+        # Remediation query
+        query = f"""Phase 2 - Remediation: Execute the fix plan to resolve the identified issue.
+
+Root Cause: {root_cause}
+
+Fix Plan: {fix_plan}
+
+<<< Note >>>: Please try to fix issue within 30 tool calls.
+
+Please implement the fix plan step by step. Use available tools if needed, but respect security constraints and interactive mode settings.
+Provide a final status report on whether the issues have been resolved.
+"""
         
         # Set timeout
         timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
         
-        # Run graph to process remediation with timeout
-        logging.info(f"Starting remediation phase with timeout of {timeout_seconds} seconds")
+        # Run analysis with graph
         try:
-            response = await asyncio.wait_for(
-                graph.ainvoke(formatted_query),
-                timeout=timeout_seconds
+            root_cause, remediation_result = await run_analysis_with_graph(
+                query=query,
+                graph=graph,
+                timeout_seconds=timeout_seconds
             )
+            return remediation_result
+        except asyncio.TimeoutError:
+            return "Remediation phase timed out - manual intervention may be required"
         except Exception as e:
             logging.error(f"Error during remediation graph execution: {str(e)}")
-            return f"Remediation phase encountered an error: {str(e)}. Some remediation steps may not have been completed. Please check system logs and verify the state of the pod {namespace}/{pod_name} manually."
+            return f"Remediation encountered an error: {str(e)}"
         
-        # Extract remediation results
-        # Handle case where response["messages"] might not be a list or might be empty
-        if response["messages"]:
-            if isinstance(response["messages"], list):
-                final_message = response["messages"][-1]["content"]
-            else:
-                # If it's not a list (e.g., a single message object), try to get content directly
-                final_message = response["messages"].get("content", "Failed to extract content from non-list messages")
-        else:
-            final_message = "Failed to generate remediation results"
-        
-        logging.info(f"Remediation completed for pod {namespace}/{pod_name}, volume {volume_path}")
-        logging.info(f"Result: {final_message}")
-        
-        return final_message
-        
-    except asyncio.TimeoutError:
-        error_msg = f"Remediation phase timed out after {timeout_seconds} seconds"
-        logging.error(error_msg)
-        return f"Error: {error_msg}"
     except Exception as e:
         error_msg = f"Error during remediation phase: {str(e)}"
         logging.error(error_msg)
-        return f"Error: {error_msg}"
+        return error_msg
 
-async def troubleshoot(pod_name: str, namespace: str, volume_path: str):
+async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volume_path: str) -> Dict[str, Any]:
     """
-    Two-phase troubleshooting process: Analysis and Remediation
+    Run comprehensive 3-phase troubleshooting
     
     Args:
         pod_name: Name of the pod with the error
         namespace: Namespace of the pod
         volume_path: Path of the volume with I/O error
+        
+    Returns:
+        Dict[str, Any]: Complete troubleshooting results
     """
-    global CONFIG_DATA, INTERACTIVE_MODE
+    start_time = time.time()
+    
+    results = {
+        "pod_name": pod_name,
+        "namespace": namespace,
+        "volume_path": volume_path,
+        "start_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time)),
+        "phases": {}
+    }
     
     try:
-        # Initialize Kubernetes client
-        #init_kubernetes_client()
+        # Phase 0: Information Collection
+        console.print("\n")
+        console.print(Panel(
+            f"[bold white]Starting troubleshooting for Pod: [green]{namespace}/{pod_name}[/green]\n"
+            f"Volume Path: [blue]{volume_path}[/blue]\n"
+            f"Start Time: [yellow]{results['start_time']}[/yellow]",
+            title="[bold cyan]KUBERNETES VOLUME TROUBLESHOOTING",
+            border_style="cyan",
+            padding=(1, 2)
+        ))
         
-        # Phase 1: Analysis
-        logging.info("Starting Phase 1: Analysis")
-        try:
-            root_cause, fix_plan = await run_analysis_phase(pod_name, namespace, volume_path)
-            
-            # Check if analysis was successful
-            if root_cause.startswith("Error:"):
-                logging.warning(f"Analysis phase reported an error: {root_cause}")
-                return f"""Troubleshooting Summary:
-Analysis phase encountered an issue: {root_cause}
-
-Recommendations:
-1. Verify that the CSI Baremetal driver is properly installed on your cluster.
-2. Check if CRDs are registered with 'kubectl get crd | grep csi-baremetal'.
-3. Ensure the pod {namespace}/{pod_name} exists and has storage issues.
-4. Review the log file for detailed error messages."""
-                
-        except Exception as e:
-            logging.error(f"Exception during analysis phase: {str(e)}")
-            return f"""Troubleshooting Summary:
-Analysis phase encountered an unexpected error: {str(e)}
-
-Recommendations:
-1. Check if the Kubernetes API server is accessible.
-2. Verify that your kubectl configuration is correct.
-3. Ensure the pod {namespace}/{pod_name} exists.
-4. Review the log file for detailed error messages."""
+        collected_info = await run_information_collection_phase(pod_name, namespace, volume_path)
+        results["phases"]["phase_0_collection"] = {
+            "status": "completed",
+            "summary": collected_info.get("knowledge_graph_summary", {}),
+            "duration": time.time() - start_time
+        }
         
-        # Check if we should proceed to remediation
-        proceed_to_remediation = CONFIG_DATA['troubleshoot']['auto_fix']
+        if "collection_error" in collected_info:
+            results["phases"]["phase_0_collection"]["status"] = "failed"
+            results["phases"]["phase_0_collection"]["error"] = collected_info["collection_error"]
+            return results
         
-        if not proceed_to_remediation:
-            # Prompt user for confirmation to proceed to remediation
-            print("\n=== Analysis Results ===")
-            print(f"Root cause: {root_cause}")
-            print(f"Fix plan: {fix_plan}")
-            response = input("\nProceed to remediation phase? (y/n): ").strip().lower()
-            proceed_to_remediation = response == 'y' or response == 'yes'
+        phase_1_start = time.time()
         
-        # Phase 2: Remediation (if approved)
-        if proceed_to_remediation:
-            logging.info("Starting Phase 2: Remediation")
-            try:
-                result = await run_remediation_phase(pod_name, namespace, volume_path, root_cause, fix_plan)
-                
-                if result.startswith("Error:"):
-                    logging.warning(f"Remediation phase reported an error: {result}")
-                    return f"""Troubleshooting Summary:
-Analysis completed:
-- Root cause: {root_cause}
-- Fix plan: {fix_plan}
-
-Remediation phase encountered an issue: {result}
-
-Recommendations:
-1. Review the log file for detailed error messages.
-2. Consider manually implementing the fix plan based on the analysis results."""
-                    
-                return f"""Troubleshooting Summary:
-Analysis completed:
-- Root cause: {root_cause}
-- Fix plan: {fix_plan}
-
-Remediation results:
-{result}"""
-                
-            except Exception as e:
-                logging.error(f"Exception during remediation phase: {str(e)}")
-                return f"""Troubleshooting Summary:
-Analysis completed:
-- Root cause: {root_cause}
-- Fix plan: {fix_plan}
-
-Remediation phase encountered an unexpected error: {str(e)}
-
-Recommendations:
-1. Review the log file for detailed error messages.
-2. Consider manually implementing the fix plan based on the analysis results."""
-        else:
-            logging.info("Remediation phase skipped per user request")
-            return f"""Troubleshooting Summary:
-Analysis completed:
-- Root cause: {root_cause}
-- Fix plan: {fix_plan}
-
-Remediation phase was skipped per user request."""
+        # Phase 1: ReAct Investigation
+        console.print("\n")
+        console.print(Panel(
+            "[bold white]Actively investigating volume I/O issue using available tools...",
+            title="[bold magenta]PHASE 1: REACT INVESTIGATION",
+            border_style="magenta",
+            padding=(1, 2)
+        ))
+        
+        root_cause, fix_plan = await run_analysis_phase_with_context(
+            pod_name, namespace, volume_path, collected_info
+        )
+        
+        results["phases"]["phase_1_analysis"] = {
+            "status": "completed",
+            "root_cause": root_cause,
+            "fix_plan": fix_plan,
+            "duration": time.time() - phase_1_start
+        }
+        
+        #print(f"Root Cause: {root_cause}")
+        #print(f"Fix Plan: {fix_plan}")
+        #print()
+        
+        phase_2_start = time.time()
+        
+        # Phase 2: Remediation
+        console.print("\n")
+        console.print(Panel(
+            "[bold white]Executing fix plan to resolve identified issues...",
+            title="[bold green]PHASE 2: REMEDIATION",
+            border_style="green",
+            padding=(1, 2)
+        ))
+        
+        remediation_result = await run_remediation_phase(root_cause, fix_plan, collected_info)
+        
+        results["phases"]["phase_2_remediation"] = {
+            "status": "completed",
+            "result": remediation_result,
+            "duration": time.time() - phase_2_start
+        }
+        
+        print(f"Remediation Result: {remediation_result}")
+        print()
+        
+        # Final summary
+        total_duration = time.time() - start_time
+        results["total_duration"] = total_duration
+        results["status"] = "completed"
+        
+        # Create a rich formatted summary table
+        summary_table = Table(
+            title="[bold]TROUBLESHOOTING SUMMARY",
+            show_header=True,
+            header_style="bold cyan",
+            box=True,
+            border_style="blue",
+            safe_box=True  # Explicitly set safe_box to True
+        )
+        
+        # Add columns
+        summary_table.add_column("Phase", style="dim")
+        summary_table.add_column("Duration", justify="right")
+        summary_table.add_column("Status", justify="center")
+        
+        # Add rows for each phase
+        summary_table.add_row(
+            "Phase 0: Information Collection", 
+            f"{results['phases']['phase_0_collection']['duration']:.2f}s",
+            "[green]Completed"
+        )
+        summary_table.add_row(
+            "Phase 1: ReAct Investigation", 
+            f"{results['phases']['phase_1_analysis']['duration']:.2f}s",
+            "[green]Completed"
+        )
+        summary_table.add_row(
+            "Phase 2: Remediation", 
+            f"{results['phases']['phase_2_remediation']['duration']:.2f}s",
+            "[green]Completed"
+        )
+        summary_table.add_row(
+            "Total", 
+            f"{total_duration:.2f}s", 
+            "[bold green]Completed"
+        )
+        
+        # Create root cause and resolution panels - ensure strings for content
+        # Convert values to strings first to avoid 'bool' has no attribute 'substitute' errors
+        root_cause_str = str(root_cause) if root_cause is not None else "Unknown"
+        remediation_result_str = str(remediation_result) if remediation_result is not None else "No result"
+        
+        root_cause_panel = Panel(
+            f"[bold yellow]{root_cause_str}",
+            title="[bold red]Root Cause",
+            border_style="red",
+            padding=(1, 2),
+            safe_box=True  # Explicitly set safe_box to True
+        )
+        
+        resolution_panel = Panel(
+            f"[bold green]{remediation_result_str}",
+            title="[bold blue]Resolution Status",
+            border_style="green",
+            padding=(1, 2),
+            safe_box=True  # Explicitly set safe_box to True
+        )
+        
+        console.print("\n")
+        console.print(summary_table)
+        console.print("\n")
+        console.print(root_cause_panel)
+        console.print("\n")
+        console.print(resolution_panel)
+        
+        return results
+        
     except Exception as e:
-        error_msg = f"Unexpected error during troubleshooting: {str(e)}"
+        error_msg = f"Critical error during troubleshooting: {str(e)}"
         logging.error(error_msg)
-        return f"""Troubleshooting Summary:
-An unexpected error occurred: {str(e)}
+        results["status"] = "failed"
+        results["error"] = error_msg
+        results["total_duration"] = time.time() - start_time
+        return results
 
-Recommendations:
-1. Review the log file for detailed error messages.
-2. Check if the Kubernetes API server is accessible.
-3. Verify that your kubectl configuration is correct.
-4. Ensure required resources and permissions are available."""
-    finally:
-        # Close SSH connections
-        close_ssh_connections()
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="Kubernetes Volume I/O Error Troubleshooting Script")
+    parser.add_argument("pod_name", help="Name of the pod with the error")
+    parser.add_argument("namespace", help="Namespace of the pod")
+    parser.add_argument("volume_path", help="Path of the volume with I/O error")
+    parser.add_argument("--interactive", "-i", action="store_true", 
+                       help="Enable interactive mode for command confirmation")
+    parser.add_argument("--config", "-c", default="config.yaml",
+                       help="Path to configuration file (default: config.yaml)")
+    parser.add_argument("--output", "-o", help="Output file for results (JSON format)")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                       help="Enable verbose logging")
+    
+    return parser.parse_args()
 
-def main():
+async def main():
     """Main function"""
-    global CONFIG_DATA, INTERACTIVE_MODE
+    global CONFIG_DATA, INTERACTIVE_MODE, KNOWLEDGE_GRAPH
     
-    # Check command line arguments
-    if len(sys.argv) != 4:
-        print("Usage: python troubleshoot.py <pod_name> <namespace> <volume_path>")
-        sys.exit(1)
-    
-    pod_name = sys.argv[1]
-    namespace = sys.argv[2]
-    volume_path = sys.argv[3]
-    
-    # Load configuration
-    CONFIG_DATA = load_config()
-    
-    # Set up logging
-    setup_logging(CONFIG_DATA)
-    
-    # Set interactive mode
-    INTERACTIVE_MODE = CONFIG_DATA['troubleshoot']['interactive_mode']
-    
-    logging.info(f"Starting troubleshooting for pod {namespace}/{pod_name}, volume {volume_path}")
-    logging.info(f"Interactive mode: {INTERACTIVE_MODE}")
-    
-    # Run troubleshooting
     try:
-        result = asyncio.run(troubleshoot(pod_name, namespace, volume_path))
-        print("\n=== Troubleshooting Results ===")
-        print(result)
-        print("==============================\n")
+        # Parse arguments
+        args = parse_arguments()
+        
+        # Set interactive mode
+        INTERACTIVE_MODE = args.interactive
+        
+        # Load configuration
+        CONFIG_DATA = load_config()
+        
+        # Setup logging
+        setup_logging(CONFIG_DATA)
+        
+        if args.verbose:
+            logging.getLogger().setLevel(logging.DEBUG)
+        
+        # Validate inputs
+        if not args.pod_name or not args.namespace or not args.volume_path:
+            logging.error("Pod name, namespace, and volume path are required")
+            sys.exit(1)
+        
+        # Initialize Kubernetes configuration
+        try:
+            config.load_incluster_config()
+            logging.info("Loaded in-cluster Kubernetes configuration")
+        except:
+            try:
+                config.load_kube_config()
+                logging.info("Loaded kubeconfig from default location")
+            except Exception as e:
+                logging.error(f"Failed to load Kubernetes configuration: {e}")
+                sys.exit(1)
+        
+        # Run comprehensive troubleshooting
+        results = await run_comprehensive_troubleshooting(
+            args.pod_name, args.namespace, args.volume_path
+        )
+        
+        # Save results if output file specified
+        if args.output:
+            try:
+                with open(args.output, 'w') as f:
+                    json.dump(results, f, indent=2)
+                logging.info(f"Results saved to {args.output}")
+            except Exception as e:
+                logging.error(f"Failed to save results to {args.output}: {e}")
+        
+        # Exit with appropriate code
+        if results["status"] == "completed":
+            sys.exit(0)
+        else:
+            sys.exit(1)
+            
     except KeyboardInterrupt:
-        logging.info("Troubleshooting stopped by user")
-        print("\nTroubleshooting stopped by user")
+        logging.info("Troubleshooting interrupted by user")
+        sys.exit(130)
     except Exception as e:
-        logging.error(f"Fatal error: {str(e)}")
-        print(f"\nFatal error: {str(e)}")
+        logging.error(f"Critical error in main: {str(e)}")
         sys.exit(1)
+    finally:
+        # Clean up SSH connections
+        for client in SSH_CLIENTS.values():
+            try:
+                client.close()
+            except:
+                pass
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

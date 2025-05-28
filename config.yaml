@@ -1,11 +1,13 @@
 # LLM Configuration
 llm:
+  #model: "gpt-4-turbo-preview"
   #model: "gpt-4o-mini-2024-07-18"
-  model: "gpt-4.1-mini-2025-04-14"
+  #model: "gpt-4.1-mini-2025-04-14"
+  model: "gpt-4.1-nano-2025-04-14"
   #api_endpoint: "https://api.openai.com/v1"
-  #api_key: 'sk-proj-VKq9nXwA'
+  #api_key: 'sk-proj--'
   api_endpoint: "https://api.zhizengzeng.com/v1"
-  api_key: "skccf39bc"
+  api_key: "sk-"
   temperature: 0
   max_tokens: 32768
 
@@ -29,8 +31,22 @@ troubleshoot:
     retries: 3
     retry_backoff_seconds: 5
 
-# Commands not allowed to be executed
+# Command Configuration
 commands:
+  # Commands explicitly allowed (if this list exists, only these commands are allowed)
+  allowed:
+    - "kubectl *"
+    - "smartctl *"
+    - "fio *"
+    - "df *"
+    - "lsblk *"
+    - "mount *"
+    - "dmesg *"
+    - "journalctl *"
+    - "ssh *"
+    - "sh *"
+    - "xfs_repair -n *"  # Only diagnostic mode allowed
+  # Commands not allowed to be executed
   disallowed:
     - "fsck *"
     - "chmod *"
@@ -40,7 +56,7 @@ commands:
     - "rm *"
     - "kubectl delete *"
     - "kubectl apply *"
-    - "xfs_repair *"  # Disallow non-diagnostic xfs_repair
+    - "xfs_repair *"  # Disallow non-diagnostic xfs_repair (except -n flag above)
 
 # Logging Configuration
 logging:

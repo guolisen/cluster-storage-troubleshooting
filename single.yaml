@@ -30,6 +30,15 @@ spec:
         stor-operator.dell.com/need-wait: all
         app: test-nginx
     spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                - "3x2sth3.cluster.local"
       containers:
       - name: test-nginx
         #image: dockerrepo:30500/storage-operator-image:0.402.0.605-1000000
@@ -42,8 +51,6 @@ spec:
           - "-c"
           - "sleep 60m"
         imagePullPolicy: Always
-        securityContext:
-          privileged: true
         ports:
         - containerPort: 80
           name: test-pod-1
@@ -57,9 +64,9 @@ spec:
             - ALL
           privileged: false
           readOnlyRootFilesystem: true
-          #runAsGroup: 65534
-          runAsNonRoot: false
-          #runAsUser: 65534
+          runAsGroup: 65534
+          runAsNonRoot: true
+          runAsUser: 65534
           seccompProfile:
             type: RuntimeDefault
   volumeClaimTemplates:
@@ -74,5 +81,5 @@ spec:
       resources:
         requests:
           storage: 30M
-      storageClassName: standard
+      storageClassName: csi-baremetal-sc-hdd
 

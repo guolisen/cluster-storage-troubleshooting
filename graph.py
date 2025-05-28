@@ -485,11 +485,7 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         file_console = Console(file=open('troubleshoot.log', 'a'))
         
         # Display thinking process
-        console.print(Panel(
-            f"[bold cyan]LangGraph thinking process:[/bold cyan]",
-            border_style="cyan",
-            safe_box=True
-        ))
+        console.print(f"[bold cyan]LangGraph thinking process:[/bold cyan]")
 
         if response.content:
             console.print(Panel(

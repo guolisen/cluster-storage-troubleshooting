@@ -405,6 +405,15 @@ Step F1: Emergency analysis | Tool: kg_analyze_issues() | Expected: Basic issue 
                 border_style="green"
             ))
             
+            # Print the complete Investigation Plan to console
+            console.print("\n")
+            console.print(Panel(
+                f"[bold white]{investigation_plan}[/bold white]",
+                title="[bold cyan]GENERATED INVESTIGATION PLAN",
+                border_style="cyan",
+                padding=(1, 2)
+            ))
+            
             return investigation_plan
         
         # Option 2: LangGraph-based generation (more sophisticated)

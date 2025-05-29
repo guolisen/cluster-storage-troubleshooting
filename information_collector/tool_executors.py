@@ -4,6 +4,7 @@ Tool Executors
 Contains methods for executing different categories of diagnostic tools.
 """
 
+import string
 import logging
 from typing import Dict, List, Any
 from .base import InformationCollectorBase
@@ -63,12 +64,13 @@ class ToolExecutors(InformationCollectorBase):
         logging.info("Executing volume chain discovery tools")
         
         # Get all PVCs
-        if volume_chain.get('pvcs'):
+        if volume_chain.get('pvcs', []):
+            pvc_name, pvc_namespace = volume_chain.get('pvcs', [])[0].split('/', 1)
             pvcs_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'pvc',
-                    'resource_name': volume_chain.get('pvcs', []),
-                    'namespace': volume_chain.get('namespace', 'default'),
+                    'resource_name': pvc_name,
+                    'namespace': pvc_namespace,
                     'output_format': 'yaml'
                 },
                 'kubectl_get_pvcs', 'Get all PVC information'
@@ -76,11 +78,11 @@ class ToolExecutors(InformationCollectorBase):
             self.collected_data['kubernetes']['pvcs'] = pvcs_output
         
         # Get all PVs
-        if volume_chain.get('pvs'):
+        if volume_chain.get('pvs', []):
             pvs_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'pv',
-                    'resource_name': volume_chain.get('pvs', []),
+                    'resource_name': volume_chain.get('pvs', [])[0],
                     'namespace': volume_chain.get('namespace', 'default'),
                     'output_format': 'yaml'
                 },
@@ -88,11 +90,11 @@ class ToolExecutors(InformationCollectorBase):
             )
             self.collected_data['kubernetes']['pvs'] = pvs_output
         
-        if volume_chain.get('volumes'):
+        if volume_chain.get('volumes', []):
             vol_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'volume',
-                    'resource_name': volume_chain.get('volumes', []),
+                    'resource_name': volume_chain.get('volumes', [])[0],
                     'namespace': volume_chain.get('namespace', 'default'),
                     'output_format': 'yaml'
                 },
@@ -100,11 +102,11 @@ class ToolExecutors(InformationCollectorBase):
             )
             self.collected_data['kubernetes']['volumes'] = vol_output
 
-        if volume_chain.get('lvg'):
+        if volume_chain.get('lvg', []):
             lvg_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'lvg',
-                    'resource_name': volume_chain.get('lvg', []),
+                    'resource_name': volume_chain.get('lvg', [])[0],
                     'namespace': volume_chain.get('namespace', 'default'),
                     'output_format': 'yaml'
                 },
@@ -112,22 +114,22 @@ class ToolExecutors(InformationCollectorBase):
             )
             self.collected_data['kubernetes']['lvg'] = lvg_output
 
-        if volume_chain.get('drives'):
+        if volume_chain.get('drives', []):
             drv_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'drive',
-                    'resource_name': volume_chain.get('drives', []),
+                    'resource_name': volume_chain.get('drives', [])[0],
                     'output_format': 'yaml'
                 },
                 'kubectl_get_drive', 'Get all drive information'
             )
             self.collected_data['kubernetes']['drives'] = drv_output
 
-        if volume_chain.get('nodes'):
+        if volume_chain.get('nodes', []):
             drv_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'node',
-                    'resource_name': volume_chain.get('nodes', []),
+                    'resource_name': volume_chain.get('nodes', [])[0],
                     'output_format': 'yaml'
                 },
                 'kubectl_get_node', 'Get all node information'

@@ -21,7 +21,7 @@ import argparse
 from typing import Dict, List, Any, Optional, Tuple
 from langgraph.graph import StateGraph
 from kubernetes import config
-from .graph import create_troubleshooting_graph_with_context
+from troubleshooting.graph import create_troubleshooting_graph_with_context
 from information_collector import ComprehensiveInformationCollector
 from phases import run_plan_phase
 from rich.logging import RichHandler

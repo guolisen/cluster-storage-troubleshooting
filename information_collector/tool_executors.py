@@ -59,13 +59,26 @@ class ToolExecutors(InformationCollectorBase):
         )
         self.collected_data['logs']['target_pod_logs'] = pod_logs
     
-    async def _execute_volume_chain_tools(self, volume_chain: Dict[str, List[str]]):
+    async def _execute_volume_chain_tools(self, volume_chain: Dict[str, List[str]], target_volume_path: str = 'default'):
         """Execute volume chain discovery tools"""
         logging.info("Executing volume chain discovery tools")
-        
+
+        if volume_chain.get('pods', []):
+            pod_namespace, pod_name = volume_chain.get('pods', [])[0].split('/', 1)
+            pods_output = self._execute_tool_with_validation(
+                kubectl_get, {
+                    'resource_type': 'pod',
+                    'resource_name': pod_name,
+                    'namespace': pod_namespace,
+                    'output_format': 'yaml'
+                },
+                'kubectl_get_pods', 'Get all PVC information'
+            )
+            self.collected_data['kubernetes']['pods'] = pods_output
+
         # Get all PVCs
         if volume_chain.get('pvcs', []):
-            pvc_name, pvc_namespace = volume_chain.get('pvcs', [])[0].split('/', 1)
+            pvc_namespace, pvc_name = volume_chain.get('pvcs', [])[0].split('/', 1)
             pvcs_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'pvc',
@@ -83,7 +96,7 @@ class ToolExecutors(InformationCollectorBase):
                 kubectl_get, {
                     'resource_type': 'pv',
                     'resource_name': volume_chain.get('pvs', [])[0],
-                    'namespace': volume_chain.get('namespace', 'default'),
+                    'namespace': target_volume_path,
                     'output_format': 'yaml'
                 },
                 'kubectl_get_pvs', 'Get all PV information'
@@ -95,7 +108,7 @@ class ToolExecutors(InformationCollectorBase):
                 kubectl_get, {
                     'resource_type': 'volume',
                     'resource_name': volume_chain.get('volumes', [])[0],
-                    'namespace': volume_chain.get('namespace', 'default'),
+                    'namespace': target_volume_path,
                     'output_format': 'yaml'
                 },
                 'kubectl_get_volume', 'Get all volume information'
@@ -107,7 +120,7 @@ class ToolExecutors(InformationCollectorBase):
                 kubectl_get, {
                     'resource_type': 'lvg',
                     'resource_name': volume_chain.get('lvg', [])[0],
-                    'namespace': volume_chain.get('namespace', 'default'),
+                    'namespace': target_volume_path,
                     'output_format': 'yaml'
                 },
                 'kubectl_get_volume', 'Get all volume information'

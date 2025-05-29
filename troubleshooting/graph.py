@@ -225,7 +225,7 @@ Provide a detailed remediation report that includes:
             phase_specific_guidance = """
 You are in a legacy mode. Please specify either 'phase1' for investigation or 'phase2' for action/remediation.
 """
-        
+
         # Prepare context from collected information
         context_summary = f"""
 === PRE-COLLECTED DIAGNOSTIC CONTEXT ===
@@ -236,7 +236,7 @@ Knowledge Graph Summary:
 {json.dumps(collected_info.get('knowledge_graph_summary', {}), indent=2)}
 
 Pod Information:
-{collected_info.get('pod_info', {}).get('description', 'No pod information available')[:2000]}
+{str(collected_info.get('pod_info', {}))[:2000]}
 
 PVC Information:
 {str(collected_info.get('pvc_info', {}))[:2000]}

@@ -269,7 +269,7 @@ async def run_information_collection_phase(pod_name: str, namespace: str, volume
         }
         return collected_info
 
-async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds: int = 60) -> Tuple[str, str]:
+async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds: int = 60) -> str:
     """
     Run an analysis using the provided LangGraph StateGraph with enhanced progress tracking
     
@@ -315,57 +315,7 @@ async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds
         else:
             final_message = "Failed to generate analysis results"
         
-        # Parse root cause and fix plan with enhanced formatting
-        root_cause = "Unknown"
-        fix_plan = "No specific fix plan generated"
-
-        try:
-            # Look for JSON block in the response
-            json_start = final_message.find('{')
-            json_end = final_message.rfind('}') + 1
-            
-            if json_start != -1 and json_end > json_start:
-                json_str = final_message[json_start:json_end]
-                parsed_json = json.loads(json_str)
-                root_cause = parsed_json.get("root_cause", "Unknown root cause")
-                fix_plan = parsed_json.get("fix_plan", "No fix plan provided")
-                
-                # Enhanced logging with rich formatting
-                console.print("\n")
-                root_cause_panel = Panel(
-                    f"[bold yellow]{root_cause}[/bold yellow]",
-                    title="[bold red]Root Cause Analysis",
-                    border_style="red"
-                )
-                fix_plan_panel = Panel(
-                    f"[bold green]{fix_plan}[/bold green]",
-                    title="[bold blue]Fix Plan",
-                    border_style="blue"
-                )
-                
-                console.print(root_cause_panel)
-                console.print(fix_plan_panel)
-                
-                # Log to file
-                file_console.print(root_cause_panel)
-                file_console.print(fix_plan_panel)
-            else:
-                # If no JSON found, use heuristic to extract information
-                if "root cause" in final_message.lower():
-                    root_parts = final_message.lower().split("root cause")
-                    if len(root_parts) > 1:
-                        root_cause = root_parts[1].strip().split("\n")[0]
-                
-                if "fix plan" in final_message.lower():
-                    fix_parts = final_message.lower().split("fix plan")
-                    if len(fix_parts) > 1:
-                        fix_plan = fix_parts[1].strip().split("\n")[0]
-        except Exception as e:
-            logging.warning(f"Error parsing LLM response: {str(e)}")
-            # Return raw message if parsing fails
-            return final_message, final_message
-        
-        return root_cause, fix_plan
+        return final_message
     except Exception as e:
         logging.error(f"Error in run_analysis_with_graph: {str(e)}")
         return "Error in analysis", str(e)
@@ -433,20 +383,20 @@ After completing the Investigation Plan, provide comprehensive root cause analys
         timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
         
         # Run analysis using the tools module
-        root_cause, fix_plan = await run_analysis_with_graph(
+        phase1_response = await run_analysis_with_graph(
             query=query,
             graph=graph,
             timeout_seconds=timeout_seconds
         )
         
-        return root_cause, fix_plan
+        return phase1_response
 
     except Exception as e:
         error_msg = f"Error during analysis phase: {str(e)}"
         logging.error(error_msg)
         return error_msg, "Unable to generate fix plan due to analysis error"
 
-async def run_remediation_phase(root_cause: str, fix_plan: str, collected_info: Dict[str, Any]) -> str:
+async def run_remediation_phase(phase1_final_response: str, collected_info: Dict[str, Any]) -> str:
     """
     Run Phase 2: Remediation based on analysis results
     
@@ -469,9 +419,7 @@ async def run_remediation_phase(root_cause: str, fix_plan: str, collected_info: 
         # Remediation query
         query = f"""Phase 2 - Remediation: Execute the fix plan to resolve the identified issue.
 
-Root Cause: {root_cause}
-
-Fix Plan: {fix_plan}
+Root Cause and Fix Plan: {phase1_final_response}
 
 <<< Note >>>: Please try to fix issue within 30 tool calls.
 
@@ -484,7 +432,7 @@ Provide a final status report on whether the issues have been resolved.
         
         # Run analysis with graph
         try:
-            root_cause, remediation_result = await run_analysis_with_graph(
+            remediation_result = await run_analysis_with_graph(
                 query=query,
                 graph=graph,
                 timeout_seconds=timeout_seconds
@@ -596,14 +544,13 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             padding=(1, 2)
         ))
         
-        root_cause, fix_plan = await run_analysis_phase_with_plan(
+        phase1_final_response = await run_analysis_phase_with_plan(
             pod_name, namespace, volume_path, collected_info, investigation_plan
         )
         
         results["phases"]["phase_1_analysis"] = {
             "status": "completed",
-            "root_cause": root_cause,
-            "fix_plan": fix_plan,
+            "final_response": phase1_final_response,
             "duration": time.time() - phase_1_start
         }
         
@@ -618,7 +565,7 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             padding=(1, 2)
         ))
         
-        remediation_result = await run_remediation_phase(root_cause, fix_plan, collected_info)
+        remediation_result = await run_remediation_phase(phase1_final_response, collected_info)
         
         results["phases"]["phase_2_remediation"] = {
             "status": "completed",
@@ -683,7 +630,7 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
         
         # Create root cause and resolution panels - ensure strings for content
         # Convert values to strings first to avoid 'bool' has no attribute 'substitute' errors
-        root_cause_str = str(root_cause) if root_cause is not None else "Unknown"
+        root_cause_str = str(phase1_final_response) if phase1_final_response is not None else "Unknown"
         remediation_result_str = str(remediation_result) if remediation_result is not None else "No result"
         
         root_cause_panel = Panel(
@@ -703,7 +650,14 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
         )
         
         console.print("\n")
-        console.print(summary_table)
+        try:
+            console.print(Panel(
+                summary_table,
+                safe_box=True  # Explicitly set safe_box to True
+            ))
+        except Exception as e:
+            console.print(f"Error printing rich summary table: {e}")
+
         console.print("\n")
         console.print(root_cause_panel)
         console.print("\n")

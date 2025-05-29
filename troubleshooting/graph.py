@@ -97,16 +97,10 @@ ROOT CAUSE ANALYSIS REQUIREMENTS:
    - Estimate time-to-impact if not addressed
 
 DIAGNOSTIC PROCESS:
-Follow this structured process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
-a. **Knowledge Graph Analysis**: First use kg_get_all_issues and kg_analyze_issues
-b. **Confirm Issue**: Use kubectl_logs and kubectl_describe for error identification
-c. **Verify Configurations**: Check Pod, PVC, PV configurations and relationships
-d. **Check CSI Driver**: Verify driver status and resources
-e. **Verify Node Health**: Check for node-level issues
-f. **Check Permissions**: Verify security settings
-g. **Inspect Control Plane**: Review controller/scheduler logs
-h. **Test Hardware**: Check disk health and performance
-i. **Pattern Analysis**: Identify recurring patterns and relationships
+Follow the 'Plan phase' output of the Investigation Plan to guide your investigation
+Investigation Plan:
+
+
 
 OUTPUT REQUIREMENTS:
 Provide a detailed investigation report that includes:
@@ -151,6 +145,10 @@ Provide a detailed investigation report that includes:
 7. Next Steps:
    - Recommended further diagnostic actions
    - Suggestions for additional data collection or analysis
+8. Root Cause:
+    - The most likely root cause based on the evidence collected
+8. Fix Plan:
+    - Proposed remediation steps to address the issues
 
 Remember to provide clear, concise explanations and avoid technical jargon where possible. The goal is to present a comprehensive understanding of the current state of the system and the issues it's facing.
 
@@ -192,14 +190,14 @@ All Phase 1 tools (24 investigation tools) PLUS:
 - Resource Cleanup (5): cleanup_test_resources, list_test_resources, cleanup_specific_test_pod, cleanup_orphaned_pvs, force_cleanup_stuck_resources
 
 PHASE 2 CAPABILITIES:
-- Execute remediation actions based on Phase 1 findings
+- Execute remediation actions based on Phase 1 **Fix Plan**
 - Create test resources to validate fixes
 - Run comprehensive volume testing
 - Perform hardware diagnostics and repairs
 - Clean up test resources after validation
 
 REMEDIATION PROCESS:
-1. Review Phase 1 findings and root cause analysis
+1. Review Phase 1 **Fix Plan** and root cause analysis
 2. Implement fixes in order of priority and dependencies
 3. Create test resources to validate each fix
 4. Run volume tests to ensure functionality
@@ -373,13 +371,7 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
    - Use kg_analyze_issues to identify patterns and root causes from the Knowledge Graph.
    - Only execute commands like kubectl or SSH when Knowledge Graph lacks needed information.
 
-2. **Safety and Security**:
-   - Only execute commands listed in `commands.allowed` in `config.yaml` (e.g., `kubectl get drive`, `smartctl -a`, `fio`).
-   - Never execute commands in `commands.disallowed` (e.g., `fsck`, `chmod`, `dd`, `kubectl delete pod`) unless explicitly enabled in `config.yaml` and approved by the user in interactive mode.
-   - Validate all commands for safety and relevance before execution.
-   - Log all SSH commands and outputs for auditing, using secure credential handling as specified in `config.yaml`.
-
-4. **Troubleshooting Process**:
+2. **Troubleshooting Process**:
    - Use the LangGraph ReAct module to reason about volume I/O errors based on parameters: `PodName`, `PodNamespace`, and `VolumePath`.
    - Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
      a. **Check Knowledge Graph**: First use Knowledge Graph tools (kg_*) to understand the current state and existing issues.
@@ -411,12 +403,10 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
    - Only propose remediations after analyzing diagnostic data. Ensure write/change commands (e.g., `fsck`, `kubectl delete pod`) are allowed and approved.
    - Try to find all of possible root causes before proposing any remediation steps. 
 
-5. **Error Handling**:
-   - Log all actions, command outputs, SSH results, and errors to the configured log file and stdout (if enabled).
-   - Handle Kubernetes API or SSH failures with retries as specified in `config.yaml`.
+3. **Error Handling**:
    - If unresolved, provide a detailed report of findings (e.g., logs, drive status, SMART data, test results) and suggest manual intervention.
 
-6. **Knowledge Graph Usage**:
+4. **Knowledge Graph Usage**:
    - Use kg_print_graph to get a human-readable overview of the entire system state.
    - First check issues with kg_get_all_issues before running diagnostic commands. this issue is critical inforamtion to find root cause
    - Use kg_get_summary to get high-level statistics about the cluster state.
@@ -431,10 +421,18 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 8. **Output**:
    - Try to find all of possible root causes before proposing any remediation steps.
    - Provide clear, concise explanations of diagnostic steps, findings, and remediation proposals.
-   - In interactive mode, format prompts as: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)".
    - Include performance benchmarks in reports (e.g., HDD: 100–200 IOPS, SSD: thousands, NVMe: tens of thousands).
-   - Log all outputs with timestamps and context for traceability.
    - **Don't output with JSON format, use plain text for better readability.**
+   - **the output should include the following sections:**
+    # Summary of Findings
+    # Detailed Analysis
+    # Relationship Analysis
+    # Investigation Process
+    # Potential Root Causes
+    # Open Questions
+    # Next Steps
+    # Root Cause
+    # Fix Plan
 9. **Output Example**:
 
 {final_output_example}

@@ -7,5 +7,10 @@ driver troubleshooting system.
 """
 
 # Import will be available once dependencies are resolved
+from troubleshooting.graph import (
+    create_troubleshooting_graph_with_context,
+)
 
-__all__ = []
+__all__ = [
+    "create_troubleshooting_graph_with_context",
+]

@@ -4,6 +4,7 @@ llm:
   #model: "gpt-4o-mini-2024-07-18"
   #model: "gpt-4.1-mini-2025-04-14"
   model: "gpt-4.1-nano-2025-04-14"
+  #model: "qwen3-235b-a22b"
   #api_endpoint: "https://api.openai.com/v1"
   #api_key: 'sk-proj--'
   api_endpoint: "https://api.zhizengzeng.com/v1"
@@ -16,6 +17,10 @@ monitor:
   interval_seconds: 60
   api_retries: 3
   retry_backoff_seconds: 5
+
+plan_phase:
+  use_direct_generation: false  # Use direct generation (faster) vs LangGraph
+  timeout_seconds: 120        # Timeout for plan generation
 
 # Troubleshooting Configuration
 troubleshoot:

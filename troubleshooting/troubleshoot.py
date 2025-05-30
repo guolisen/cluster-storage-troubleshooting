@@ -23,7 +23,12 @@ from langgraph.graph import StateGraph
 from kubernetes import config
 from troubleshooting.graph import create_troubleshooting_graph_with_context
 from information_collector import ComprehensiveInformationCollector
-from phases import run_plan_phase
+from phases import (
+    run_information_collection_phase,
+    run_plan_phase,
+    run_analysis_phase_with_plan,
+    run_remediation_phase
+)
 from rich.logging import RichHandler
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -166,9 +171,9 @@ def setup_logging(config_data):
     # Log startup message to file only
     logging.info("Logging initialized - internal logs redirected to log file only")
 
-async def run_information_collection_phase(pod_name: str, namespace: str, volume_path: str) -> Dict[str, Any]:
+async def run_information_collection_phase_wrapper(pod_name: str, namespace: str, volume_path: str) -> Dict[str, Any]:
     """
-    Run Phase 0: Information Collection - Gather all necessary data upfront
+    Wrapper for Phase 0: Information Collection from phases module
     
     Args:
         pod_name: Name of the pod with the error
@@ -180,94 +185,13 @@ async def run_information_collection_phase(pod_name: str, namespace: str, volume
     """
     global CONFIG_DATA, KNOWLEDGE_GRAPH
     
-    logging.info("Starting Phase 0: Information Collection")
+    # Call the actual implementation from phases module
+    collected_info = await run_information_collection_phase(pod_name, namespace, volume_path, CONFIG_DATA)
     
-    try:
-        # Initialize information collector
-        info_collector = ComprehensiveInformationCollector(CONFIG_DATA)
-        
-        # Run comprehensive collection
-        collection_result = await info_collector.comprehensive_collect(
-            target_pod=pod_name,
-            target_namespace=namespace,
-            target_volume_path=volume_path
-        )
-        
-        # Update the global knowledge graph
-        KNOWLEDGE_GRAPH = collection_result.get('knowledge_graph')
-        
-        # Format collected data into expected structure
-        collected_info = {
-            "pod_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('pods', {}),
-            "pvc_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('pvcs', {}),
-            "pv_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('pvs', {}),
-            "node_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('nodes', {}),
-            "csi_driver_info": collection_result.get('collected_data', {}).get('csi_baremetal', {}),
-            "storage_class_info": {},  # Will be included in kubernetes data
-            "system_info": collection_result.get('collected_data', {}).get('system', {}),
-            "knowledge_graph_summary": collection_result.get('context_summary', {}),
-            "issues": KNOWLEDGE_GRAPH.issues if KNOWLEDGE_GRAPH else []
-        }
-        
-        # Print Knowledge Graph with rich formatting
-        console.print("\n")
-        console.print(Panel(
-            "[bold white]Building and analyzing knowledge graph...",
-            title="[bold cyan]PHASE 0: INFORMATION COLLECTION - KNOWLEDGE GRAPH",
-            border_style="cyan",
-            padding=(1, 2)
-        ))
-        
-        try:
-            # Try to use rich formatting with proper error handling
-            formatted_output = KNOWLEDGE_GRAPH.print_graph(use_rich=True)
-            
-            # Handle different output types
-            if formatted_output is None:
-                # If there was a silent success (no return value)
-                console.print("[green]Knowledge graph built successfully[/green]")
-            elif isinstance(formatted_output, str):
-                # Regular string output - print as is
-                print(formatted_output)
-            else:
-                # For any other type of output
-                console.print("[green]Knowledge graph analysis complete[/green]")
-        except Exception as e:
-            # Fall back to plain text if rich formatting fails
-            logging.error(f"Error in rich formatting, falling back to plain text: {str(e)}")
-            try:
-                # Try plain text formatting
-                formatted_output = KNOWLEDGE_GRAPH.print_graph(use_rich=False)
-                print(formatted_output)
-            except Exception as e2:
-                # Last resort fallback
-                logging.error(f"Error in plain text formatting: {str(e2)}")
-                print("=" * 80)
-                print("KNOWLEDGE GRAPH SUMMARY (FALLBACK FORMAT)")
-                print("=" * 80)
-                print(f"Total nodes: {KNOWLEDGE_GRAPH.graph.number_of_nodes()}")
-                print(f"Total edges: {KNOWLEDGE_GRAPH.graph.number_of_edges()}")
-                print(f"Total issues: {len(KNOWLEDGE_GRAPH.issues)}")
-        
-        console.print("\n")
-        
-        return collected_info
-        
-    except Exception as e:
-        error_msg = f"Error during information collection phase: {str(e)}"
-        logging.error(error_msg)
-        collected_info = {
-            "collection_error": error_msg,
-            "pod_info": {},
-            "pvc_info": {},
-            "pv_info": {},
-            "node_info": {},
-            "csi_driver_info": {},
-            "storage_class_info": {},
-            "system_info": {},
-            "knowledge_graph_summary": {}
-        }
-        return collected_info
+    # Update the global knowledge graph
+    KNOWLEDGE_GRAPH = collected_info.get('knowledge_graph')
+    
+    return collected_info
 
 async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds: int = 60) -> str:
     """
@@ -320,134 +244,43 @@ async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds
         logging.error(f"Error in run_analysis_with_graph: {str(e)}")
         return "Error in analysis", str(e)
 
-async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_path: str, 
-                                     collected_info: Dict[str, Any], investigation_plan: str) -> Tuple[str, str]:
+async def run_analysis_phase_wrapper(pod_name: str, namespace: str, volume_path: str, 
+                                  collected_info: Dict[str, Any], investigation_plan: str) -> str:
     """
-    Run Phase 1: ReAct Investigation with pre-collected information as base knowledge
+    Wrapper for Phase 1: ReAct Investigation from phases module
     
     Args:
         pod_name: Name of the pod with the error
         namespace: Namespace of the pod
         volume_path: Path of the volume with I/O error
         collected_info: Pre-collected diagnostic information from Phase 0
+        investigation_plan: Investigation Plan generated by the Plan Phase
         
     Returns:
-        Tuple[str, str]: Root cause and fix plan
+        str: Analysis result
     """
-    global CONFIG_DATA, KNOWLEDGE_GRAPH
+    global CONFIG_DATA
     
-    try:
-        # Create troubleshooting graph with pre-collected context
-        graph = create_troubleshooting_graph_with_context(collected_info, phase="phase1", config_data=CONFIG_DATA)
-        
-        # Updated query for ReAct investigation phase with Investigation Plan
-        query = f"""Phase 1 - ReAct Investigation: Execute the Investigation Plan to actively investigate the volume I/O error in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
+    # Call the actual implementation from phases module
+    return await run_analysis_phase_with_plan(
+        pod_name, namespace, volume_path, collected_info, investigation_plan, CONFIG_DATA
+    )
 
-You have:
-1. Pre-collected diagnostic information from Phase 0 as base knowledge
-2. A structured Investigation Plan generated by the Plan Phase
-
-INVESTIGATION PLAN TO FOLLOW:
-{investigation_plan}
-
-Your task is to:
-1. Parse the Investigation Plan and execute each step sequentially
-2. Use the specified Knowledge Graph tools first (as outlined in the plan)
-3. Validate expected outcomes against actual results from each step
-4. If a step fails or provides unexpected results, use the fallback steps provided
-5. Use additional ReAct tools for comprehensive root cause analysis and verification
-6. Aggregate results from all Investigation Plan steps
-7. Generate a comprehensive root cause analysis and fix plan
-
-EXECUTION GUIDELINES:
-- Follow the Investigation Plan steps in order
-- For each step, use the specified tool with the given arguments
-- Compare actual results with expected outcomes
-- Log execution details for traceability
-- If Knowledge Graph queries provide insufficient data, supplement with additional diagnostic tools
-- Include evidence from both the Investigation Plan execution and additional tool usage
-
-INVESTIGATION PLAN EXECUTION LOG:
-Execute each step from the Investigation Plan and document:
-- Step number and description
-- Tool used and arguments
-- Actual outcome vs expected outcome
-- Any issues or unexpected results
-- Follow-up actions taken
-
-After completing the Investigation Plan, provide comprehensive root cause analysis and fix plan.
-
-<<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
-"""
-        # Set timeout
-        timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
-        
-        # Run analysis using the tools module
-        phase1_response = await run_analysis_with_graph(
-            query=query,
-            graph=graph,
-            timeout_seconds=timeout_seconds
-        )
-        
-        return phase1_response
-
-    except Exception as e:
-        error_msg = f"Error during analysis phase: {str(e)}"
-        logging.error(error_msg)
-        return error_msg, "Unable to generate fix plan due to analysis error"
-
-async def run_remediation_phase(phase1_final_response: str, collected_info: Dict[str, Any]) -> str:
+async def run_remediation_phase_wrapper(phase1_final_response: str, collected_info: Dict[str, Any]) -> str:
     """
-    Run Phase 2: Remediation based on analysis results
+    Wrapper for Phase 2: Remediation from phases module
     
     Args:
-        root_cause: Root cause identified in Phase 1
-        fix_plan: Fix plan generated in Phase 1
+        phase1_final_response: Response from Phase 1 containing root cause and fix plan
         collected_info: Pre-collected diagnostic information from Phase 0
         
     Returns:
         str: Remediation result
     """
-    global CONFIG_DATA, INTERACTIVE_MODE
+    global CONFIG_DATA
     
-    logging.info("Starting Phase 2: Remediation")
-    
-    try:
-        # Create troubleshooting graph for remediation
-        graph = create_troubleshooting_graph_with_context(collected_info, phase="phase2", config_data=CONFIG_DATA)
-        
-        # Remediation query
-        query = f"""Phase 2 - Remediation: Execute the fix plan to resolve the identified issue.
-
-Root Cause and Fix Plan: {phase1_final_response}
-
-<<< Note >>>: Please try to fix issue within 30 tool calls.
-
-Please implement the fix plan step by step. Use available tools if needed, but respect security constraints and interactive mode settings.
-Provide a final status report on whether the issues have been resolved.
-"""
-        
-        # Set timeout
-        timeout_seconds = CONFIG_DATA['troubleshoot']['timeout_seconds']
-        
-        # Run analysis with graph
-        try:
-            remediation_result = await run_analysis_with_graph(
-                query=query,
-                graph=graph,
-                timeout_seconds=timeout_seconds
-            )
-            return remediation_result
-        except asyncio.TimeoutError:
-            return "Remediation phase timed out - manual intervention may be required"
-        except Exception as e:
-            logging.error(f"Error during remediation graph execution: {str(e)}")
-            return f"Remediation encountered an error: {str(e)}"
-        
-    except Exception as e:
-        error_msg = f"Error during remediation phase: {str(e)}"
-        logging.error(error_msg)
-        return error_msg
+    # Call the actual implementation from phases module
+    return await run_remediation_phase(phase1_final_response, collected_info, CONFIG_DATA)
 
 async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volume_path: str) -> Dict[str, Any]:
     """
@@ -483,7 +316,7 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
             padding=(1, 2)
         ))
         
-        collected_info = await run_information_collection_phase(pod_name, namespace, volume_path)
+        collected_info = await run_information_collection_phase_wrapper(pod_name, namespace, volume_path)
         results["phases"]["phase_0_collection"] = {
             "status": "completed",
             "summary": collected_info.get("knowledge_graph_summary", {}),
@@ -544,7 +377,7 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             padding=(1, 2)
         ))
         
-        phase1_final_response = await run_analysis_phase_with_plan(
+        phase1_final_response = await run_analysis_phase_wrapper(
             pod_name, namespace, volume_path, collected_info, investigation_plan
         )
         
@@ -565,7 +398,7 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             padding=(1, 2)
         ))
         
-        remediation_result = await run_remediation_phase(phase1_final_response, collected_info)
+        remediation_result = await run_remediation_phase_wrapper(phase1_final_response, collected_info)
         
         results["phases"]["phase_2_remediation"] = {
             "status": "completed",

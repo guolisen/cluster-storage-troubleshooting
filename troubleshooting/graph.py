@@ -50,7 +50,7 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
     def call_model(state: MessagesState):
         logging.info(f"Processing state with {len(state['messages'])} messages")
         
-        # Add comprehensive system prompt with pre-collected context
+        # Add phase-specific guidance with optimized content
         phase_specific_guidance = ""
         if phase == "phase1":
             phase_specific_guidance = """
@@ -68,39 +68,6 @@ PHASE 1 RESTRICTIONS:
 - NO test resource creation
 - NO hardware modifications
 - FOCUS on comprehensive investigation and root cause analysis
-
-ROOT CAUSE ANALYSIS REQUIREMENTS:
-1. Knowledge Graph Analysis
-   - MUST use kg_get_all_issues first to identify existing issues
-   - Use kg_analyze_issues to identify patterns and relationships
-   - Cross-reference issues with system metrics and logs
-   - Calculate probability scores for each potential cause
-
-2. Issue Classification
-   - Categorize issues by:
-     * Severity (critical/high/medium/low)
-     * Type (hardware/software/configuration/permission)
-     * Scope (pod/node/cluster level)
-   - Identify primary and secondary issues
-   - Calculate impact radius for each issue
-
-3. Evidence Collection
-   - List all supporting evidence for each issue
-   - Include relevant logs, metrics, and events
-   - Document relationship patterns between components
-   - Track issue occurrence frequency and timing
-
-4. Impact Analysis
-   - Document affected components
-   - Calculate service impact percentage
-   - Identify potential cascade effects
-   - Estimate time-to-impact if not addressed
-
-DIAGNOSTIC PROCESS:
-Follow the 'Plan phase' output of the Investigation Plan to guide your investigation
-Investigation Plan:
-
-
 
 OUTPUT REQUIREMENTS:
 Provide a detailed investigation report that includes:
@@ -149,33 +116,6 @@ Provide a detailed investigation report that includes:
     - The most likely root cause based on the evidence collected
 8. Fix Plan:
     - Proposed remediation steps to address the issues
-
-Remember to provide clear, concise explanations and avoid technical jargon where possible. The goal is to present a comprehensive understanding of the current state of the system and the issues it's facing.
-
-EXECUTION GUIDELINES:
-1. Root Cause Analysis:
-   - Start with Knowledge Graph tools
-   - Progress from high-severity to low-severity issues
-   - Document all possible causes with probability rankings
-   - Include comprehensive evidence for each cause
-   - List all potential impacts and risks
-
-2. Fix Plan Generation:
-   - Order steps by priority and dependencies
-   - Include clear success criteria for each step
-   - Provide specific commands and parameters
-   - Include verification steps after each action
-   - Document rollback procedures
-   - Estimate time for each step
-
-3. Quality Requirements:
-   - All steps must be specific and actionable
-   - Include command parameters and expected outputs
-   - Provide clear verification methods
-   - Document prerequisites and dependencies
-   - Include safety checks and validations
-
-Remember: You have 50 tool usage attempts. Prioritize critical issues and gather comprehensive evidence before proposing fixes.
 """
         elif phase == "phase2":
             phase_specific_guidance = """
@@ -195,21 +135,6 @@ PHASE 2 CAPABILITIES:
 - Run comprehensive volume testing
 - Perform hardware diagnostics and repairs
 - Clean up test resources after validation
-
-REMEDIATION PROCESS:
-1. Review Phase 1 **Fix Plan** and root cause analysis
-2. Implement fixes in order of priority and dependencies
-3. Create test resources to validate each fix
-4. Run volume tests to ensure functionality
-5. Clean up test resources
-6. Verify final resolution status
-
-SAFETY REQUIREMENTS:
-- Always backup data before destructive operations
-- Use test resources for validation before affecting production
-- Follow proper cleanup procedures
-- Verify each step before proceeding to the next
-- Document all changes and their outcomes
 
 OUTPUT REQUIREMENTS:
 Provide a detailed remediation report that includes:

@@ -157,24 +157,6 @@ If the issue can be resolved automatically:
 - Output a comprehensive root cause analysis and fix plan
 - Do NOT include the SKIP_PHASE2 marker
 
-EXECUTION GUIDELINES:
-- Follow the Investigation Plan steps in order
-- For each step, use the specified tool with the given arguments
-- Compare actual results with expected outcomes
-- Log execution details for traceability
-- If Knowledge Graph queries provide insufficient data, supplement with additional diagnostic tools
-- Include evidence from both the Investigation Plan execution and additional tool usage
-
-INVESTIGATION PLAN EXECUTION LOG:
-Execute each step from the Investigation Plan and document:
-- Step number and description
-- Tool used and arguments
-- Actual outcome vs expected outcome
-- Any issues or unexpected results
-- Follow-up actions taken
-
-After completing the Investigation Plan, provide comprehensive root cause analysis and fix plan.
-
 <<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
 """
             # Set timeout

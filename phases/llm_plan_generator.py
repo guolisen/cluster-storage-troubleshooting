@@ -156,16 +156,6 @@ TASK:
 3. Prioritize these hypotheses by likelihood (high, medium, low) based on evidence in the Knowledge Graph.
 4. Create a step-by-step Investigation Plan for Phase1 to execute, using the available tools.
 
-COMMON VOLUME READ/WRITE ERROR CAUSES:
-- Disk failure or hardware issues
-- CSI driver issues or misconfigurations
-- Misconfigured PVC/PV bindings
-- Permission errors or security contexts
-- Network issues affecting storage communication
-- Storage class mismatches or parameters
-- Resource constraints (CPU, memory, disk space)
-- File system corruption
-
 OUTPUT FORMAT:
 Your response must include:
 

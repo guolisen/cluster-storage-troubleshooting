@@ -106,15 +106,12 @@ class RemediationPhase:
                 self.collected_info, phase="phase2", config_data=self.config_data
             )
             
-            # Remediation query
+            # Remediation query - Simplified and focused on the task
             query = f"""Phase 2 - Remediation: Execute the fix plan to resolve the identified issue.
 
 Root Cause and Fix Plan: {phase1_final_response}
 
 <<< Note >>>: Please try to fix issue within 30 tool calls.
-
-Please implement the fix plan step by step. Use available tools if needed, but respect security constraints and interactive mode settings.
-Provide a final status report on whether the issues have been resolved.
 """
             
             # Set timeout

@@ -21,7 +21,7 @@ def smartctl_check(node_name: str, device_path: str) -> str:
         str: SMART data showing disk health, reallocated sectors, etc.
     """
     cmd = f"sudo smartctl -a {device_path}"
-    return ssh_execute(node_name, cmd)
+    return ssh_execute.invoke({"node_name": node_name, "command": cmd})
 
 @tool
 def fio_performance_test(node_name: str, device_path: str, test_type: str = "read") -> str:
@@ -37,7 +37,7 @@ def fio_performance_test(node_name: str, device_path: str, test_type: str = "rea
         str: Performance test results showing IOPS and throughput
     """
     cmd = f"sudo fio --name={test_type}_test --filename={device_path} --rw={test_type} --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting"
-    return ssh_execute(node_name, cmd)
+    return ssh_execute.invoke({"node_name": node_name, "command": cmd})
 
 @tool
 def fsck_check(node_name: str, device_path: str, check_only: bool = True) -> str:
@@ -57,7 +57,7 @@ def fsck_check(node_name: str, device_path: str, check_only: bool = True) -> str
     else:
         cmd = f"sudo fsck -y {device_path}"  # -y flag means auto-fix (requires approval)
     
-    return ssh_execute(node_name, cmd)
+    return ssh_execute.invoke({"node_name": node_name, "command": cmd})
 
 @tool
 def ssh_execute(node_name: str, command: str) -> str:
@@ -88,7 +88,8 @@ def ssh_execute(node_name: str, command: str) -> str:
             ssh_client.connect(
                 hostname=node_name,
                 username=ssh_user,
-                key_filename=ssh_key_path,
+                password='abc123',
+                #key_filename=ssh_key_path,
                 timeout=30
             )
             

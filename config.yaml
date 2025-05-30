@@ -9,7 +9,7 @@ llm:
   #api_key: 'sk-proj--'
   api_endpoint: "https://api.zhizengzeng.com/v1"
   api_key: "sk-"
-  temperature: 0
+  temperature: 0.7
   max_tokens: 32768
 
 # Monitoring Configuration

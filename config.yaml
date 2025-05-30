@@ -4,7 +4,7 @@ llm:
   #model: "gpt-4o-mini-2024-07-18"
   #model: "gpt-4.1-mini-2025-04-14"
   model: "gpt-4.1-nano-2025-04-14"
-  #model: "qwen3-235b-a22b"
+  #model: "grok-3-mini"
   #api_endpoint: "https://api.openai.com/v1"
   #api_key: 'sk-proj--'
   api_endpoint: "https://api.zhizengzeng.com/v1"

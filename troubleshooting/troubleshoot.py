@@ -350,7 +350,7 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
             
             results["phases"]["plan_phase"] = {
                 "status": "completed",
-                "investigation_plan": investigation_plan[:500] + "..." if len(investigation_plan) > 500 else investigation_plan,  # Truncate for summary
+                "investigation_plan": investigation_plan[:5000] + "..." if len(investigation_plan) > 5000 else investigation_plan,  # Truncate for summary
                 "duration": time.time() - plan_phase_start
             }
             
@@ -383,11 +383,10 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
         
         results["phases"]["phase_1_analysis"] = {
             "status": "completed",
-            "final_response": phase1_final_response,
+            "final_response": str(phase1_final_response),
             "duration": time.time() - phase_1_start,
-            "skip_phase2": skip_phase2
+            "skip_phase2": "false" if skip_phase2 else "true"
         }
-        
         # Only proceed to Phase 2 if not skipped
         if not skip_phase2:
             phase_2_start = time.time()
@@ -396,12 +395,9 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             
             results["phases"]["phase_2_remediation"] = {
                 "status": "completed",
-                "result": remediation_result,
+                "result": str(remediation_result),
                 "duration": time.time() - phase_2_start
             }
-            
-            #print(f"Remediation Result: {remediation_result}")
-            #print()
         else:
             # Phase 2 skipped - add to results
             console.print("\n")
@@ -411,28 +407,27 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
                 border_style="yellow",
                 padding=(1, 2)
             ))
-            
             results["phases"]["phase_2_remediation"] = {
                 "status": "skipped",
                 "reason": "No issues detected or manual intervention required",
                 "duration": 0
             }
-        
+
         # Final summary
         total_duration = time.time() - start_time
         results["total_duration"] = total_duration
         results["status"] = "completed"
-        
+
         # Create a rich formatted summary table
         summary_table = Table(
             title="[bold]TROUBLESHOOTING SUMMARY",
-            show_header=True,
+            #show_header=True,
             header_style="bold cyan",
-            box=True,
+            #box=True,
             border_style="blue",
-            safe_box=True  # Explicitly set safe_box to True
+            #safe_box=True  # Explicitly set safe_box to True
         )
-        
+
         # Add columns
         summary_table.add_column("Phase", style="dim")
         summary_table.add_column("Duration", justify="right")
@@ -444,7 +439,6 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             f"{results['phases']['phase_0_collection']['duration']:.2f}s",
             "[green]Completed"
         )
-        
         # Add Plan Phase row
         plan_phase_status = "[green]Completed" if results["phases"].get("plan_phase", {}).get("status") == "completed" else "[red]Failed"
         plan_phase_duration = results["phases"].get("plan_phase", {}).get("duration", 0)
@@ -453,12 +447,12 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             f"{plan_phase_duration:.2f}s",
             plan_phase_status
         )
-        
         summary_table.add_row(
             "Phase 1: ReAct Investigation", 
             f"{results['phases']['phase_1_analysis']['duration']:.2f}s",
             "[green]Completed"
         )
+        
         # Add Phase 2 row with appropriate status
         if results["phases"]["phase_2_remediation"]["status"] == "completed":
             summary_table.add_row(
@@ -477,12 +471,10 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             f"{total_duration:.2f}s", 
             "[bold green]Completed"
         )
-        
         # Create root cause and resolution panels - ensure strings for content
         # Convert values to strings first to avoid 'bool' has no attribute 'substitute' errors
         root_cause_str = str(phase1_final_response) if phase1_final_response is not None else "Unknown"
         remediation_result_str = str(remediation_result) if remediation_result is not None else "No result"
-        
         root_cause_panel = Panel(
             f"[bold yellow]{root_cause_str}",
             title="[bold red]Root Cause",
@@ -490,7 +482,6 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             padding=(1, 2),
             safe_box=True  # Explicitly set safe_box to True
         )
-        
         resolution_panel = Panel(
             f"[bold green]{remediation_result_str}",
             title="[bold blue]Resolution Status",
@@ -498,13 +489,9 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             padding=(1, 2),
             safe_box=True  # Explicitly set safe_box to True
         )
-        
-        console.print("\n")
+
         try:
-            console.print(Panel(
-                summary_table,
-                safe_box=True  # Explicitly set safe_box to True
-            ))
+            console.print(summary_table)
         except Exception as e:
             console.print(f"Error printing rich summary table: {e}")
 

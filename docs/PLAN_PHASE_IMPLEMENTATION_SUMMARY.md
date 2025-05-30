@@ -1,232 +1,156 @@
 # Plan Phase Implementation Summary
 
-This document provides a comprehensive overview of the Plan Phase implementation that was added to the Kubernetes Volume Troubleshooting System.
+This document provides an overview of the Plan Phase implementation for the Kubernetes Volume Troubleshooting system. The Plan Phase is responsible for analyzing the Knowledge Graph from Phase 0, hypothesizing the most likely causes of volume read/write errors, prioritizing them by likelihood, and generating a step-by-step Investigation Plan for Phase 1.
 
-## Overview
+## Architecture Overview
 
-The Plan Phase is a new phase inserted between Phase 0 (Information Collection) and Phase 1 (ReAct Investigation) that generates structured Investigation Plans based on Knowledge Graph analysis.
+The Plan Phase has been implemented with a modular architecture that separates concerns and allows for flexibility in how investigation plans are generated. The key components are:
 
-### Updated System Workflow
+1. **PlanPhase**: The main orchestrator that coordinates the plan generation process
+2. **InvestigationPlanner**: The core component that generates investigation plans
+3. **KGContextBuilder**: Prepares Knowledge Graph context for consumption by the LLM
+4. **ToolRegistryBuilder**: Prepares the tool registry for consumption by the LLM
+5. **LLMPlanGenerator**: Generates investigation plans using LLMs
+6. **RuleBasedPlanGenerator**: Generates investigation plans using rule-based approaches
 
-```
-Phase 0: Information Collection
-    ↓ (Knowledge Graph + collected_info)
-Plan Phase: Investigation Plan Generation
-    ↓ (Investigation Plan)
-Phase 1: ReAct Investigation (Modified)
-    ↓ (Root Cause + Fix Plan)
-Phase 2: Remediation
-```
+This modular design allows for easy maintenance, testing, and extension of the Plan Phase.
 
-## Implementation Details
+## Component Details
 
-### 1. New Files Created
+### PlanPhase
 
-#### `phases/__init__.py`
-- Module initialization file for the phases package
-- Exports Plan Phase components for external use
+The `PlanPhase` class is the main entry point for the Plan Phase. It:
 
-#### `phases/investigation_planner.py`
-- **InvestigationPlanner class**: Core logic for generating Investigation Plans
-- **Key Methods**:
-  - `generate_investigation_plan()`: Main entry point for plan generation
-  - `_analyze_existing_issues()`: Analyzes Knowledge Graph issues by severity/type
-  - `_identify_target_entities()`: Maps Pod → PVC → PV → Drive → Node chain
-  - `_determine_investigation_priority()`: Sets investigation priority based on issue severity
-  - `_generate_investigation_steps()`: Creates detailed step-by-step investigation sequence
-  - `_generate_fallback_steps()`: Creates fallback steps for error scenarios
-  - `_format_investigation_plan()`: Formats plan into required string format
+- Receives the Knowledge Graph from Phase 0
+- Initializes the Investigation Planner
+- Generates the Investigation Plan
+- Parses the plan into a structured format for Phase 1
+- Returns the results to the caller
 
-#### `phases/plan_phase.py`
-- **PlanPhase class**: Orchestrates Investigation Plan generation
-- **Key Functions**:
-  - `run_plan_phase()`: Main async function to execute Plan Phase
-  - `create_plan_phase_graph()`: Creates LangGraph StateGraph for Plan Phase
-  - **Constraints**: Only uses Knowledge Graph tools (7 kg_* functions)
-  - **Error Handling**: Multiple fallback mechanisms for incomplete data
+### InvestigationPlanner
 
-#### `sample_investigation_plan.md`
-- Example Investigation Plan output demonstrating the format
-- Shows step-by-step structure with tools, arguments, and expected outcomes
-- Includes fallback steps with trigger conditions
+The `InvestigationPlanner` class is responsible for generating investigation plans. It:
 
-### 2. Modified Files
+- Analyzes the Knowledge Graph to identify patterns and issues
+- Determines whether to use LLM-based or rule-based plan generation
+- Coordinates the plan generation process
+- Returns the formatted Investigation Plan
 
-#### `troubleshoot.py`
-- **New Function**: `run_analysis_phase_with_plan()` - Modified Phase 1 that accepts Investigation Plan
-- **Updated Workflow**: Integrated Plan Phase into main troubleshooting flow
-- **Enhanced Summary**: Added Plan Phase to results tracking and summary table
-- **Error Handling**: Fallback to basic plan if Plan Phase fails
+### KGContextBuilder
 
-#### Key Changes:
-```python
-# Added Plan Phase execution
-investigation_plan = await run_plan_phase(
-    pod_name, namespace, volume_path, collected_info, CONFIG_DATA
-)
+The `KGContextBuilder` class prepares Knowledge Graph context for consumption by the LLM. It:
 
-# Modified Phase 1 to use Investigation Plan
-root_cause, fix_plan = await run_analysis_phase_with_plan(
-    pod_name, namespace, volume_path, collected_info, investigation_plan
-)
-```
+- Extracts relevant nodes and relationships from the Knowledge Graph
+- Analyzes existing issues to identify patterns and priorities
+- Formats the Knowledge Graph data for LLM consumption
 
-### 3. Investigation Plan Format
+### ToolRegistryBuilder
 
-The Plan Phase generates Investigation Plans in this structured format:
+The `ToolRegistryBuilder` class prepares the tool registry for consumption by the LLM. It:
+
+- Extracts tool information from the system
+- Formats the tool registry for LLM consumption
+- Groups tools by category for easier consumption
+
+### LLMPlanGenerator
+
+The `LLMPlanGenerator` class generates investigation plans using LLMs. It:
+
+- Initializes the LLM with the appropriate configuration
+- Generates system prompts for the LLM
+- Calls the LLM to generate the Investigation Plan
+- Formats the LLM output into the required format
+
+### RuleBasedPlanGenerator
+
+The `RuleBasedPlanGenerator` class generates investigation plans using rule-based approaches. It:
+
+- Determines investigation priorities based on issue severity and target entities
+- Generates step-by-step investigation steps based on priorities
+- Adds fallback steps for incomplete data
+- Formats the final plan into the required format
+
+## Workflow
+
+The Plan Phase workflow is as follows:
+
+1. The `PlanPhase` receives the Knowledge Graph from Phase 0, along with the pod name, namespace, and volume path
+2. The `PlanPhase` initializes the `InvestigationPlanner` with the Knowledge Graph and configuration data
+3. The `InvestigationPlanner` determines whether to use LLM-based or rule-based plan generation
+4. If using LLM-based generation:
+   - The `KGContextBuilder` prepares the Knowledge Graph context
+   - The `ToolRegistryBuilder` prepares the tool registry
+   - The `LLMPlanGenerator` generates the Investigation Plan
+5. If using rule-based generation:
+   - The `KGContextBuilder` analyzes existing issues
+   - The `KGContextBuilder` identifies target entities
+   - The `RuleBasedPlanGenerator` generates the Investigation Plan
+6. The `PlanPhase` parses the Investigation Plan into a structured format for Phase 1
+7. The `PlanPhase` returns the results to the caller
+
+## Investigation Plan Format
+
+The Investigation Plan is formatted as a structured string with the following sections:
 
 ```
 Investigation Plan:
 Target: Pod {namespace}/{pod_name}, Volume Path: {volume_path}
-Generated Steps: {number} main steps, {number} fallback steps
+Generated Steps: {num_steps} main steps, {num_fallback_steps} fallback steps
 
-Step 1: [Description] | Tool: [kg_tool(arguments)] | Expected: [expected_outcome]
-Step 2: [Description] | Tool: [kg_tool(arguments)] | Expected: [expected_outcome]
+Step 1: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
+Step 2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
 ...
+Step N: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
 
 Fallback Steps (if main steps fail):
-Step F1: [Description] | Tool: [kg_tool(arguments)] | Expected: [expected_outcome] | Trigger: [failure_condition]
+Step F1: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome] | Trigger: [failure_condition]
+Step F2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome] | Trigger: [failure_condition]
 ...
+Step FN: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome] | Trigger: [failure_condition]
 ```
 
-### 4. Knowledge Graph Tools Used (Plan Phase Only)
+The LLM-based plan generator also includes a Hypotheses Analysis section that lists the top potential causes of the volume read/write errors, along with evidence from the Knowledge Graph and likelihood rankings.
 
-The Plan Phase is restricted to these 7 Knowledge Graph tools:
-1. `kg_get_entity_info` - Get detailed entity information
-2. `kg_get_related_entities` - Find related entities
-3. `kg_get_all_issues` - Get issues by severity/type
-4. `kg_find_path` - Find shortest path between entities
-5. `kg_get_summary` - Get system overview
-6. `kg_analyze_issues` - Analyze issue patterns
-7. `kg_print_graph` - Get human-readable graph representation
+## Integration with Phase 1
 
-### 5. Modified Phase 1 Behavior
+The Plan Phase integrates with Phase 1 by providing a structured Investigation Plan that Phase 1 can execute using the ReAct framework. The structured plan includes:
 
-Phase 1 now:
-- **Accepts Investigation Plan** as primary input alongside collected_info
-- **Parses each step** from the Investigation Plan
-- **Executes Knowledge Graph tools** as specified in the plan
-- **Validates expected outcomes** against actual results
-- **Uses fallback steps** when primary steps fail
-- **Supplements with additional tools** for comprehensive analysis
-- **Logs execution details** for traceability
+- A list of steps to execute, each with a description, tool name, arguments, and expected outcome
+- A list of fallback steps to execute if the main steps fail, each with a trigger condition
+- Prioritized hypotheses for the volume read/write errors (for LLM-based plans)
 
-### 6. Error Handling Strategy
+Phase 1 executes the steps in order, with the results of each step informing the next. If a step fails, the corresponding fallback step is executed based on the trigger condition.
 
-#### Plan Phase Failures
-- **Knowledge Graph unavailable**: Uses basic fallback plan
-- **Entity not found**: Searches broadly for related entities
-- **Plan generation error**: Falls back to emergency plan with basic steps
+## Error Handling
 
-#### Phase 1 Execution Failures
-- **Step execution failure**: Triggers appropriate fallback steps
-- **Unexpected results**: Logs differences and continues with next steps
-- **Tool unavailability**: Uses alternative diagnostic tools
+The Plan Phase includes robust error handling to ensure that it can generate a useful Investigation Plan even in the face of incomplete or malformed data:
 
-#### Fallback Plans
-- **Basic Plan**: 3-4 essential Knowledge Graph queries
-- **Emergency Plan**: Minimal system overview and issue analysis
-- **Manual Fallback**: Complete Knowledge Graph visualization
+- If the LLM-based plan generation fails, it falls back to rule-based generation
+- If both LLM-based and rule-based generation fail, it generates a basic fallback plan
+- If the Knowledge Graph is incomplete, it includes fallback steps to gather missing data
+- If the tool registry is incomplete, it includes fallback steps to use alternative tools
 
-### 7. Integration Benefits
+## Configuration
 
-#### Structured Investigation
-- **Deterministic Planning**: Consistent approach across scenarios
-- **Priority-Based**: Focuses on critical issues first
-- **Entity-Aware**: Follows logical dependency chains
+The Plan Phase can be configured through the system configuration data:
 
-#### Enhanced Efficiency
-- **Knowledge Graph First**: Leverages pre-collected data
-- **Targeted Queries**: Reduces unnecessary tool calls
-- **Fallback Safety**: Robust handling of incomplete data
+- `plan_phase.use_llm`: Whether to use LLM-based plan generation (default: true)
+- `llm.model`: The LLM model to use (default: gpt-4)
+- `llm.api_key`: The API key for the LLM
+- `llm.api_endpoint`: The API endpoint for the LLM
+- `llm.temperature`: The temperature for the LLM (default: 0.1)
+- `llm.max_tokens`: The maximum number of tokens for the LLM (default: 4000)
 
-#### Improved Traceability
-- **Step Documentation**: Clear audit trail of investigation
-- **Outcome Validation**: Comparison of expected vs actual results
-- **Execution Logging**: Detailed logging for debugging
+## Example
 
-### 8. Configuration Options
-
-The Plan Phase supports configuration through `config.yaml`:
-```yaml
-plan_phase:
-  use_direct_generation: true  # Use direct generation (faster) vs LangGraph
-  timeout_seconds: 120        # Timeout for plan generation
-```
-
-### 9. Rich Console Output
-
-The Plan Phase includes enhanced console output:
-- **Plan Generation Panel**: Shows Investigation Plan creation progress
-- **Step Execution Panels**: Displays each Knowledge Graph query with results
-- **Summary Table**: Includes Plan Phase duration and status
-- **Error Panels**: Clear error reporting with fallback information
-
-### 10. Backward Compatibility
-
-The implementation maintains full backward compatibility:
-- **Existing APIs**: No changes to external interfaces
-- **Phase 2**: Unchanged remediation phase
-- **Configuration**: All existing config options work as before
-- **Logging**: Enhanced but compatible logging structure
-
-## Sample Output
-
-Here's an example of what the Plan Phase generates:
-
-```
-Investigation Plan:
-Target: Pod production/nginx-app, Volume Path: /var/www/html
-Generated Steps: 6 main steps, 2 fallback steps
-
-Step 1: Get all critical issues from Knowledge Graph | Tool: kg_get_all_issues(severity='critical') | Expected: Critical issues affecting volume operations
-Step 2: Analyze issue patterns and relationships | Tool: kg_analyze_issues() | Expected: Root cause analysis with probability scores
-Step 3: Get detailed Pod information | Tool: kg_get_entity_info(entity_type='Pod', entity_id='nginx-app') | Expected: Pod status and configuration issues
-Step 4: Find related storage entities | Tool: kg_get_related_entities(entity_type='Pod', entity_id='nginx-app', max_depth=2) | Expected: PVC, PV, Drive dependency chain
-Step 5: Check Drive health status | Tool: kg_get_entity_info(entity_type='Drive', entity_id='detected-drive') | Expected: SMART data and health metrics
-Step 6: Get system overview | Tool: kg_get_summary() | Expected: Overall cluster health statistics
-
-Fallback Steps (if main steps fail):
-Step F1: Get medium severity issues | Tool: kg_get_all_issues(severity='medium') | Expected: Broader issue analysis | Trigger: no_critical_issues
-Step F2: Print full Knowledge Graph | Tool: kg_print_graph(include_details=True, include_issues=True) | Expected: Complete visualization | Trigger: insufficient_data
-```
-
-## Implementation Quality
-
-### Code Quality
-- **Type Hints**: Full typing support throughout
-- **Error Handling**: Comprehensive exception handling
-- **Logging**: Structured logging with appropriate levels
-- **Documentation**: Detailed docstrings and comments
-
-### Testing Considerations
-- **Unit Tests**: Classes support easy unit testing
-- **Integration Tests**: Can be tested with mock Knowledge Graph
-- **Error Scenarios**: Multiple fallback paths for testing
-
-### Performance
-- **Efficient Planning**: Minimal overhead in plan generation
-- **Optimized Queries**: Knowledge Graph queries are targeted
-- **Timeout Handling**: Prevents hanging operations
+See [Sample Investigation Plan](sample_investigation_plan.md) for an example of the Investigation Plan generated by the Plan Phase.
 
 ## Future Enhancements
 
-Potential future improvements:
-1. **Machine Learning**: Learn from successful Investigation Plans
-2. **Custom Templates**: User-defined Investigation Plan templates
-3. **Parallel Execution**: Execute independent steps in parallel
-4. **Interactive Planning**: Allow user modification of generated plans
-5. **Plan Optimization**: Dynamic plan adjustment based on intermediate results
+Potential future enhancements to the Plan Phase include:
 
-## Conclusion
-
-The Plan Phase implementation successfully meets all requirements:
-- ✅ **Structured Planning**: Generates detailed Investigation Plans
-- ✅ **Knowledge Graph Only**: Uses only KG tools for deterministic planning
-- ✅ **Phase 1 Integration**: Modified Phase 1 to follow Investigation Plans
-- ✅ **Error Handling**: Robust fallback mechanisms
-- ✅ **Consistent Format**: Clear, actionable output format
-- ✅ **Backward Compatibility**: No breaking changes
-- ✅ **Rich Output**: Enhanced console and logging
-
-The Plan Phase transforms the troubleshooting system from reactive investigation to planned, systematic diagnosis while maintaining the flexibility and power of the ReAct framework.
+1. **Enhanced Hypothesis Generation**: Improve the LLM's ability to generate hypotheses by providing more context and examples
+2. **Dynamic Tool Selection**: Allow the LLM to dynamically select tools based on the hypotheses and available data
+3. **Feedback Loop**: Incorporate feedback from Phase 1 to improve future plan generation
+4. **Multi-LLM Approach**: Use multiple LLMs for different aspects of plan generation (e.g., one for hypothesis generation, one for tool selection)
+5. **Explainable Plans**: Enhance the Investigation Plan with explanations of why each step is included and how it relates to the hypotheses

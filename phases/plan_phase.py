@@ -2,81 +2,190 @@
 """
 Plan Phase for Kubernetes Volume Troubleshooting
 
-This module implements the Plan Phase that generates Investigation Plans
-based on Knowledge Graph analysis. The Plan Phase is inserted between
-Phase 0 (Information Collection) and Phase 1 (ReAct Investigation).
+This module contains the PlanPhase class that orchestrates the planning phase
+of the troubleshooting process, generating an Investigation Plan for Phase 1.
 """
 
 import logging
+import os
 import json
-import time
-from typing import Dict, List, Any, Optional, Tuple
-from langgraph.graph import StateGraph, MessagesState, START, END
-from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_openai import ChatOpenAI
-from rich.console import Console
-from rich.panel import Panel
-
+from typing import Dict, List, Any, Optional
 from knowledge_graph import KnowledgeGraph
-from .investigation_planner import InvestigationPlanner
+from phases.investigation_planner import InvestigationPlanner
 
 logger = logging.getLogger(__name__)
 
 class PlanPhase:
     """
-    Plan Phase implementation for generating Investigation Plans
+    Orchestrates the Plan Phase of the troubleshooting process
     
-    The Plan Phase analyzes the Knowledge Graph from Phase 0 and generates
-    a structured Investigation Plan for Phase 1 to follow.
+    The Plan Phase analyzes the Knowledge Graph from Phase 0, hypothesizes
+    the most likely causes of volume read/write errors, prioritizes them by
+    likelihood, and generates a step-by-step Investigation Plan for Phase 1.
     """
     
-    def __init__(self, knowledge_graph: KnowledgeGraph, config_data: Dict[str, Any]):
+    def __init__(self, config_data: Dict[str, Any] = None):
         """
         Initialize the Plan Phase
         
         Args:
-            knowledge_graph: KnowledgeGraph instance from Phase 0
-            config_data: Configuration data for the system
+            config_data: Configuration data for the system (optional)
         """
-        self.kg = knowledge_graph
-        self.config_data = config_data
-        self.planner = InvestigationPlanner(knowledge_graph)
+        self.config_data = config_data or {}
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        
-        # Rich console for output
-        self.console = Console()
-        
-    def generate_plan(self, pod_name: str, namespace: str, volume_path: str) -> str:
+        self.investigation_planner = None
+    
+    def execute(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
+               volume_path: str) -> Dict[str, Any]:
         """
-        Generate an Investigation Plan for the given pod and volume error
+        Execute the Plan Phase
         
         Args:
+            knowledge_graph: KnowledgeGraph instance from Phase 0
             pod_name: Name of the pod with the error
             namespace: Namespace of the pod
             volume_path: Path of the volume with I/O error
             
         Returns:
-            str: Formatted Investigation Plan
+            Dict[str, Any]: Results of the Plan Phase, including the Investigation Plan
         """
-        self.logger.info(f"Plan Phase: Generating investigation plan for {namespace}/{pod_name}")
+        self.logger.info(f"Executing Plan Phase for {namespace}/{pod_name} volume {volume_path}")
         
         try:
-            # Use the Investigation Planner to generate the plan
-            investigation_plan = self.planner.generate_investigation_plan(
+            # Initialize Investigation Planner
+            self.investigation_planner = InvestigationPlanner(knowledge_graph, self.config_data)
+            
+            # Generate Investigation Plan
+            investigation_plan = self.investigation_planner.generate_investigation_plan(
                 pod_name, namespace, volume_path
             )
             
-            self.logger.info(f"Plan Phase: Successfully generated plan with {len(investigation_plan.split('Step'))-1} steps")
-            return investigation_plan
+            # Parse the plan into a structured format for Phase 1
+            structured_plan = self._parse_investigation_plan(investigation_plan)
+            
+            # Return results
+            return {
+                "status": "success",
+                "investigation_plan": investigation_plan,
+                "structured_plan": structured_plan,
+                "pod_name": pod_name,
+                "namespace": namespace,
+                "volume_path": volume_path
+            }
             
         except Exception as e:
-            self.logger.error(f"Plan Phase: Error generating investigation plan: {str(e)}")
-            # Return a basic fallback plan
-            return self._generate_emergency_fallback_plan(pod_name, namespace, volume_path)
+            self.logger.error(f"Error executing Plan Phase: {str(e)}")
+            return {
+                "status": "error",
+                "error_message": str(e),
+                "investigation_plan": self._generate_basic_fallback_plan(pod_name, namespace, volume_path),
+                "pod_name": pod_name,
+                "namespace": namespace,
+                "volume_path": volume_path
+            }
     
-    def _generate_emergency_fallback_plan(self, pod_name: str, namespace: str, volume_path: str) -> str:
+    def _parse_investigation_plan(self, investigation_plan: str) -> Dict[str, Any]:
         """
-        Generate an emergency fallback plan when all else fails
+        Parse the Investigation Plan into a structured format for Phase 1
+        
+        Args:
+            investigation_plan: Formatted Investigation Plan
+            
+        Returns:
+            Dict[str, Any]: Structured Investigation Plan
+        """
+        try:
+            # Initialize structured plan
+            structured_plan = {
+                "steps": [],
+                "fallback_steps": []
+            }
+            
+            # Parse the plan
+            lines = investigation_plan.strip().split('\n')
+            in_fallback_section = False
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Skip empty lines and headers
+                if not line or line.startswith("Investigation Plan:") or line.startswith("Target:") or line.startswith("Generated Steps:"):
+                    continue
+                
+                # Check if we're in the fallback section
+                if line == "Fallback Steps (if main steps fail):":
+                    in_fallback_section = True
+                    continue
+                
+                # Parse step
+                if line.startswith("Step "):
+                    step_parts = line.split(" | ")
+                    
+                    if len(step_parts) >= 3:
+                        # Extract step number and description
+                        step_info = step_parts[0].split(": ", 1)
+                        step_number = step_info[0].replace("Step ", "")
+                        description = step_info[1] if len(step_info) > 1 else ""
+                        
+                        # Extract tool and arguments
+                        tool_info = step_parts[1].replace("Tool: ", "")
+                        tool_name = tool_info.split("(")[0] if "(" in tool_info else tool_info
+                        
+                        # Extract arguments if present
+                        arguments = {}
+                        if "(" in tool_info and ")" in tool_info:
+                            args_str = tool_info.split("(", 1)[1].rsplit(")", 1)[0]
+                            if args_str:
+                                # Parse arguments
+                                for arg in args_str.split(", "):
+                                    if "=" in arg:
+                                        key, value = arg.split("=", 1)
+                                        # Convert string representations to actual values
+                                        if value.lower() == "true":
+                                            value = True
+                                        elif value.lower() == "false":
+                                            value = False
+                                        elif value.isdigit():
+                                            value = int(value)
+                                        elif value.startswith("'") and value.endswith("'"):
+                                            value = value[1:-1]
+                                        elif value.startswith('"') and value.endswith('"'):
+                                            value = value[1:-1]
+                                        arguments[key] = value
+                        
+                        # Extract expected outcome
+                        expected_outcome = step_parts[2].replace("Expected: ", "") if len(step_parts) > 2 else ""
+                        
+                        # Extract trigger for fallback steps
+                        trigger = step_parts[3].replace("Trigger: ", "") if len(step_parts) > 3 and in_fallback_section else None
+                        
+                        # Create step dictionary
+                        step = {
+                            "step": step_number,
+                            "description": description,
+                            "tool": tool_name,
+                            "arguments": arguments,
+                            "expected_outcome": expected_outcome
+                        }
+                        
+                        if trigger:
+                            step["trigger"] = trigger
+                        
+                        # Add to appropriate list
+                        if in_fallback_section:
+                            structured_plan["fallback_steps"].append(step)
+                        else:
+                            structured_plan["steps"].append(step)
+            
+            return structured_plan
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing investigation plan: {str(e)}")
+            return {"steps": [], "fallback_steps": []}
+    
+    def _generate_basic_fallback_plan(self, pod_name: str, namespace: str, volume_path: str) -> str:
+        """
+        Generate a basic fallback plan when all else fails
         
         Args:
             pod_name: Name of the pod with the error
@@ -84,412 +193,70 @@ class PlanPhase:
             volume_path: Path of the volume with I/O error
             
         Returns:
-            str: Emergency fallback Investigation Plan
+            str: Basic fallback Investigation Plan
         """
-        emergency_plan = f"""Investigation Plan:
+        basic_plan = f"""Investigation Plan:
 Target: Pod {namespace}/{pod_name}, Volume Path: {volume_path}
-Generated Steps: 3 emergency steps (minimal fallback)
+Generated Steps: 4 basic steps (fallback mode)
 
-Step 1: Get Knowledge Graph summary | Tool: kg_get_summary() | Expected: Basic system overview and entity counts
-Step 2: Get all issues from Knowledge Graph | Tool: kg_get_all_issues() | Expected: Complete list of detected issues
-Step 3: Print Knowledge Graph for manual analysis | Tool: kg_print_graph(include_details=True, include_issues=True) | Expected: Full graph visualization
+Step 1: Get all critical issues from Knowledge Graph | Tool: kg_get_all_issues(severity='critical') | Expected: List of critical issues affecting the system
+Step 2: Analyze existing issues and patterns | Tool: kg_analyze_issues() | Expected: Root cause analysis and issue relationships  
+Step 3: Get system overview | Tool: kg_get_summary() | Expected: Overall system health and entity statistics
+Step 4: Print complete Knowledge Graph for manual analysis | Tool: kg_print_graph(include_details=True, include_issues=True) | Expected: Full system visualization for troubleshooting
 
 Fallback Steps (if main steps fail):
-Step F1: Emergency analysis fallback | Tool: kg_analyze_issues() | Expected: Any available issue analysis | Trigger: all_steps_failed
+Step F1: Search for any Pod entities | Tool: kg_get_related_entities(entity_type='Pod', entity_id='any', max_depth=1) | Expected: List of all Pods | Trigger: entity_not_found
+Step F2: Search for any Drive entities | Tool: kg_get_related_entities(entity_type='Drive', entity_id='any', max_depth=1) | Expected: List of all Drives | Trigger: no_target_found
 """
-        return emergency_plan
+        return basic_plan
 
 
-def create_plan_phase_graph(collected_info: Dict[str, Any], config_data: Dict[str, Any]) -> StateGraph:
+async def run_plan_phase(pod_name, namespace, volume_path, collected_info, config_data=None):
     """
-    Create a LangGraph StateGraph for the Plan Phase
-    
-    The Plan Phase graph only uses Knowledge Graph tools and generates
-    Investigation Plans based on the Knowledge Graph from Phase 0.
-    
-    Args:
-        collected_info: Pre-collected diagnostic information from Phase 0
-        config_data: Configuration data
-        
-    Returns:
-        StateGraph: LangGraph StateGraph for Plan Phase
-    """
-    if config_data is None:
-        raise ValueError("Configuration data is required")
-    
-    # Initialize language model
-    model = ChatOpenAI(
-        model=config_data['llm']['model'],
-        api_key=config_data['llm']['api_key'],
-        base_url=config_data['llm']['api_endpoint'],
-        temperature=config_data['llm']['temperature'],
-        max_tokens=config_data['llm']['max_tokens']
-    )
-    
-    def call_model(state: MessagesState):
-        """
-        Call the model with Plan Phase specific instructions
-        """
-        logging.info(f"Plan Phase: Processing state with {len(state['messages'])} messages")
-        
-        # Plan Phase specific system prompt
-        plan_phase_guidance = """
-You are in the Plan Phase of a Kubernetes volume troubleshooting system. Your ONLY task is to generate a detailed Investigation Plan based on Knowledge Graph analysis.
-
-PLAN PHASE CONSTRAINTS:
-- You can ONLY use Knowledge Graph tools (kg_* functions)
-- NO external system access (no kubectl, ssh, etc.)
-- NO hardware tools or system commands
-- NO modification of any system state
-- DETERMINISTIC analysis based solely on Knowledge Graph data
-
-AVAILABLE TOOLS (7 Knowledge Graph tools only):
-1. kg_get_entity_info - Get detailed information about specific entities
-2. kg_get_related_entities - Find entities related to a target entity
-3. kg_get_all_issues - Get all issues, optionally filtered by severity/type
-4. kg_find_path - Find shortest path between two entities  
-5. kg_get_summary - Get overall Knowledge Graph statistics
-6. kg_analyze_issues - Analyze issue patterns and relationships
-7. kg_print_graph - Get human-readable graph representation
-
-YOUR TASK:
-Generate a comprehensive Investigation Plan that Phase 1 can follow. The plan should:
-
-1. Start with Knowledge Graph analysis to understand current issues
-2. Identify the most critical problems affecting the target pod
-3. Create a step-by-step sequence for Phase 1 to follow
-4. Focus on Knowledge Graph queries that will provide maximum diagnostic value
-5. Include fallback steps for incomplete data scenarios
-
-INVESTIGATION PLAN FORMAT:
-```
-Investigation Plan:
-Target: Pod {namespace}/{pod_name}, Volume Path: {volume_path}
-Generated Steps: {number} main steps, {number} fallback steps
-
-Step 1: [Description] | Tool: [kg_tool(arguments)] | Expected: [expected_outcome]
-Step 2: [Description] | Tool: [kg_tool(arguments)] | Expected: [expected_outcome]
-...
-
-Fallback Steps (if main steps fail):
-Step F1: [Description] | Tool: [kg_tool(arguments)] | Expected: [expected_outcome] | Trigger: [failure_condition]
-...
-```
-
-STRATEGY:
-- Always start with kg_get_all_issues to understand critical problems
-- Use kg_analyze_issues to identify patterns and root causes
-- Follow the dependency chain: Pod -> PVC -> PV -> Drive -> Node
-- Include hardware and infrastructure checks through Knowledge Graph queries
-- Provide comprehensive fallback strategies
-
-Remember: You are creating a PLAN, not executing it. Phase 1 will execute your plan using both Knowledge Graph tools and additional diagnostic tools.
-"""
-
-        # Prepare context from collected information
-        context_summary = f"""
-=== KNOWLEDGE GRAPH CONTEXT FOR PLAN GENERATION ===
-
-Knowledge Graph Summary:
-{json.dumps(collected_info.get('knowledge_graph_summary', {}), indent=2)}
-
-Current Issues:
-{str(collected_info.get('issues', []))[:1000]}
-
-System Overview:
-- Total Nodes: {len(collected_info.get('node_info', {}))}
-- Total Pods: {len(collected_info.get('pod_info', {}))}
-- Total PVCs: {len(collected_info.get('pvc_info', {}))}
-- Total PVs: {len(collected_info.get('pv_info', {}))}
-
-=== END CONTEXT ===
-"""
-
-        system_message = {
-            "role": "system",
-            "content": f"""{plan_phase_guidance}
-
-Current System Context:
-{context_summary}
-
-Generate a comprehensive Investigation Plan that Phase 1 can execute to diagnose volume I/O issues efficiently."""
-        }
-        
-        # Ensure system message is first
-        if state["messages"]:
-            if isinstance(state["messages"], list):
-                if state["messages"][0].type != "system":
-                    state["messages"] = [system_message] + state["messages"]
-            else:
-                state["messages"] = [system_message, state["messages"]]
-        else:
-            state["messages"] = [system_message]
-        
-        # Import and get ONLY Knowledge Graph tools for Plan Phase
-        from tools.core.knowledge_graph import (
-            kg_get_entity_info,
-            kg_get_related_entities, 
-            kg_get_all_issues,
-            kg_find_path,
-            kg_get_summary,
-            kg_analyze_issues,
-            kg_print_graph
-        )
-        
-        plan_phase_tools = [
-            kg_get_entity_info,
-            kg_get_related_entities,
-            kg_get_all_issues, 
-            kg_find_path,
-            kg_get_summary,
-            kg_analyze_issues,
-            kg_print_graph
-        ]
-        
-        logging.info(f"Plan Phase: Using {len(plan_phase_tools)} Knowledge Graph tools only")
-        
-        # Call the model with only Knowledge Graph tools
-        response = model.bind_tools(plan_phase_tools).invoke(state["messages"])
-        
-        logging.info(f"Plan Phase: Model response generated")
-        
-        # Display thinking process with rich formatting
-        console = Console()
-        
-        if response.content:
-            console.print(Panel(
-                f"[bold green]{response.content}[/bold green]",
-                title="[bold cyan]Plan Phase - Investigation Plan Generation",
-                border_style="cyan",
-                safe_box=True
-            ))
-        
-        # Log tool usage for Plan Phase
-        if hasattr(response, 'additional_kwargs') and 'tool_calls' in response.additional_kwargs:
-            try:
-                for tool_call in response.additional_kwargs['tool_calls']:
-                    tool_name = tool_call['function']['name']
-                    
-                    if 'arguments' in tool_call['function']:
-                        args = tool_call['function']['arguments']
-                        try:
-                            args_json = json.loads(args)
-                            formatted_args = json.dumps(args_json, indent=2)
-                        except:
-                            formatted_args = args
-                        
-                        tool_panel = Panel(
-                            f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
-                            f"[bold yellow]Arguments:[/bold yellow]\n[blue]{formatted_args}[/blue]",
-                            title="[bold cyan]Plan Phase - Knowledge Graph Query",
-                            border_style="cyan",
-                            safe_box=True
-                        )
-                        console.print(tool_panel)
-                    
-                    logging.info(f"Plan Phase: Using tool {tool_name}")
-                    
-            except Exception as e:
-                logging.warning(f"Plan Phase: Error in rich formatting: {e}")
-                for tool_call in response.additional_kwargs['tool_calls']:
-                    logging.info(f"Plan Phase: Using tool: {tool_call['function']['name']}")
-        
-        return {"messages": state["messages"] + [response]}
-    
-    # Build state graph for Plan Phase
-    logging.info("Plan Phase: Building state graph")
-    builder = StateGraph(MessagesState)
-    
-    builder.add_node("call_model", call_model)
-    
-    # Add tools - ONLY Knowledge Graph tools for Plan Phase
-    from tools.core.knowledge_graph import (
-        kg_get_entity_info,
-        kg_get_related_entities,
-        kg_get_all_issues,
-        kg_find_path, 
-        kg_get_summary,
-        kg_analyze_issues,
-        kg_print_graph
-    )
-    
-    plan_phase_tools = [
-        kg_get_entity_info,
-        kg_get_related_entities,
-        kg_get_all_issues,
-        kg_find_path,
-        kg_get_summary, 
-        kg_analyze_issues,
-        kg_print_graph
-    ]
-    
-    builder.add_node("tools", ToolNode(plan_phase_tools))
-    
-    # Add conditional edges
-    builder.add_conditional_edges(
-        "call_model",
-        tools_condition,
-        {
-            "tools": "tools",
-            "none": END,
-            "__end__": END
-        }
-    )
-    
-    builder.add_edge("tools", "call_model")
-    builder.add_edge(START, "call_model")
-    
-    graph = builder.compile()
-    logging.info("Plan Phase: Graph compilation complete")
-    
-    return graph
-
-
-async def run_plan_phase(pod_name: str, namespace: str, volume_path: str, 
-                        collected_info: Dict[str, Any], config_data: Dict[str, Any]) -> str:
-    """
-    Run the Plan Phase to generate an Investigation Plan
+    Run the Plan Phase
     
     Args:
         pod_name: Name of the pod with the error
         namespace: Namespace of the pod
         volume_path: Path of the volume with I/O error
-        collected_info: Pre-collected diagnostic information from Phase 0
-        config_data: Configuration data
+        collected_info: Dictionary containing collected information from Phase 0, including knowledge_graph
+        config_data: Configuration data for the system (optional)
         
     Returns:
-        str: Generated Investigation Plan
+        str: Investigation Plan as a formatted string
     """
-    console = Console()
+    logger = logging.getLogger(__name__)
+    logger.info(f"Running Plan Phase for {namespace}/{pod_name} volume {volume_path}")
     
-    try:
-        console.print("\n")
-        console.print(Panel(
-            f"[bold white]Generating Investigation Plan based on Knowledge Graph analysis...\n"
-            f"Target: [green]{namespace}/{pod_name}[/green]\n"
-            f"Volume: [blue]{volume_path}[/blue]",
-            title="[bold cyan]PLAN PHASE: INVESTIGATION PLAN GENERATION",
-            border_style="cyan",
-            padding=(1, 2)
-        ))
+    # Extract knowledge_graph from collected_info
+    knowledge_graph = collected_info.get('knowledge_graph')
+    
+    # Validate knowledge_graph is a KnowledgeGraph instance
+    if knowledge_graph is None:
+        logger.error("Knowledge Graph not found in collected_info")
+        return "Error: Knowledge Graph not found in collected information"
+    
+    if not isinstance(knowledge_graph, KnowledgeGraph):
+        logger.error(f"Invalid Knowledge Graph type: {type(knowledge_graph)}")
+        return f"Error: Invalid Knowledge Graph type: {type(knowledge_graph)}"
+    
+    # Initialize and execute Plan Phase
+    plan_phase = PlanPhase(config_data)
+    results = plan_phase.execute(knowledge_graph, pod_name, namespace, volume_path)
+    
+    # Log the results
+    logger.info(f"Plan Phase completed with status: {results['status']}")
+    
+    # Save the investigation plan to a file if configured
+    if config_data and config_data.get('plan_phase', {}).get('save_plan', False):
+        output_dir = config_data.get('output_dir', 'output')
+        os.makedirs(output_dir, exist_ok=True)
         
-        # Get the Knowledge Graph from collected info
-        knowledge_graph = collected_info.get('knowledge_graph')
-        if not knowledge_graph:
-            logging.warning("Plan Phase: No Knowledge Graph found in collected info")
-            # Create a basic plan without KG analysis
-            basic_plan = f"""Investigation Plan:
-Target: Pod {namespace}/{pod_name}, Volume Path: {volume_path}
-Generated Steps: 3 basic steps (no Knowledge Graph available)
-
-Step 1: Get system overview | Tool: kg_get_summary() | Expected: Basic system statistics if available
-Step 2: Get all issues | Tool: kg_get_all_issues() | Expected: Any detected issues in the system
-Step 3: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, include_issues=True) | Expected: Full system visualization
-
-Fallback Steps (if main steps fail):
-Step F1: Emergency analysis | Tool: kg_analyze_issues() | Expected: Basic issue analysis | Trigger: kg_unavailable
-"""
-            return basic_plan
+        plan_file = os.path.join(output_dir, f"investigation_plan_{namespace}_{pod_name}.txt")
+        with open(plan_file, 'w') as f:
+            f.write(results['investigation_plan'])
         
-        # Initialize Plan Phase with Knowledge Graph
-        plan_phase = PlanPhase(knowledge_graph, config_data)
-        
-        # Option 1: Direct plan generation (simpler, faster)
-        if config_data.get('plan_phase', {}).get('use_direct_generation', True):
-            investigation_plan = plan_phase.generate_plan(pod_name, namespace, volume_path)
-            
-            console.print(Panel(
-                f"[bold green]Investigation Plan generated successfully![/bold green]\n"
-                f"[yellow]Plan contains {len(investigation_plan.split('Step'))-1} main steps[/yellow]",
-                title="[bold cyan]Plan Phase Complete",
-                border_style="green"
-            ))
-            
-            # Print the complete Investigation Plan to console
-            console.print("\n")
-            console.print(Panel(
-                f"[bold white]{investigation_plan}[/bold white]",
-                title="[bold cyan]GENERATED INVESTIGATION PLAN",
-                border_style="cyan",
-                padding=(1, 2)
-            ))
-            
-            return investigation_plan
-        
-        # Option 2: LangGraph-based generation (more sophisticated)
-        else:
-            # Create and run the Plan Phase graph
-            graph = create_plan_phase_graph(collected_info, config_data)
-            
-            # Initial query for plan generation
-            query = f"""Plan Phase: Generate a comprehensive Investigation Plan for troubleshooting volume I/O error in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
-
-Use only Knowledge Graph tools to analyze the current system state and create a step-by-step investigation plan that Phase 1 can follow.
-
-Your task:
-1. Analyze the Knowledge Graph to understand current issues
-2. Identify critical problems affecting the target pod
-3. Create a structured investigation sequence
-4. Include fallback steps for incomplete data scenarios
-5. Focus on queries that provide maximum diagnostic value
-
-Generate the Investigation Plan in the specified format."""
-            
-            # Set timeout for plan generation
-            timeout_seconds = config_data.get('plan_phase', {}).get('timeout_seconds', 120)
-            
-            # Run the graph
-            formatted_query = {"messages": [{"role": "user", "content": query}]}
-            
-            try:
-                import asyncio
-                response = await asyncio.wait_for(
-                    graph.ainvoke(formatted_query, config={"recursion_limit": 50}),
-                    timeout=timeout_seconds
-                )
-                
-                # Extract the Investigation Plan from the response
-                if response["messages"]:
-                    if isinstance(response["messages"], list):
-                        final_message = response["messages"][-1].content
-                    else:
-                        final_message = response["messages"].content
-                        
-                    console.print(Panel(
-                        f"[bold green]Investigation Plan generated via LangGraph![/bold green]",
-                        title="[bold cyan]Plan Phase Complete",
-                        border_style="green"
-                    ))
-                    
-                    return final_message
-                else:
-                    logging.warning("Plan Phase: No response from LangGraph")
-                    return plan_phase.generate_plan(pod_name, namespace, volume_path)
-                    
-            except Exception as e:
-                logging.error(f"Plan Phase: Error in LangGraph execution: {str(e)}")
-                # Fallback to direct generation
-                return plan_phase.generate_plan(pod_name, namespace, volume_path)
-        
-    except Exception as e:
-        error_msg = f"Plan Phase: Critical error: {str(e)}"
-        logging.error(error_msg)
-        console.print(Panel(
-            f"[bold red]Plan Phase failed: {str(e)}[/bold red]\n"
-            f"[yellow]Falling back to emergency plan generation[/yellow]",
-            title="[bold red]Plan Phase Error",
-            border_style="red"
-        ))
-        
-        # Emergency fallback plan
-        emergency_plan = f"""Investigation Plan:
-Target: Pod {namespace}/{pod_name}, Volume Path: {volume_path}  
-Generated Steps: 2 emergency steps (error fallback)
-
-Step 1: Get all available issues | Tool: kg_get_all_issues() | Expected: Any detectable issues in the system
-Step 2: Get system summary | Tool: kg_get_summary() | Expected: Basic system health overview
-
-Fallback Steps (if main steps fail):
-Step F1: Print full Knowledge Graph | Tool: kg_print_graph(include_details=True, include_issues=True) | Expected: Complete system visualization | Trigger: plan_phase_error
-"""
-        return emergency_plan
+        logger.info(f"Investigation Plan saved to {plan_file}")
+    
+    # Return the investigation plan as a string
+    return results['investigation_plan']

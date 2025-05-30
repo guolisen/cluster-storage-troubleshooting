@@ -19,7 +19,7 @@ monitor:
   retry_backoff_seconds: 5
 
 plan_phase:
-  use_direct_generation: false  # Use direct generation (faster) vs LangGraph
+  use_llm: true  
   timeout_seconds: 120        # Timeout for plan generation
 
 # Troubleshooting Configuration

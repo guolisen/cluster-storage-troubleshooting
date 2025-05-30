@@ -339,6 +339,15 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
                 pod_name, namespace, volume_path, collected_info, CONFIG_DATA
             )
             
+            # Print the Investigation Plan to the console
+            console.print("\n")
+            console.print(Panel(
+                f"[bold white]{investigation_plan}",
+                title="[bold blue]INVESTIGATION PLAN",
+                border_style="blue",
+                padding=(1, 2)
+            ))
+            
             results["phases"]["plan_phase"] = {
                 "status": "completed",
                 "investigation_plan": investigation_plan[:500] + "..." if len(investigation_plan) > 500 else investigation_plan,  # Truncate for summary
@@ -367,15 +376,6 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
 """
         
         phase_1_start = time.time()
-        
-        # Phase 1: ReAct Investigation with Investigation Plan
-        console.print("\n")
-        console.print(Panel(
-            "[bold white]Executing Investigation Plan to actively investigate volume I/O issue...",
-            title="[bold magenta]PHASE 1: REACT INVESTIGATION WITH PLAN",
-            border_style="magenta",
-            padding=(1, 2)
-        ))
         
         phase1_final_response, skip_phase2 = await run_analysis_phase_wrapper(
             pod_name, namespace, volume_path, collected_info, investigation_plan

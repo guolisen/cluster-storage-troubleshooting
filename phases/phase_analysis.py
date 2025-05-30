@@ -126,7 +126,36 @@ Your task is to:
 4. If a step fails or provides unexpected results, use the fallback steps provided
 5. Use additional ReAct tools for comprehensive root cause analysis and verification
 6. Aggregate results from all Investigation Plan steps
-7. Generate a comprehensive root cause analysis and fix plan
+7. Generate a comprehensive root cause analysis
+
+SPECIAL CASE DETECTION:
+After executing the Investigation Plan, you must determine if one of these special cases applies:
+
+CASE 1 - NO ISSUES DETECTED:
+If the Knowledge Graph and Investigation Plan execution confirm the system has no issues:
+- Output a structured summary in the following format:
+  ```
+  Summary Finding: No issues detected in the system.
+  Evidence: [Details from Knowledge Graph queries, e.g., no error logs found, all services operational]
+  Advice: [Recommendations, e.g., continue monitoring the system]
+  SKIP_PHASE2: YES
+  ```
+
+CASE 2 - MANUAL INTERVENTION REQUIRED:
+If the Knowledge Graph and Investigation Plan execution confirm the issue cannot be fixed automatically:
+- Output a structured summary in the following format:
+  ```
+  Summary Finding: Issue detected, but requires manual intervention.
+  Evidence: [Details from Knowledge Graph queries, e.g., specific error or configuration requiring human action]
+  Advice: [Detailed step-by-step instructions for manual resolution, e.g., specific commands or actions for the user]
+  SKIP_PHASE2: YES
+  ```
+
+CASE 3 - AUTOMATIC FIX POSSIBLE:
+If the issue can be resolved automatically:
+- Generate a fix plan based on the Investigation Plan's results
+- Output a comprehensive root cause analysis and fix plan
+- Do NOT include the SKIP_PHASE2 marker
 
 EXECUTION GUIDELINES:
 - Follow the Investigation Plan steps in order
@@ -168,7 +197,7 @@ After completing the Investigation Plan, provide comprehensive root cause analys
 
 async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_path: str, 
                                      collected_info: Dict[str, Any], investigation_plan: str,
-                                     config_data: Dict[str, Any]) -> str:
+                                     config_data: Dict[str, Any]) -> Tuple[str, bool]:
     """
     Run Phase 1: ReAct Investigation with pre-collected information as base knowledge
     
@@ -181,7 +210,7 @@ async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_pat
         config_data: Configuration data
         
     Returns:
-        str: Analysis result
+        Tuple[str, bool]: (Analysis result, Skip Phase2 flag)
     """
     logging.info("Starting Phase 1: ReAct Investigation with Plan")
     
@@ -201,9 +230,17 @@ async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_pat
         # Run the investigation
         result = await phase.run_investigation(pod_name, namespace, volume_path, investigation_plan)
         
-        return result
+        # Check if the result contains the SKIP_PHASE2 marker
+        skip_phase2 = "SKIP_PHASE2: YES" in result
+        
+        # Remove the SKIP_PHASE2 marker from the output if present
+        if skip_phase2:
+            result = result.replace("SKIP_PHASE2: YES", "").strip()
+            logging.info("Phase 1 indicated Phase 2 should be skipped")
+        
+        return result, skip_phase2
     
     except Exception as e:
         error_msg = f"Error during analysis phase: {str(e)}"
         logging.error(error_msg)
-        return error_msg
+        return error_msg, False

@@ -771,86 +771,71 @@ class KnowledgeGraph:
             use_rich = False
             
         # Create console for rich output
-        if use_rich and rich_available:
-            console = Console(record=True)
-            file_console = Console(file=open('troubleshoot.log', 'a'))
-        
+        console = Console(record=True)
+        file_console = Console(file=open('troubleshoot.log', 'a'))
+
         output = []
         
         # Header
-        if use_rich and rich_available:
-            console.print(Panel(
-                "[bold cyan]📊 KUBERNETES STORAGE KNOWLEDGE GRAPH[/bold cyan]",
-                border_style="blue",
-                width=80
-            ))
-        else:
-            output.append("=" * 80)
-            output.append("📊 KUBERNETES STORAGE KNOWLEDGE GRAPH")
-            output.append("=" * 80)
-        
+        console.print(Panel(
+            "[bold cyan]KUBERNETES STORAGE KNOWLEDGE GRAPH[/bold cyan]",
+            border_style="blue",
+            width=80
+        ))
+
         # Summary Statistics
         summary = self.get_summary()
-        if use_rich and rich_available:
-            # Create summary table
-            summary_table = Table(
-                title="[bold]🔍 GRAPH SUMMARY",
-                show_header=True,
-                header_style="bold cyan",
-                box=True,
-                border_style="blue"
-            )
-            
-            summary_table.add_column("Metric", style="dim")
-            summary_table.add_column("Value", justify="right")
-            
-            def safe_format(value: Any) -> str:
-                """Safely convert any value to a string for rich formatting"""
-                try:
-                    # Explicitly handle boolean values first
-                    if isinstance(value, bool):
-                        return "True" if value else "False"
-                    # For all other types, convert to string
-                    return str(value)
-                except Exception:
-                    return "N/A"
 
-            # Ensure all values are explicitly converted to strings
-            summary_table.add_row("Total Nodes", f"[blue]{str(summary['total_nodes'])}[/blue]")
-            summary_table.add_row("Total Edges", f"[blue]{str(summary['total_edges'])}[/blue]")
-            summary_table.add_row("Total Issues", f"[yellow]{str(summary['total_issues'])}[/yellow]")
-            summary_table.add_row("Critical Issues", f"[red]{str(summary['critical_issues'])}[/red]")
-            summary_table.add_row("High Issues", f"[orange3]{str(summary['high_issues'])}[/orange3]")
-            summary_table.add_row("Medium Issues", f"[yellow]{str(summary['medium_issues'])}[/yellow]")
-            summary_table.add_row("Low Issues", f"[green]{str(summary['low_issues'])}[/green]")
-            
+        # Create summary table
+        summary_table = Table(
+            title="[bold] GRAPH SUMMARY",
+            show_header=True,
+            header_style="bold cyan",
+            box=True,
+            border_style="blue"
+        )
+        
+        summary_table.add_column("Metric", style="dim")
+        summary_table.add_column("Value", justify="right")
+        
+        def safe_format(value: Any) -> str:
+            """Safely convert any value to a string for rich formatting"""
             try:
-                console.print(Panel(
-                    summary_table,
-                    safe_box=True  # Explicitly set safe_box to True
-                ))
-            except Exception as e:
-                kg_logger.error(f"Error printing rich summary table: {e}")
-                # Fallback to plain text
-                output.append("\n🔍 GRAPH SUMMARY:")
-                output.append("-" * 40)
-                output.append(f"📦 Total Nodes: {summary['total_nodes']}")
-                output.append(f"🔗 Total Edges: {summary['total_edges']}")
-                output.append(f"⚠️  Total Issues: {summary['total_issues']}")
-                output.append(f"🔴 Critical Issues: {summary['critical_issues']}")
-                output.append(f"🟠 High Issues: {summary['high_issues']}")
-                output.append(f"🟡 Medium Issues: {summary['medium_issues']}")
-                output.append(f"🟢 Low Issues: {summary['low_issues']}")
-        else:
+                # Explicitly handle boolean values first
+                if isinstance(value, bool):
+                    return "True" if value else "False"
+                # For all other types, convert to string
+                return str(value)
+            except Exception:
+                return "N/A"
+
+        # Ensure all values are explicitly converted to strings
+        summary_table.add_row("Total Nodes", f"[blue]{str(summary['total_nodes'])}[/blue]")
+        summary_table.add_row("Total Edges", f"[blue]{str(summary['total_edges'])}[/blue]")
+        summary_table.add_row("Total Issues", f"[yellow]{str(summary['total_issues'])}[/yellow]")
+        summary_table.add_row("Critical Issues", f"[red]{str(summary['critical_issues'])}[/red]")
+        summary_table.add_row("High Issues", f"[orange3]{str(summary['high_issues'])}[/orange3]")
+        summary_table.add_row("Medium Issues", f"[yellow]{str(summary['medium_issues'])}[/yellow]")
+        summary_table.add_row("Low Issues", f"[green]{str(summary['low_issues'])}[/green]")
+        
+        try:
+            console.print(Panel(
+                summary_table,
+                safe_box=True  # Explicitly set safe_box to True
+            ))
+        except Exception as e:
+            kg_logger.error(f"Error printing rich summary table: {e}")
+            # Fallback to plain text
             output.append("\n🔍 GRAPH SUMMARY:")
             output.append("-" * 40)
-            output.append(f"📦 Total Nodes: {summary['total_nodes']}")
+            output.append(f"🔗 Total Nodes: {summary['total_nodes']}")
             output.append(f"🔗 Total Edges: {summary['total_edges']}")
-            output.append(f"⚠️  Total Issues: {summary['total_issues']}")
+            output.append(f"⚠️ Total Issues: {summary['total_issues']}")
             output.append(f"🔴 Critical Issues: {summary['critical_issues']}")
             output.append(f"🟠 High Issues: {summary['high_issues']}")
             output.append(f"🟡 Medium Issues: {summary['medium_issues']}")
             output.append(f"🟢 Low Issues: {summary['low_issues']}")
+
         
         # Entity Breakdown
         output.append("\n📋 ENTITY BREAKDOWN:")

@@ -476,7 +476,7 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
         root_cause_str = str(phase1_final_response) if phase1_final_response is not None else "Unknown"
         remediation_result_str = str(remediation_result) if remediation_result is not None else "No result"
         root_cause_panel = Panel(
-            f"[bold cyan]{root_cause_str}",
+            f"[yellow]{root_cause_str}",
             title="[bold red]Root Cause",
             border_style="red",
             padding=(1, 2),

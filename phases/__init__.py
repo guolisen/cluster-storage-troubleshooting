@@ -7,7 +7,7 @@ including all phases: Information Collection, Plan, Analysis, and Remediation.
 """
 
 # Plan Phase components
-from .plan_phase import PlanPhase, run_plan_phase
+from .phase_plan_phase import PlanPhase, run_plan_phase
 from .investigation_planner import InvestigationPlanner
 from .kg_context_builder import KGContextBuilder
 from .tool_registry_builder import ToolRegistryBuilder

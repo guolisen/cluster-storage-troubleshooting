@@ -359,19 +359,20 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
     # Next Steps
     # Root Cause
     # Fix Plan
-9. **Output Example**:
-
-{final_output_example}
 
 You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.
 """
         }
         
-        # Add pre-collected diagnostic context to user message
+        # Add pre-collected diagnostic context and output example to user message
         user_messages = []
         context_message = {
             "role": "user",
-            "content": f"Pre-collected diagnostic context:\n{context_summary}"
+            "content": f"""Pre-collected diagnostic context:
+{context_summary}
+
+OUTPUT EXAMPLE:
+{final_output_example}"""
         }
         
         # Ensure system message is first, followed by context message, then any existing user messages

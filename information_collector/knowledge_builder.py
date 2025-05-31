@@ -1226,14 +1226,15 @@ class KnowledgeBuilder(MetadataParsers):
     
     async def _load_historical_experience(self):
         """
-        Load historical experience data from the historical_experience.json file 
+        Load historical experience data from the configured file path
         and add it to the knowledge graph
         """
         import os
         import json
         
         try:
-            historical_experience_file = "historical_experience.json"
+            # Get file path from configuration or use default if not configured
+            historical_experience_file = self.config.get('historical_experience', {}).get('file_path', "historical_experience.json")
             logging.info(f"Loading historical experience data from {historical_experience_file}")
             
             if not os.path.exists(historical_experience_file):

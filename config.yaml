@@ -67,3 +67,7 @@ commands:
 logging:
   file: "troubleshoot.log"
   stdout: true
+
+# Historical Experience Configuration
+historical_experience:
+  file_path: "historical_experience.json"  # Path to historical experience data file

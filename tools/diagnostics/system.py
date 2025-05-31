@@ -116,7 +116,7 @@ def dmesg_command(options: str = "") -> str:
 @tool
 def journalctl_command(options: str = "") -> str:
     """
-    Execute journalctl command to show systemd journal logs
+    Execute journalctl command to show systemd journal logs. Output the logs from the last 5 minutes as much as possible.
     
     Args:
         options: Command options (optional)

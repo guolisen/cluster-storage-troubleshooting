@@ -39,7 +39,8 @@ class KnowledgeGraph:
                 'acs': {},
                 'volumes': {},
                 'system_entities': {},
-                'cluster_nodes': {}
+                'cluster_nodes': {},
+                'historical_experiences': {}
             }
         }
         self.issues = []
@@ -319,6 +320,43 @@ class KnowledgeGraph:
             **attributes
         }
         kg_logger.debug(f"Added ClusterNode node: {node_id}")
+        return node_id
+        
+    def add_gnode_historical_experience(self, experience_id: str, phenomenon: str, root_cause: str, 
+                                       localization_method: str, resolution_method: str, **attributes) -> str:
+        """
+        Add a Historical Experience node to the knowledge graph
+        
+        Args:
+            experience_id: Unique identifier for the historical experience
+            phenomenon: Description of the observed issue
+            root_cause: Analysis of the underlying cause
+            localization_method: Steps or tools to diagnose the issue
+            resolution_method: Steps or actions to resolve the issue
+            **attributes: Additional attributes
+            
+        Returns:
+            str: Node ID
+        """
+        node_id = f"gnode:HistoricalExperience:{experience_id}"
+        self.graph.add_node(node_id,
+                           entity_type="gnode",
+                           gnode_subtype="HistoricalExperience",
+                           experience_id=experience_id,
+                           phenomenon=phenomenon,
+                           root_cause=root_cause,
+                           localization_method=localization_method,
+                           resolution_method=resolution_method,
+                           **attributes)
+        self.entities['gnodes']['historical_experiences'][node_id] = {
+            'experience_id': experience_id,
+            'phenomenon': phenomenon,
+            'root_cause': root_cause,
+            'localization_method': localization_method,
+            'resolution_method': resolution_method,
+            **attributes
+        }
+        kg_logger.debug(f"Added HistoricalExperience node: {node_id}")
         return node_id
     
     def add_relationship(self, source_id: str, target_id: str, relationship: str, **attributes):
@@ -737,8 +775,11 @@ class KnowledgeGraph:
         }
         
         # Count entities by type
-        for entity_type in ['Pod', 'PVC', 'PV', 'Drive', 'Node', 'StorageClass', 'LVG', 'AC', 'Volume', 'System', 'ClusterNode']:
+        for entity_type in ['Pod', 'PVC', 'PV', 'Drive', 'Node', 'StorageClass', 'LVG', 'AC', 'Volume', 'System', 'ClusterNode', 'HistoricalExperience']:
             summary['entity_counts'][entity_type] = len(self.find_nodes_by_type(entity_type))
+        
+        # Add historical experience count specifically 
+        summary['historical_experience_count'] = len(self.find_nodes_by_type('HistoricalExperience'))
         
         return summary
     

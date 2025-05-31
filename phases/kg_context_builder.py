@@ -59,7 +59,8 @@ class KGContextBuilder:
         kg_context = {
             "nodes": [],
             "relationships": [],
-            "issues": self.kg.get_all_issues()
+            "issues": self.kg.get_all_issues(),
+            "historical_experiences": []
         }
         
         # Add target pod and related entities
@@ -110,6 +111,25 @@ class KGContextBuilder:
             if node_id and node_id not in issue_node_ids and self.kg.graph.has_node(node_id):
                 kg_context["nodes"].append(self.format_node_for_llm(node_id))
                 issue_node_ids.add(node_id)
+        
+        # Add all historical experience data
+        historical_experience_nodes = self.kg.find_nodes_by_type('HistoricalExperience')
+        for node_id in historical_experience_nodes:
+            historical_exp = self.format_node_for_llm(node_id)
+            kg_context["historical_experiences"].append(historical_exp)
+            
+            # Also add to nodes list
+            kg_context["nodes"].append(historical_exp)
+            
+            # Add relationships between historical experience and related system components
+            # These relationships will be created when loading the historical experience data
+            related_nodes = self.kg.find_connected_nodes(node_id)
+            for related_id in related_nodes:
+                kg_context["relationships"].append({
+                    "source": node_id,
+                    "target": related_id,
+                    "type": "related_to"
+                })
         
         # Add summary statistics
         kg_context["summary"] = self.kg.get_summary()

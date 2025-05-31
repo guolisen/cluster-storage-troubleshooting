@@ -106,10 +106,21 @@ class RemediationPhase:
                 self.collected_info, phase="phase2", config_data=self.config_data
             )
             
-            # Remediation query - Simplified and focused on the task
+            # Remediation query - Include historical experience data
             query = f"""Phase 2 - Remediation: Execute the fix plan to resolve the identified issue.
 
 Root Cause and Fix Plan: {phase1_final_response}
+
+USING HISTORICAL EXPERIENCE:
+The Knowledge Graph contains historical experience data with previous cases of volume I/O failures, which includes:
+- The phenomenon description of previously observed issues
+- The root cause analysis from past incidents
+- The localization method used to diagnose the issues
+- The resolution method that was successful in resolving similar problems
+
+When executing the fix plan, consider the resolution methods from historical experience data that match or are similar to the identified root cause. These proven solutions can guide your implementation and may increase the likelihood of successfully resolving the current issue.
+
+If the current root cause closely matches a historical experience entry, prioritize the resolution approach from that experience while adapting it to the current environment's specific conditions.
 
 <<< Note >>>: Please try to fix issue within 30 tool calls.
 """

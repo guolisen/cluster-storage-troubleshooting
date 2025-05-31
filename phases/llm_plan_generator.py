@@ -101,16 +101,29 @@ class LLMPlanGenerator:
                 # Fallback to a simpler representation
                 tool_registry_str = str(tool_registry)
             
-            # Step 3: Prepare user message
+            # Step 3: Prepare user message with explicit historical experience section
+            
+            # Extract and format historical experience data from kg_context
+            historical_experiences_formatted = self._format_historical_experiences(kg_context)
+            
             user_message = f"""Generate an Investigation Plan for volume read/write errors in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
 
 KNOWLEDGE GRAPH CONTEXT:
 {kg_context_str}
 
+HISTORICAL EXPERIENCE:
+{historical_experiences_formatted}
+
 AVAILABLE TOOLS FOR PHASE1:
 {tool_registry_str}
 
 Analyze the Knowledge Graph, generate hypotheses for the volume read/write errors, prioritize them, and create a step-by-step Investigation Plan using the available tools.
+
+IMPORTANT: Pay special attention to the historical experience data above. Use this data to:
+1. Identify patterns where current symptoms match previously observed phenomena
+2. Consider known root causes from similar past incidents when forming hypotheses
+3. Incorporate proven localization methods into your Investigation Plan
+4. Reference relevant historical experiences when prioritizing hypotheses (high, medium, low)
 """
             
             # Step 4: Call LLM
@@ -153,8 +166,18 @@ Analyze the Knowledge Graph, generate hypotheses for the volume read/write error
 TASK:
 1. Analyze the Knowledge Graph to identify patterns or indicators of volume read/write errors in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
 2. Generate hypotheses for the top potential causes of the volume read/write errors.
-3. Prioritize these hypotheses by likelihood (high, medium, low) based on evidence in the Knowledge Graph.
+3. Prioritize these hypotheses by likelihood (high, medium, low) based on evidence in the Knowledge Graph and historical experience data.
 4. Create a step-by-step Investigation Plan for Phase1 to execute, using the available tools.
+
+USING HISTORICAL EXPERIENCE:
+The Knowledge Graph contains historical experience data with previous cases of volume I/O failures. 
+For each relevant historical experience entry, consider:
+- The phenomenon description to identify patterns similar to the current issue
+- The root cause to inform your hypotheses about what might be causing the current issue
+- The localization method to guide which tools to use and in what order during your investigation
+- The resolution method to understand potential solutions once the root cause is confirmed
+
+Use the historical experience to prioritize your hypotheses and focus on those with higher likelihood based on past incidents. When creating your Investigation Plan, incorporate steps from historical localization methods when they align with your hypotheses.
 
 OUTPUT FORMAT:
 Your response must include:
@@ -163,6 +186,7 @@ Your response must include:
 List the top potential causes, each with:
 - Description of the potential cause
 - Evidence from the Knowledge Graph
+- Reference to relevant historical experience (if applicable)
 - Likelihood ranking (high, medium, low)
 
 2. INVESTIGATION PLAN:
@@ -171,6 +195,7 @@ A step-by-step plan with:
 - Description of the action
 - Tool to use with parameters
 - Expected outcome
+- Reference to historical experience (if this step was informed by past incidents)
 
 Format each step as:
 Step X: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
@@ -215,6 +240,49 @@ Step FX: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_out
         lines.append(raw_plan)
         
         return "\n".join(lines)
+    
+    def _format_historical_experiences(self, kg_context: Dict[str, Any]) -> str:
+        """
+        Format historical experience data from Knowledge Graph context
+        
+        Args:
+            kg_context: Knowledge Graph context containing historical experience data
+            
+        Returns:
+            str: Formatted historical experience data for LLM consumption
+        """
+        try:
+            # Extract historical experiences from kg_context
+            historical_experiences = kg_context.get('historical_experiences', [])
+            
+            if not historical_experiences:
+                return "No historical experience data available."
+            
+            # Format historical experiences in a clear, structured way
+            formatted_entries = []
+            
+            for idx, exp in enumerate(historical_experiences, 1):
+                # Get attributes from the experience
+                attributes = exp.get('attributes', {})
+                phenomenon = attributes.get('phenomenon', 'Unknown phenomenon')
+                root_cause = attributes.get('root_cause', 'Unknown root cause')
+                localization_method = attributes.get('localization_method', 'No localization method provided')
+                resolution_method = attributes.get('resolution_method', 'No resolution method provided')
+                
+                # Format the entry
+                entry = f"""HISTORICAL EXPERIENCE #{idx}:
+Phenomenon: {phenomenon}
+Root Cause: {root_cause}
+Localization Method: {localization_method}
+Resolution Method: {resolution_method}
+"""
+                formatted_entries.append(entry)
+            
+            return "\n".join(formatted_entries)
+            
+        except Exception as e:
+            self.logger.warning(f"Error formatting historical experiences: {str(e)}")
+            return "Error formatting historical experience data."
     
     def _generate_basic_fallback_plan(self, pod_name: str, namespace: str, volume_path: str) -> str:
         """

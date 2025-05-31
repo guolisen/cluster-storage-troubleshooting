@@ -149,7 +149,7 @@ Provide a detailed remediation report that includes:
 You are in a legacy mode. Please specify either 'phase1' for investigation or 'phase2' for action/remediation.
 """
 
-        # Prepare context from collected information
+        # Prepare context from collected information for query message
         context_summary = f"""
 === PRE-COLLECTED DIAGNOSTIC CONTEXT ===
 Instructions:
@@ -277,6 +277,7 @@ Fix Plan:
 """
 
 
+        # Create system message with only static guiding principles
         system_message = {
             "role": "system", 
             "content": f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
@@ -362,23 +363,31 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 
 {final_output_example}
 
-
-Current System Resource Context Summary:
-{context_summary}
-
 You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.
 """
         }
         
-        # Ensure system message is first
+        # Add pre-collected diagnostic context to user message
+        user_messages = []
+        context_message = {
+            "role": "user",
+            "content": f"Pre-collected diagnostic context:\n{context_summary}"
+        }
+        
+        # Ensure system message is first, followed by context message, then any existing user messages
         if state["messages"]:
             if isinstance(state["messages"], list):
-                if state["messages"][0].type != "system":
-                    state["messages"] = [system_message] + state["messages"]
+                # Extract existing user messages (skip system message if present)
+                for msg in state["messages"]:
+                    if msg.type != "system":
+                        user_messages.append(msg)
+                
+                # Create new message list with system message, context message, and existing user messages
+                state["messages"] = [system_message, context_message] + user_messages
             else:
-                state["messages"] = [system_message, state["messages"]]
+                state["messages"] = [system_message, context_message, state["messages"]]
         else:
-            state["messages"] = [system_message]
+            state["messages"] = [system_message, context_message]
         
         # Select tools based on phase
         if phase == "phase1":

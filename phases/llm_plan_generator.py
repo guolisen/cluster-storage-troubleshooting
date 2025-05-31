@@ -151,7 +151,7 @@ IMPORTANT: Pay special attention to the historical experience data above. Use th
     
     def _generate_system_prompt(self, pod_name: str, namespace: str, volume_path: str) -> str:
         """
-        Generate system prompt for LLM
+        Generate system prompt for LLM with only static guiding principles
         
         Args:
             pod_name: Name of the pod with the error
@@ -170,14 +170,11 @@ TASK:
 4. Create a step-by-step Investigation Plan for Phase1 to execute, using the available tools.
 
 USING HISTORICAL EXPERIENCE:
-The Knowledge Graph contains historical experience data with previous cases of volume I/O failures. 
-For each relevant historical experience entry, consider:
-- The phenomenon description to identify patterns similar to the current issue
-- The root cause to inform your hypotheses about what might be causing the current issue
-- The localization method to guide which tools to use and in what order during your investigation
-- The resolution method to understand potential solutions once the root cause is confirmed
-
-Use the historical experience to prioritize your hypotheses and focus on those with higher likelihood based on past incidents. When creating your Investigation Plan, incorporate steps from historical localization methods when they align with your hypotheses.
+Use the historical experience data provided in the query message to:
+- Identify patterns similar to the current issue
+- Inform your hypotheses about what might be causing the current issue
+- Guide which tools to use and in what order during your investigation
+- Understand potential solutions once the root cause is confirmed
 
 OUTPUT FORMAT:
 Your response must include:

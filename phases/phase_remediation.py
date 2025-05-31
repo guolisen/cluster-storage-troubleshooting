@@ -39,6 +39,56 @@ class RemediationPhase:
         self.console = Console()
         self.interactive_mode = config_data.get('troubleshoot', {}).get('interactive_mode', False)
     
+    def _format_historical_experiences(self, collected_info: Dict[str, Any]) -> str:
+        """
+        Format historical experience data from collected information
+        
+        Args:
+            collected_info: Pre-collected diagnostic information from Phase 0
+            
+        Returns:
+            str: Formatted historical experience data for LLM consumption
+        """
+        try:
+            # Extract historical experiences from knowledge graph in collected_info
+            kg = collected_info.get('knowledge_graph', None)
+            if not kg or not hasattr(kg, 'graph'):
+                return "No historical experience data available."
+            
+            # Find historical experience nodes
+            historical_experience_nodes = []
+            for node_id, attrs in kg.graph.nodes(data=True):
+                if attrs.get('gnode_subtype') == 'HistoricalExperience':
+                    historical_experience_nodes.append((node_id, attrs))
+            
+            if not historical_experience_nodes:
+                return "No historical experience data available."
+            
+            # Format historical experiences in a clear, structured way
+            formatted_entries = []
+            
+            for idx, (node_id, attrs) in enumerate(historical_experience_nodes, 1):
+                # Get attributes from the experience
+                phenomenon = attrs.get('phenomenon', 'Unknown phenomenon')
+                root_cause = attrs.get('root_cause', 'Unknown root cause')
+                localization_method = attrs.get('localization_method', 'No localization method provided')
+                resolution_method = attrs.get('resolution_method', 'No resolution method provided')
+                
+                # Format the entry
+                entry = f"""HISTORICAL EXPERIENCE #{idx}:
+Phenomenon: {phenomenon}
+Root Cause: {root_cause}
+Localization Method: {localization_method}
+Resolution Method: {resolution_method}
+"""
+                formatted_entries.append(entry)
+            
+            return "\n".join(formatted_entries)
+            
+        except Exception as e:
+            self.logger.warning(f"Error formatting historical experiences: {str(e)}")
+            return "Error formatting historical experience data."
+    
     async def run_remediation_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 60) -> str:
         """
         Run remediation using the provided LangGraph StateGraph
@@ -106,10 +156,16 @@ class RemediationPhase:
                 self.collected_info, phase="phase2", config_data=self.config_data
             )
             
-            # Remediation query - Include historical experience data
+            # Extract and format historical experience data from collected_info
+            historical_experiences_formatted = self._format_historical_experiences(self.collected_info)
+            
+            # Remediation query - Include explicit historical experience data
             query = f"""Phase 2 - Remediation: Execute the fix plan to resolve the identified issue.
 
 Root Cause and Fix Plan: {phase1_final_response}
+
+HISTORICAL EXPERIENCE:
+{historical_experiences_formatted}
 
 USING HISTORICAL EXPERIENCE:
 The Knowledge Graph contains historical experience data with previous cases of volume I/O failures, which includes:

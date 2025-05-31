@@ -38,6 +38,56 @@ class AnalysisPhase:
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.console = Console()
     
+    def _format_historical_experiences(self, collected_info: Dict[str, Any]) -> str:
+        """
+        Format historical experience data from collected information
+        
+        Args:
+            collected_info: Pre-collected diagnostic information from Phase 0
+            
+        Returns:
+            str: Formatted historical experience data for LLM consumption
+        """
+        try:
+            # Extract historical experiences from knowledge graph in collected_info
+            kg = collected_info.get('knowledge_graph', None)
+            if not kg or not hasattr(kg, 'graph'):
+                return "No historical experience data available."
+            
+            # Find historical experience nodes
+            historical_experience_nodes = []
+            for node_id, attrs in kg.graph.nodes(data=True):
+                if attrs.get('gnode_subtype') == 'HistoricalExperience':
+                    historical_experience_nodes.append((node_id, attrs))
+            
+            if not historical_experience_nodes:
+                return "No historical experience data available."
+            
+            # Format historical experiences in a clear, structured way
+            formatted_entries = []
+            
+            for idx, (node_id, attrs) in enumerate(historical_experience_nodes, 1):
+                # Get attributes from the experience
+                phenomenon = attrs.get('phenomenon', 'Unknown phenomenon')
+                root_cause = attrs.get('root_cause', 'Unknown root cause')
+                localization_method = attrs.get('localization_method', 'No localization method provided')
+                resolution_method = attrs.get('resolution_method', 'No resolution method provided')
+                
+                # Format the entry
+                entry = f"""HISTORICAL EXPERIENCE #{idx}:
+Phenomenon: {phenomenon}
+Root Cause: {root_cause}
+Localization Method: {localization_method}
+Resolution Method: {resolution_method}
+"""
+                formatted_entries.append(entry)
+            
+            return "\n".join(formatted_entries)
+            
+        except Exception as e:
+            self.logger.warning(f"Error formatting historical experiences: {str(e)}")
+            return "Error formatting historical experience data."
+    
     async def run_analysis_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 60) -> str:
         """
         Run an analysis using the provided LangGraph StateGraph with enhanced progress tracking
@@ -109,7 +159,10 @@ class AnalysisPhase:
                 self.collected_info, phase="phase1", config_data=self.config_data
             )
             
-            # Updated query for ReAct investigation phase with Investigation Plan
+            # Extract and format historical experience data from collected_info
+            historical_experiences_formatted = self._format_historical_experiences(self.collected_info)
+            
+            # Updated query for ReAct investigation phase with Investigation Plan and explicit historical experience
             query = f"""Phase 1 - ReAct Investigation: Execute the Investigation Plan to actively investigate the volume I/O error in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
 
 You have:
@@ -119,6 +172,9 @@ You have:
 
 INVESTIGATION PLAN TO FOLLOW:
 {investigation_plan}
+
+HISTORICAL EXPERIENCE:
+{historical_experiences_formatted}
 
 USING HISTORICAL EXPERIENCE:
 The Knowledge Graph contains historical experience data with previous cases of volume I/O failures. 

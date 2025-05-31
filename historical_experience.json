@@ -75,7 +75,7 @@
     "phenomenon": "Disk/volume size not enough",
     "root_cause": "Insufficient storage capacity allocated to the PVC or PV, causing out-of-space errors during write operations.",
     "localization_method": "Check PVC and PV capacity with `kg_get_node_metadata(node_type='pvc', filters={'name': 'data-pvc'})` and `kg_get_node_metadata(node_type='pv', filters={'name': 'pv-001'})`. Verify pod logs for out-of-space errors with `kg_query_nodes(type='log', time_range='24h', filters={'message': 'No space left'})`",
-    "resolution_method": "Expand the PVC capacity using `kubectl edit pvc <pvc-name>` to increase the storage request, ensuring the storage class supports volume expansion. Verify available storage with `kubectl describe pv <pv-name>`."
+    "resolution_method": "Return detail to let user extend the PVC size by manually, no need to do any actions by langgraph."
   },
   {
     "phenomenon": "PVC metadata defined as 'ReadOnlyMany' causing write failures",

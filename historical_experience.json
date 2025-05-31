@@ -2,7 +2,7 @@
   {
     "phenomenon": "Volume read errors in pod logs",
     "root_cause": "Hardware failure in the underlying disk, such as bad sectors or disk degradation, causing read operations to fail.",
-    "localization_method": "Query error logs with `kg_query_nodes(type='log', time_range='24h', filters={'message': 'I/O error'})` to identify affected pods and check disk health with `check_disk_health(node='node-1', disk_id='disk1')`",
+    "localization_method": "Query error logs with `kg_query_nodes(type='log', time_range='24h', filters={'message': 'I/O error'})` to identify affected pods and check disk health with `check_disk_health(node='node-1', disk_id='disk1')`, use 'xfs_repair -n *' to check volume health",
     "resolution_method": "Replace the faulty disk identified in `check_disk_health`. Restart the affected service with `systemctl restart db-service` and verify pod status with `kubectl get pods`."
   },
   {

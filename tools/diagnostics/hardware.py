@@ -60,6 +60,21 @@ def fsck_check(node_name: str, device_path: str, check_only: bool = True) -> str
     return ssh_execute.invoke({"node_name": node_name, "command": cmd})
 
 @tool
+def xfs_repair_check(node_name: str, device_path: str) -> str:
+    """
+    Check XFS file system integrity using xfs_repair via SSH
+    
+    Args:
+        node_name: Node hostname or IP
+        device_path: Device path (e.g., /dev/sda1)
+        
+    Returns:
+        str: XFS file system check results
+    """
+    cmd = f"sudo xfs_repair -n {device_path}"  # -n flag means no changes, check only
+    return ssh_execute.invoke({"node_name": node_name, "command": cmd})
+
+@tool
 def ssh_execute(node_name: str, command: str) -> str:
     """
     Execute command on remote node via SSH

@@ -230,10 +230,11 @@ Environmental Factors:
 - Checked CSI Baremetal driver resources presence.
 - Verified storage class used by PVC/PV.
 
-5. Potential Root Causes:
-- Underlying hardware or driver issues on node's local disk (/dev/sda2) causing I/O errors.
-- Use of local path provisioner instead of CSI Baremetal driver, leading to lack of advanced volume management and error handling.
-- Missing or not installed CSI Baremetal driver in the cluster.
+5. Potential Root Causes:                                                                                                                              
+- **Hardware Failure on Node Disk**: Likely bad sectors or I/O errors on /dev/sda2, as indicated by kernel log patterns. Evidence: Pre-collected issues; dmesg shows boot logs but no new errors. Likelihood: High.                                                                                                 │
+- **Incomplete Knowledge Graph**: Missing entity data in KG, preventing full analysis. Evidence: Tool errors. Likelihood: Medium.                          
+- **Configuration Mismatch**: Use of local path provisioner instead of CSI Baremetal, leading to poor error handling. Evidence: PVC/PV details. Likelihood: High.                                                                                                                                          
+- **Connectivity or Access Issues**: SSH failures for smartctl, possibly due to network problems. Evidence: Tool errors. Likelihood: Medium.   
 
 Likelihood:
 - High confidence in disk hardware/driver issues due to kernel log patterns.
@@ -299,6 +300,7 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 
 2. **Troubleshooting Process**:
    - Use the LangGraph ReAct module to reason about volume I/O errors based on parameters: `PodName`, `PodNamespace`, and `VolumePath`.
+   - Most of time the pod's volume file system type is xfs, ext4, or btrfs. 
    - Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
      a. **Check Knowledge Graph**: First use Knowledge Graph tools (kg_*) to understand the current state and existing issues.
      b. **Confirm Issue**: If Knowledge Graph lacks information, run `kubectl logs <pod-name> -n <namespace>` and `kubectl describe pod <pod-name> -n <namespace>` to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount").
@@ -319,12 +321,12 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
         - Identify disk: `kubectl get pv -o yaml` and `kubectl get drive <drive-uuid> -o yaml` to confirm `Path`.
         - Check health: `kubectl get drive <drive-uuid> -o yaml` and `ssh <node-name> sudo smartctl -a /dev/<disk-device>`. Verify `Health: GOOD`, zero `Reallocated_Sector_Ct` or `Current_Pending_Sector`.
         - Test performance: `ssh <node-name> sudo fio --name=read_test --filename=/dev/<disk-device> --rw=read --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting`.
-        - Check file system (if unmounted): `ssh <node-name> sudo fsck /dev/<disk-device>` (requires approval).
+        - Check file system (if unmounted): `ssh <node-name> sudo xfs_repair -n /dev/<disk-device>` (requires approval).
         - Test via Pod: Create a test Pod (use provided YAML) and check logs for "Write OK" and "Read OK".
      j. **Propose Remediations**:
         - Bad sectors: Recommend disk replacement if `kubectl get drive` or SMART shows `Health: BAD` or non-zero `Reallocated_Sector_Ct`.
         - Performance issues: Suggest optimizing I/O scheduler or replacing disk if `fio` results show low IOPS (HDD: 100–200, SSD: thousands, NVMe: tens of thousands).
-        - File system corruption: Recommend `fsck` (if enabled/approved) after data backup.
+        - File system corruption: Recommend `fsck` or 'xfs_repair' (if enabled/approved) after data backup.
         - Driver issues: Suggest restarting CSI Baremetal driver pod (if enabled/approved) if logs indicate errors.
    - Only propose remediations after analyzing diagnostic data. Ensure write/change commands (e.g., `fsck`, `kubectl delete pod`) are allowed and approved.
    - Try to find all of possible root causes before proposing any remediation steps. 

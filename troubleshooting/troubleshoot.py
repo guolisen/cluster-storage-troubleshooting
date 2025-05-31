@@ -388,6 +388,7 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             "skip_phase2": "false" if skip_phase2 else "true"
         }
         # Only proceed to Phase 2 if not skipped
+        remediation_result = None
         if not skip_phase2:
             phase_2_start = time.time()
             
@@ -395,7 +396,7 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             
             results["phases"]["phase_2_remediation"] = {
                 "status": "completed",
-                "result": str(remediation_result),
+                "result": remediation_result,
                 "duration": time.time() - phase_2_start
             }
         else:
@@ -409,6 +410,7 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             ))
             results["phases"]["phase_2_remediation"] = {
                 "status": "skipped",
+                "result": "Phase 2 skipped - no remediation needed or manual intervention required",
                 "reason": "No issues detected or manual intervention required",
                 "duration": 0
             }
@@ -473,8 +475,8 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
         )
         # Create root cause and resolution panels - ensure strings for content
         # Convert values to strings first to avoid 'bool' has no attribute 'substitute' errors
-        root_cause_str = str(phase1_final_response) if phase1_final_response is not None else "Unknown"
-        remediation_result_str = str(remediation_result) if remediation_result is not None else "No result"
+        root_cause_str = phase1_final_response if phase1_final_response is not None else "Unknown"
+        remediation_result_str = remediation_result if remediation_result is not None else "No result"
         root_cause_panel = Panel(
             f"[bold yellow]{root_cause_str}",
             title="[bold red]Root Cause",

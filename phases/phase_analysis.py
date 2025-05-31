@@ -14,6 +14,7 @@ from rich.panel import Panel
 from langgraph.graph import StateGraph
 
 from troubleshooting.graph import create_troubleshooting_graph_with_context
+from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
 
 logger = logging.getLogger(__name__)
 

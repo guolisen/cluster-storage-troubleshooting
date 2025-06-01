@@ -21,7 +21,7 @@ monitor:
 plan_phase:
   use_llm: true  
   timeout_seconds: 120        # Timeout for plan generation
-  static_plan_step_path: "static_plan_step.json"
+  static_plan_step_path: "data/static_plan_step.json"
 
 # Troubleshooting Configuration
 troubleshoot:
@@ -71,4 +71,4 @@ logging:
 
 # Historical Experience Configuration
 historical_experience:
-  file_path: "historical_experience.json"  # Path to historical experience data file
+  file_path: "data/historical_experience.json"  # Path to historical experience data file

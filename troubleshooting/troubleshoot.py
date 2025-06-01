@@ -209,7 +209,6 @@ async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds
         formatted_query = {"messages": [{"role": "user", "content": query}]}
         
         # First show the analysis panel
-        console.print("\n")
         console.print(Panel(
             "[yellow]Starting analysis with LangGraph...\nThis may take a few minutes to complete.", 
             title="[bold blue]Analysis Phase",

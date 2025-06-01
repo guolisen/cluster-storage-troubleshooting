@@ -105,7 +105,6 @@ Resolution Method: {resolution_method}
             formatted_query = {"messages": [{"role": "user", "content": query}]}
             
             # First show the analysis panel
-            self.console.print("\n")
             self.console.print(Panel(
                 "[yellow]Starting analysis with LangGraph...\nThis may take a few minutes to complete.", 
                 title="[bold blue]Analysis Phase",

@@ -97,16 +97,16 @@ Investigation Plan:
 Target: Pod {namespace}/{pod_name}, Volume Path: {volume_path}
 Generated Steps: {num_steps} main steps, {num_fallback_steps} fallback steps
 
-Step 1: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
-Step 2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
+Step 1: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
+Step 2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
 ...
-Step N: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
+Step N: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
 
 Fallback Steps (if main steps fail):
-Step F1: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome] | Trigger: [failure_condition]
-Step F2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome] | Trigger: [failure_condition]
+Step F1: [Description] | Tool: [tool_name(parameters)] | Expected: [expected] | Trigger: [failure_condition]
+Step F2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected] | Trigger: [failure_condition]
 ...
-Step FN: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome] | Trigger: [failure_condition]
+Step FN: [Description] | Tool: [tool_name(parameters)] | Expected: [expected] | Trigger: [failure_condition]
 ```
 
 The LLM-based plan generator also includes a Hypotheses Analysis section that lists the top potential causes of the volume read/write errors, along with evidence from the Knowledge Graph and likelihood rankings.

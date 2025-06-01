@@ -168,7 +168,7 @@ class RuleBasedPlanGenerator:
                 "description": "Get all critical issues that may be causing volume I/O errors",
                 "tool": "kg_get_all_issues",
                 "arguments": {"severity": "critical"},
-                "expected_outcome": "List of critical issues affecting the system",
+                "expected": "List of critical issues affecting the system",
                 "priority": "critical",
                 "category": "issue_analysis",
                 "priority_score": 100  # Highest priority
@@ -181,7 +181,7 @@ class RuleBasedPlanGenerator:
                 "description": "Check disk health on the affected node",
                 "tool": "check_disk_health",
                 "arguments": {"node": target_entities.get("node", "").split(":")[-1] if "node" in target_entities else "all"},
-                "expected_outcome": "Disk status and hardware errors",
+                "expected": "Disk status and hardware errors",
                 "priority": "high",
                 "category": "hardware_investigation",
                 "priority_score": 90
@@ -194,7 +194,7 @@ class RuleBasedPlanGenerator:
                 "description": f"Get detailed information about the problem pod and its current state",
                 "tool": "kg_get_entity_info",
                 "arguments": {"entity_type": "Pod", "entity_id": target_entities["pod"].split(":")[-1]},
-                "expected_outcome": "Pod configuration, status, and any detected issues",
+                "expected": "Pod configuration, status, and any detected issues",
                 "priority": "critical",
                 "category": "entity_investigation",
                 "priority_score": 85
@@ -207,7 +207,7 @@ class RuleBasedPlanGenerator:
                 "description": "Get detailed Drive information including health status and metrics",
                 "tool": "kg_get_entity_info",
                 "arguments": {"entity_type": "Drive", "entity_id": target_entities["drive"].split(":")[-1]},
-                "expected_outcome": "Drive health status, SMART data, and any hardware issues",
+                "expected": "Drive health status, SMART data, and any hardware issues",
                 "priority": "high",
                 "category": "hardware_investigation",
                 "priority_score": 80
@@ -220,7 +220,7 @@ class RuleBasedPlanGenerator:
                 "description": "Check network connectivity between pod and storage",
                 "tool": "kg_query_relationships",
                 "arguments": {"source": "pod", "target": "network"},
-                "expected_outcome": "Network connectivity and health status",
+                "expected": "Network connectivity and health status",
                 "priority": "high",
                 "category": "network_investigation",
                 "priority_score": 75
@@ -252,7 +252,7 @@ class RuleBasedPlanGenerator:
             "description": "Get all critical issues from Knowledge Graph",
             "tool": "kg_get_all_issues",
             "arguments": {"severity": "critical"},
-            "expected_outcome": "List of critical issues affecting the system",
+            "expected": "List of critical issues affecting the system",
             "priority": "critical",
             "category": "issue_analysis"
         }]

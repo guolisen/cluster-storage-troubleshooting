@@ -136,7 +136,7 @@ class InvestigationPlanner:
             step_line = (
                 f"Step {step['step']}: {step['description']} | "
                 f"Tool: {step['tool']}({', '.join(f'{k}={repr(v)}' for k, v in step.get('arguments', {}).items())}) | "
-                f"Expected: {step['expected_outcome']}"
+                f"Expected: {step['expected']}"
             )
             plan_lines.append(step_line)
         

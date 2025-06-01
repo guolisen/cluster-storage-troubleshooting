@@ -158,7 +158,7 @@ class PlanPhase:
                                         arguments[key] = value
                         
                         # Extract expected outcome
-                        expected_outcome = step_parts[2].replace("Expected: ", "") if len(step_parts) > 2 else ""
+                        expected = step_parts[2].replace("Expected: ", "") if len(step_parts) > 2 else ""
                         
                         # Extract trigger for fallback steps
                         trigger = step_parts[3].replace("Trigger: ", "") if len(step_parts) > 3 and in_fallback_section else None
@@ -169,7 +169,7 @@ class PlanPhase:
                             "description": description,
                             "tool": tool_name,
                             "arguments": arguments,
-                            "expected_outcome": expected_outcome
+                            "expected": expected
                         }
                         
                         if trigger:

@@ -193,7 +193,7 @@ The Plan Phase also provides a structured JSON format of the Investigation Plan 
         "type": "log",
         "time_range": "24h"
       },
-      "expected_outcome": "List of I/O error logs for pod 'app-1', confirming error patterns and frequency"
+      "expected": "List of I/O error logs for pod 'app-1', confirming error patterns and frequency"
     },
     {
       "step": "2",
@@ -203,7 +203,7 @@ The Plan Phase also provides a structured JSON format of the Investigation Plan 
         "node": "node-1",
         "disk_id": "disk1"
       },
-      "expected_outcome": "Disk status and any hardware errors to confirm Hypothesis 1"
+      "expected": "Disk status and any hardware errors to confirm Hypothesis 1"
     },
     {
       "step": "3",
@@ -213,7 +213,7 @@ The Plan Phase also provides a structured JSON format of the Investigation Plan 
         "source": "pod",
         "target": "pvc"
       },
-      "expected_outcome": "Confirm 'app-1' is correctly bound to 'data-pvc' to evaluate Hypothesis 2"
+      "expected": "Confirm 'app-1' is correctly bound to 'data-pvc' to evaluate Hypothesis 2"
     },
     {
       "step": "4",
@@ -222,7 +222,7 @@ The Plan Phase also provides a structured JSON format of the Investigation Plan 
       "arguments": {
         "node": "node-1"
       },
-      "expected_outcome": "Disk space usage to determine if the volume is full, which could cause I/O errors"
+      "expected": "Disk space usage to determine if the volume is full, which could cause I/O errors"
     },
     {
       "step": "5",
@@ -231,7 +231,7 @@ The Plan Phase also provides a structured JSON format of the Investigation Plan 
       "arguments": {
         "node_type": "pvc"
       },
-      "expected_outcome": "Configuration details to identify misconfigurations related to Hypothesis 2 and 4"
+      "expected": "Configuration details to identify misconfigurations related to Hypothesis 2 and 4"
     }
   ],
   "fallback_steps": [
@@ -243,7 +243,7 @@ The Plan Phase also provides a structured JSON format of the Investigation Plan 
         "namespace": "default",
         "pod_name": "app-1"
       },
-      "expected_outcome": "Pod status and events from Kubernetes API",
+      "expected": "Pod status and events from Kubernetes API",
       "trigger": "kg_query_nodes_failure"
     },
     {
@@ -254,7 +254,7 @@ The Plan Phase also provides a structured JSON format of the Investigation Plan 
         "namespace": "default",
         "pvc_name": "data-pvc"
       },
-      "expected_outcome": "PVC status and details from Kubernetes API",
+      "expected": "PVC status and details from Kubernetes API",
       "trigger": "kg_query_relationships_failure"
     },
     {
@@ -264,7 +264,7 @@ The Plan Phase also provides a structured JSON format of the Investigation Plan 
       "arguments": {
         "node": "node-1"
       },
-      "expected_outcome": "Overall node health and resource usage",
+      "expected": "Overall node health and resource usage",
       "trigger": "check_disk_health_failure"
     }
   ]

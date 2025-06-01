@@ -32,7 +32,7 @@ Example rule-based step:
   "description": "Check disk health on the affected node",
   "tool": "check_disk_health",
   "arguments": {"node": "node-1", "disk_id": "disk1"},
-  "expected_outcome": "Disk status and hardware errors",
+  "expected": "Disk status and hardware errors",
   "priority": "high",
   "category": "hardware_investigation"
 }
@@ -95,7 +95,7 @@ DRAFT PLAN:
     "description": "Check disk health on the affected node",
     "tool": "check_disk_health",
     "arguments": {"node": "node-1", "disk_id": "disk1"},
-    "expected_outcome": "Disk status and hardware errors"
+    "expected": "Disk status and hardware errors"
   },
   {
     "step": 2,

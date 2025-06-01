@@ -115,17 +115,18 @@ class LLMPlanGenerator:
             
             # Step 3: Prepare user message for refinement task
             user_message = f"""Refine the draft Investigation Plan for volume read/write errors in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
+this plan will be used to troubleshoot the issue in next phases. The next phase will execute or run tool according to the steps in this plan.
 
-DRAFT PLAN:
-{draft_plan_str}
-
-KNOWLEDGE GRAPH CONTEXT:
+KNOWLEDGE GRAPH CONTEXT(current base knowledge and some hardware information): 
 {kg_context_str}
 
-HISTORICAL EXPERIENCE:
+DRAFT PLAN(static plan steps and preliminary steps from rule-based generator, please do not modify static steps as much as possible):
+{draft_plan_str}
+
+HISTORICAL EXPERIENCE(the historical experience data, you can learn from this data to improve the plan):
 {historical_experiences_formatted}
 
-AVAILABLE TOOLS FOR PHASE1:
+AVAILABLE TOOLS FOR PHASE1(this tools will be used in next phases, please do not invoke any tools, just reference them in your plan):
 {phase1_tools_str}
 
 Your task is to refine the draft plan by:
@@ -142,8 +143,8 @@ IMPORTANT CONSTRAINTS:
 5. Output the plan in the required format:
 
 Investigation Plan:
-Step 1: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
-Step 2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
+Step 1: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
+Step 2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
 ...
 """
             
@@ -196,11 +197,11 @@ CONSTRAINTS:
 
 OUTPUT FORMAT:
 Your response must be a refined Investigation Plan with steps in this format:
-Step X: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
+Step X: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
 
 You may include fallback steps for error handling in this format:
 Fallback Steps (if main steps fail):
-Step FX: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome] | Trigger: [failure_condition]
+Step FX: [Description] | Tool: [tool_name(parameters)] | Expected: [expected] | Trigger: [failure_condition]
 
 The plan must be comprehensive, logically structured, and include all necessary steps to investigate the volume I/O errors.
 """
@@ -302,7 +303,7 @@ Resolution Method: {resolution_method}
                 step_line = (
                     f"Step {step['step']}: {step['description']} | "
                     f"Tool: {step['tool']}({', '.join(f'{k}={repr(v)}' for k, v in step.get('arguments', {}).items())}) | "
-                    f"Expected: {step['expected_outcome']}"
+                    f"Expected: {step['expected']}"
                 )
                 plan_lines.append(step_line)
             

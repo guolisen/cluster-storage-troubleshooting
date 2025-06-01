@@ -21,6 +21,7 @@ monitor:
 plan_phase:
   use_llm: true  
   timeout_seconds: 120        # Timeout for plan generation
+  static_plan_step_path: "static_plan_step.json"
 
 # Troubleshooting Configuration
 troubleshoot:

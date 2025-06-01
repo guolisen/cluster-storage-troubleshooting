@@ -1,0 +1,17 @@
+[
+  {
+    "description": "Check recent system logs for volume errors",
+    "tool": "kg_query_nodes(type='log', time_range='24h', filters={'message': 'I/O error'})",
+    "expected": "List of error logs indicating volume issues"
+  },
+  {
+    "description": "Verify pod-to-PVC binding",
+    "tool": "kg_query_relationships(source='pod', target='pvc')",
+    "expected": "Confirmation of correct PVC binding"
+  },
+  {
+    "description": "Retrieve PVC metadata to check configuration",
+    "tool": "kg_get_node_metadata(node_type='pvc')",
+    "expected": "PVC configuration details to identify misconfigurations"
+  }
+]

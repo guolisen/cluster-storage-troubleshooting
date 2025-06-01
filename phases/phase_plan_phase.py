@@ -19,9 +19,13 @@ class PlanPhase:
     """
     Orchestrates the Plan Phase of the troubleshooting process
     
-    The Plan Phase analyzes the Knowledge Graph from Phase 0, hypothesizes
-    the most likely causes of volume read/write errors, prioritizes them by
-    likelihood, and generates a step-by-step Investigation Plan for Phase 1.
+    The Plan Phase follows a three-step process to generate an Investigation Plan:
+    1. Rule-based preliminary steps - Generate critical initial investigation steps
+    2. Static plan steps integration - Add mandatory steps from static_plan_step.json
+    3. LLM refinement - Refine and supplement the plan using LLM without tool invocation
+    
+    This phase uses the Knowledge Graph from Phase 0, historical experience data, and
+    the complete Phase1 tool registry to produce a comprehensive Investigation Plan.
     """
     
     def __init__(self, config_data: Dict[str, Any] = None):

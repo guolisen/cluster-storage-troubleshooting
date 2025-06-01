@@ -15,10 +15,11 @@ logger = logging.getLogger(__name__)
 
 class LLMPlanGenerator:
     """
-    Generates Investigation Plans using Large Language Models
+    Refines Investigation Plans using Large Language Models
     
-    Uses LLMs to analyze Knowledge Graph data, hypothesize causes of volume
-    read/write errors, prioritize them, and generate step-by-step plans.
+    Uses LLMs to refine draft investigation plans by analyzing Knowledge Graph data,
+    historical experience, and available Phase1 tools, ensuring a comprehensive
+    and actionable final plan without directly invoking the tools.
     """
     
     def __init__(self, config_data: Dict[str, Any] = None):
@@ -52,26 +53,27 @@ class LLMPlanGenerator:
             self.logger.error(f"Error initializing LLM: {str(e)}")
             return None
     
-    def generate_plan(self, pod_name: str, namespace: str, volume_path: str, 
-                     kg_context: Dict[str, Any], tool_registry: Dict[str, List[Dict[str, Any]]]) -> str:
+    def refine_plan(self, draft_plan: List[Dict[str, Any]], pod_name: str, namespace: str, 
+                   volume_path: str, kg_context: Dict[str, Any], phase1_tools: List[Dict[str, Any]]) -> str:
         """
-        Generate Investigation Plan using LLM
+        Refine a draft investigation plan using LLM
         
         Args:
+            draft_plan: Draft plan from rule-based generator and static steps
             pod_name: Name of the pod with the error
             namespace: Namespace of the pod
             volume_path: Path of the volume with I/O error
-            kg_context: Knowledge Graph context
-            tool_registry: Registry of available tools
+            kg_context: Knowledge Graph context with historical experience
+            phase1_tools: Complete Phase1 tool registry with names, descriptions, parameters, and invocation methods
             
         Returns:
-            str: Formatted Investigation Plan
+            str: Refined Investigation Plan
         """
         try:
-            # Step 1: Generate system prompt
-            system_prompt = self._generate_system_prompt(pod_name, namespace, volume_path)
+            # Step 1: Generate system prompt for refinement
+            system_prompt = self._generate_refinement_system_prompt()
             
-            # Step 2: Format contexts as strings with custom serialization
+            # Step 2: Format input data for LLM context
             def json_serializer(obj):
                 """Custom JSON serializer to handle non-serializable objects"""
                 try:
@@ -93,20 +95,29 @@ class LLMPlanGenerator:
                 self.logger.warning(f"Error serializing Knowledge Graph context: {str(e)}")
                 # Fallback to a simpler representation
                 kg_context_str = str(kg_context)
-            
+
+            # Format draft plan for LLM input
             try:
-                tool_registry_str = json.dumps(tool_registry, indent=2, default=json_serializer)
+                draft_plan_str = json.dumps(draft_plan, indent=2, default=json_serializer)
             except Exception as e:
-                self.logger.warning(f"Error serializing tool registry: {str(e)}")
-                # Fallback to a simpler representation
-                tool_registry_str = str(tool_registry)
-            
-            # Step 3: Prepare user message with explicit historical experience section
-            
+                self.logger.warning(f"Error serializing draft plan: {str(e)}")
+                draft_plan_str = str(draft_plan)
+                
             # Extract and format historical experience data from kg_context
             historical_experiences_formatted = self._format_historical_experiences(kg_context)
             
-            user_message = f"""Generate an Investigation Plan for volume read/write errors in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
+            # Format phase1_tools for LLM input
+            try:
+                phase1_tools_str = json.dumps(phase1_tools, indent=2, default=json_serializer)
+            except Exception as e:
+                self.logger.warning(f"Error serializing Phase1 tools: {str(e)}")
+                phase1_tools_str = str(phase1_tools)
+            
+            # Step 3: Prepare user message for refinement task
+            user_message = f"""Refine the draft Investigation Plan for volume read/write errors in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
+
+DRAFT PLAN:
+{draft_plan_str}
 
 KNOWLEDGE GRAPH CONTEXT:
 {kg_context_str}
@@ -115,15 +126,25 @@ HISTORICAL EXPERIENCE:
 {historical_experiences_formatted}
 
 AVAILABLE TOOLS FOR PHASE1:
-{tool_registry_str}
+{phase1_tools_str}
 
-Analyze the Knowledge Graph, generate hypotheses for the volume read/write errors, prioritize them, and create a step-by-step Investigation Plan using the available tools.
+Your task is to refine the draft plan by:
+1. Respecting the existing steps from the draft plan (both rule-based and static steps)
+2. Adding additional steps as needed using the available Phase1 tools
+3. Reordering steps if necessary for logical flow
+4. Ensuring all steps reference only tools from the Phase1 tool registry
 
-IMPORTANT: Pay special attention to the historical experience data above. Use this data to:
-1. Identify patterns where current symptoms match previously observed phenomena
-2. Consider known root causes from similar past incidents when forming hypotheses
-3. Incorporate proven localization methods into your Investigation Plan
-4. Reference relevant historical experiences when prioritizing hypotheses (high, medium, low)
+IMPORTANT CONSTRAINTS:
+1. Do NOT invoke any tools - only reference them in your plan
+2. Include static steps from the draft plan without modification
+3. Use historical experience data to inform additional steps and refinements
+4. Ensure all tool references follow the format shown in the AVAILABLE TOOLS
+5. Output the plan in the required format:
+
+Investigation Plan:
+Step 1: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
+Step 2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
+...
 """
             
             # Step 4: Call LLM
@@ -149,57 +170,39 @@ IMPORTANT: Pay special attention to the historical experience data above. Use th
             self.logger.error(f"Error in LLM-based plan generation: {str(e)}")
             return self._generate_basic_fallback_plan(pod_name, namespace, volume_path)
     
-    def _generate_system_prompt(self, pod_name: str, namespace: str, volume_path: str) -> str:
+    def _generate_refinement_system_prompt(self) -> str:
         """
-        Generate system prompt for LLM with only static guiding principles
+        Generate system prompt for LLM focused on plan refinement with static guiding principles
         
-        Args:
-            pod_name: Name of the pod with the error
-            namespace: Namespace of the pod
-            volume_path: Path of the volume with I/O error
-            
         Returns:
             str: System prompt for LLM
         """
-        return f"""You are an expert Kubernetes storage troubleshooter. Your task is to analyze the Knowledge Graph from Phase0, hypothesize the most likely causes of volume read/write errors, prioritize them by likelihood, and create a step-by-step Investigation Plan for Phase1.
+        return """You are an expert Kubernetes storage troubleshooter. Your task is to refine a draft Investigation Plan for troubleshooting volume read/write errors in Kubernetes.
 
 TASK:
-1. Analyze the Knowledge Graph to identify patterns or indicators of volume read/write errors in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
-2. Generate hypotheses for the top potential causes of the volume read/write errors.
-3. Prioritize these hypotheses by likelihood (high, medium, low) based on evidence in the Knowledge Graph and historical experience data.
-4. Create a step-by-step Investigation Plan for Phase1 to execute, using the available tools.
+1. Review the draft plan containing preliminary steps from rule-based analysis and mandatory static steps
+2. Analyze the Knowledge Graph and historical experience data
+3. Refine the plan by:
+   - Respecting existing steps (do not remove or modify static steps)
+   - Adding necessary additional steps using only the provided Phase1 tools
+   - Reordering steps if needed for logical flow
+   - Adding fallback steps for error handling
 
-USING HISTORICAL EXPERIENCE:
-Use the historical experience data provided in the query message to:
-- Identify patterns similar to the current issue
-- Inform your hypotheses about what might be causing the current issue
-- Guide which tools to use and in what order during your investigation
-- Understand potential solutions once the root cause is confirmed
+CONSTRAINTS:
+- You must NOT invoke any tools - only reference them in your plan
+- You must include all static steps from the draft plan without modification
+- You must only reference tools available in the Phase1 tool registry
+- All tool references must match the exact name and parameter format shown in the tools registry
 
 OUTPUT FORMAT:
-Your response must include:
-
-1. HYPOTHESES ANALYSIS:
-List the top potential causes, each with:
-- Description of the potential cause
-- Evidence from the Knowledge Graph
-- Reference to relevant historical experience (if applicable)
-- Likelihood ranking (high, medium, low)
-
-2. INVESTIGATION PLAN:
-A step-by-step plan with:
-- Step number
-- Description of the action
-- Tool to use with parameters
-- Expected outcome
-- Reference to historical experience (if this step was informed by past incidents)
-
-Format each step as:
+Your response must be a refined Investigation Plan with steps in this format:
 Step X: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome]
 
-Include fallback steps for error handling:
+You may include fallback steps for error handling in this format:
 Fallback Steps (if main steps fail):
 Step FX: [Description] | Tool: [tool_name(parameters)] | Expected: [expected_outcome] | Trigger: [failure_condition]
+
+The plan must be comprehensive, logically structured, and include all necessary steps to investigate the volume I/O errors.
 """
     
     def _format_raw_plan(self, raw_plan: str, pod_name: str, namespace: str, volume_path: str) -> str:
@@ -280,6 +283,34 @@ Resolution Method: {resolution_method}
         except Exception as e:
             self.logger.warning(f"Error formatting historical experiences: {str(e)}")
             return "Error formatting historical experience data."
+    
+    def _format_draft_plan_as_fallback(self, draft_plan: List[Dict[str, Any]]) -> str:
+        """
+        Format the draft plan as a fallback when LLM refinement fails
+        
+        Args:
+            draft_plan: Draft plan from rule-based generator and static steps
+            
+        Returns:
+            str: Formatted Investigation Plan
+        """
+        try:
+            plan_lines = ["Investigation Plan:"]
+            
+            # Add the draft plan steps
+            for step in draft_plan:
+                step_line = (
+                    f"Step {step['step']}: {step['description']} | "
+                    f"Tool: {step['tool']}({', '.join(f'{k}={repr(v)}' for k, v in step.get('arguments', {}).items())}) | "
+                    f"Expected: {step['expected_outcome']}"
+                )
+                plan_lines.append(step_line)
+            
+            return "\n".join(plan_lines)
+            
+        except Exception as e:
+            self.logger.error(f"Error formatting draft plan as fallback: {str(e)}")
+            return "Investigation Plan:\nError occurred during plan generation."
     
     def _generate_basic_fallback_plan(self, pod_name: str, namespace: str, volume_path: str) -> str:
         """

@@ -59,7 +59,8 @@ class InvestigationPlanner:
         self.rule_based_plan_generator = RuleBasedPlanGenerator(knowledge_graph)
         self.static_plan_step_reader = StaticPlanStepReader(config_data)
     
-    def generate_investigation_plan(self, pod_name: str, namespace: str, volume_path: str) -> str:
+    def generate_investigation_plan(self, pod_name: str, namespace: str, volume_path: str, 
+                                  message_list: List[Dict[str, str]] = None) -> tuple:
         """
         Generate a comprehensive Investigation Plan using the three-step process
         
@@ -67,9 +68,10 @@ class InvestigationPlanner:
             pod_name: Name of the pod with the error
             namespace: Namespace of the pod  
             volume_path: Path of the volume with I/O error
+            message_list: Optional message list for chat mode
             
         Returns:
-            str: Formatted Investigation Plan with step-by-step actions
+            tuple: (Formatted Investigation Plan with step-by-step actions, Updated message list)
         """
         self.logger.info(f"Generating investigation plan for {namespace}/{pod_name} volume {volume_path}")
         
@@ -101,16 +103,38 @@ class InvestigationPlanner:
                 
                 # Generate final plan using LLM refinement
                 return self.llm_plan_generator.refine_plan(
-                    draft_plan, pod_name, namespace, volume_path, kg_context, phase1_tools
+                    draft_plan, pod_name, namespace, volume_path, kg_context, phase1_tools, message_list
                 )
             else:
                 # If LLM is not available, format the draft plan directly
                 self.logger.info("LLM refinement disabled or unavailable, using draft plan")
-                return self._format_draft_plan(draft_plan, pod_name, namespace, volume_path)
+                formatted_plan = self._format_draft_plan(draft_plan, pod_name, namespace, volume_path)
+                
+                # Add formatted plan to message list if provided
+                if message_list is not None:
+                    # If the last message is from the user, append the assistant response
+                    if message_list[-1]["role"] == "user":
+                        message_list.append({"role": "assistant", "content": formatted_plan})
+                    else:
+                        # Replace the last message if it's from the assistant
+                        message_list[-1] = {"role": "assistant", "content": formatted_plan}
+                
+                return formatted_plan, message_list
             
         except Exception as e:
             self.logger.error(f"Error generating investigation plan: {str(e)}")
-            return self._generate_basic_fallback_plan(pod_name, namespace, volume_path)
+            fallback_plan = self._generate_basic_fallback_plan(pod_name, namespace, volume_path)
+            
+            # Add fallback plan to message list if provided
+            if message_list is not None:
+                # If the last message is from the user, append the assistant response
+                if message_list[-1]["role"] == "user":
+                    message_list.append({"role": "assistant", "content": fallback_plan})
+                else:
+                    # Replace the last message if it's from the assistant
+                    message_list[-1] = {"role": "assistant", "content": fallback_plan}
+            
+            return fallback_plan, message_list
     
     def _format_draft_plan(self, draft_plan: List[Dict[str, Any]], pod_name: str, namespace: str, volume_path: str) -> str:
         """

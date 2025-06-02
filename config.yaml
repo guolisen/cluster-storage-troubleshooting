@@ -20,14 +20,14 @@ monitor:
 
 plan_phase:
   use_llm: true  
-  timeout_seconds: 120        # Timeout for plan generation
+  timeout_seconds: 120        
   static_plan_step_path: "data/static_plan_step.json"
 
 # Troubleshooting Configuration
 troubleshoot:
   timeout_seconds: 300
   interactive_mode: false
-  auto_fix: false  # Enable/disable auto-fix mode
+  auto_fix: false  
   ssh:
     enabled: true
     user: "root"
@@ -39,7 +39,6 @@ troubleshoot:
 
 # Command Configuration
 commands:
-  # Commands explicitly allowed (if this list exists, only these commands are allowed)
   allowed:
     - "kubectl *"
     - "smartctl *"
@@ -51,8 +50,7 @@ commands:
     - "journalctl *"
     - "ssh *"
     - "sh *"
-    - "xfs_repair -n *"  # Only diagnostic mode allowed
-  # Commands not allowed to be executed
+    - "xfs_repair -n *"
   disallowed:
     - "fsck *"
     - "chmod *"
@@ -62,7 +60,7 @@ commands:
     - "rm *"
     - "kubectl delete *"
     - "kubectl apply *"
-    - "xfs_repair *"  # Disallow non-diagnostic xfs_repair (except -n flag above)
+    - "xfs_repair *"
 
 # Logging Configuration
 logging:
@@ -71,4 +69,12 @@ logging:
 
 # Historical Experience Configuration
 historical_experience:
-  file_path: "data/historical_experience.json"  # Path to historical experience data file
+  file_path: "data/historical_experience.json"
+
+# Chat Mode Configuration
+chat_mode:
+  enabled: true  # Enable or disable chat mode
+  entry_points:
+    - "plan_phase"  # After Plan Phase
+    - "phase1"      # After Phase1
+  static_plan_step_path: "data/static_plan_step.json"  # Path to static plan steps

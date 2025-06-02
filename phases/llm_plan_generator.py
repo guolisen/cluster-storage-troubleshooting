@@ -8,7 +8,7 @@ This module contains utilities for generating investigation plans using LLMs.
 import logging
 import json
 import inspect
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,8 @@ class LLMPlanGenerator:
             return None
     
     def refine_plan(self, draft_plan: List[Dict[str, Any]], pod_name: str, namespace: str, 
-                   volume_path: str, kg_context: Dict[str, Any], phase1_tools: List[Dict[str, Any]]) -> str:
+                   volume_path: str, kg_context: Dict[str, Any], phase1_tools: List[Dict[str, Any]],
+                   message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
         """
         Refine a draft investigation plan using LLM
         
@@ -65,9 +66,10 @@ class LLMPlanGenerator:
             volume_path: Path of the volume with I/O error
             kg_context: Knowledge Graph context with historical experience
             phase1_tools: Complete Phase1 tool registry with names, descriptions, parameters, and invocation methods
+            message_list: Optional message list for chat mode
             
         Returns:
-            str: Refined Investigation Plan
+            Tuple[str, List[Dict[str, str]]]: (Refined Investigation Plan, Updated message list)
         """
         try:
             # Step 1: Generate system prompt for refinement
@@ -148,11 +150,25 @@ Step 2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
 ...
 """
             
-            # Step 4: Call LLM
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ]
+            # Step 4: Initialize or update message list
+            if message_list is None:
+                # Create new message list
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
+                ]
+            else:
+                # Use existing message list
+                # If the last message is from the user, we need to regenerate the plan
+                if message_list[-1]["role"] == "user":
+                    # Keep the system prompt and add the new user message
+                    messages = message_list
+                else:
+                    # This is the first call, initialize with system prompt and user message
+                    messages = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message}
+                    ]
             
             self.logger.info("Calling LLM to generate investigation plan")
             response = self.llm.invoke(messages)
@@ -164,12 +180,40 @@ Step 2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
             if "Investigation Plan:" not in plan_text:
                 plan_text = self._format_raw_plan(plan_text, pod_name, namespace, volume_path)
             
+            # Add assistant response to message list
+            if message_list is None:
+                message_list = messages + [{"role": "assistant", "content": plan_text}]
+            else:
+                # If the last message is from the user, append the assistant response
+                if message_list[-1]["role"] == "user":
+                    message_list.append({"role": "assistant", "content": plan_text})
+                else:
+                    # Replace the last message if it's from the assistant
+                    message_list[-1] = {"role": "assistant", "content": plan_text}
+            
             self.logger.info("Successfully generated LLM-based investigation plan")
-            return plan_text
+            return plan_text, message_list
             
         except Exception as e:
             self.logger.error(f"Error in LLM-based plan generation: {str(e)}")
-            return self._generate_basic_fallback_plan(pod_name, namespace, volume_path)
+            fallback_plan = self._generate_basic_fallback_plan(pod_name, namespace, volume_path)
+            
+            # Add fallback plan to message list
+            if message_list is None:
+                message_list = [
+                    {"role": "system", "content": self._generate_refinement_system_prompt()},
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": fallback_plan}
+                ]
+            else:
+                # If the last message is from the user, append the assistant response
+                if message_list[-1]["role"] == "user":
+                    message_list.append({"role": "assistant", "content": fallback_plan})
+                else:
+                    # Replace the last message if it's from the assistant
+                    message_list[-1] = {"role": "assistant", "content": fallback_plan}
+            
+            return fallback_plan, message_list
     
     def _generate_refinement_system_prompt(self) -> str:
         """

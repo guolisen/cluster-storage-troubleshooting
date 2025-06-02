@@ -40,7 +40,7 @@ class PlanPhase:
         self.investigation_planner = None
     
     def execute(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
-               volume_path: str) -> Dict[str, Any]:
+               volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:
         """
         Execute the Plan Phase
         
@@ -49,9 +49,10 @@ class PlanPhase:
             pod_name: Name of the pod with the error
             namespace: Namespace of the pod
             volume_path: Path of the volume with I/O error
+            message_list: Optional message list for chat mode
             
         Returns:
-            Dict[str, Any]: Results of the Plan Phase, including the Investigation Plan
+            Dict[str, Any]: Results of the Plan Phase, including the Investigation Plan and updated message list
         """
         self.logger.info(f"Executing Plan Phase for {namespace}/{pod_name} volume {volume_path}")
         
@@ -60,8 +61,8 @@ class PlanPhase:
             self.investigation_planner = InvestigationPlanner(knowledge_graph, self.config_data)
             
             # Generate Investigation Plan
-            investigation_plan = self.investigation_planner.generate_investigation_plan(
-                pod_name, namespace, volume_path
+            investigation_plan, message_list = self.investigation_planner.generate_investigation_plan(
+                pod_name, namespace, volume_path, message_list
             )
             
             # Parse the plan into a structured format for Phase 1
@@ -74,18 +75,32 @@ class PlanPhase:
                 "structured_plan": structured_plan,
                 "pod_name": pod_name,
                 "namespace": namespace,
-                "volume_path": volume_path
+                "volume_path": volume_path,
+                "message_list": message_list
             }
             
         except Exception as e:
             self.logger.error(f"Error executing Plan Phase: {str(e)}")
+            # Generate fallback plan
+            fallback_plan = self._generate_basic_fallback_plan(pod_name, namespace, volume_path)
+            
+            # Add fallback plan to message list if provided
+            if message_list is not None:
+                # If the last message is from the user, append the assistant response
+                if message_list[-1]["role"] == "user":
+                    message_list.append({"role": "assistant", "content": fallback_plan})
+                else:
+                    # Replace the last message if it's from the assistant
+                    message_list[-1] = {"role": "assistant", "content": fallback_plan}
+            
             return {
                 "status": "error",
                 "error_message": str(e),
-                "investigation_plan": self._generate_basic_fallback_plan(pod_name, namespace, volume_path),
+                "investigation_plan": fallback_plan,
                 "pod_name": pod_name,
                 "namespace": namespace,
-                "volume_path": volume_path
+                "volume_path": volume_path,
+                "message_list": message_list
             }
     
     def _parse_investigation_plan(self, investigation_plan: str) -> Dict[str, Any]:
@@ -215,7 +230,7 @@ Step F2: Search for any Drive entities | Tool: kg_get_related_entities(entity_ty
         return basic_plan
 
 
-async def run_plan_phase(pod_name, namespace, volume_path, collected_info, config_data=None):
+async def run_plan_phase(pod_name, namespace, volume_path, collected_info, config_data=None, message_list=None):
     """
     Run the Plan Phase
     
@@ -227,7 +242,7 @@ async def run_plan_phase(pod_name, namespace, volume_path, collected_info, confi
         config_data: Configuration data for the system (optional)
         
     Returns:
-        str: Investigation Plan as a formatted string
+        Tuple[str, List[Dict[str, str]]]: (Investigation Plan as a formatted string, Updated message list)
     """
     logger = logging.getLogger(__name__)
     logger.info(f"Running Plan Phase for {namespace}/{pod_name} volume {volume_path}")
@@ -246,7 +261,7 @@ async def run_plan_phase(pod_name, namespace, volume_path, collected_info, confi
     
     # Initialize and execute Plan Phase
     plan_phase = PlanPhase(config_data)
-    results = plan_phase.execute(knowledge_graph, pod_name, namespace, volume_path)
+    results = plan_phase.execute(knowledge_graph, pod_name, namespace, volume_path, message_list)
     
     # Log the results
     logger.info(f"Plan Phase completed with status: {results['status']}")
@@ -262,5 +277,5 @@ async def run_plan_phase(pod_name, namespace, volume_path, collected_info, confi
         
         logger.info(f"Investigation Plan saved to {plan_file}")
     
-    # Return the investigation plan as a string
-    return results['investigation_plan']
+    # Return the investigation plan as a string and the updated message list
+    return results['investigation_plan'], results['message_list']

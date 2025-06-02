@@ -141,17 +141,46 @@ Resolution Method: {resolution_method}
             self.logger.error(f"Error in run_remediation_with_graph: {str(e)}")
             return f"Error in remediation: {str(e)}"
     
-    async def execute_fix_plan(self, phase1_final_response: str) -> str:
+    async def execute_fix_plan(self, phase1_final_response: str, message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
         """
         Execute the fix plan from Phase 1 analysis
         
         Args:
             phase1_final_response: Response from Phase 1 containing root cause and fix plan
+            message_list: Optional message list for chat mode
             
         Returns:
-            str: Remediation result
+            Tuple[str, List[Dict[str, str]]]: (Remediation result, Updated message list)
         """
         try:
+            # Initialize message list if not provided
+            if message_list is None:
+                # System prompt for Phase2
+                system_prompt = """You are an expert Kubernetes storage troubleshooter. Your task is to execute the Fix Plan to resolve volume I/O errors in Kubernetes pods.
+
+TASK:
+1. Execute the Fix Plan to resolve the identified issues
+2. Validate the fixes to ensure they resolved the problem
+3. Provide a detailed report of the remediation actions taken
+
+CONSTRAINTS:
+- Follow the Fix Plan step by step
+- Use only the tools available in the Phase2 tool registry
+- Validate each fix to ensure it was successful
+- Provide a clear, detailed report of all actions taken
+
+OUTPUT FORMAT:
+Your response must include:
+1. Actions Taken
+2. Validation Results
+3. Resolution Status
+4. Recommendations
+"""
+                message_list = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "assistant", "content": "Fix Plan:\n" + phase1_final_response}
+                ]
+            
             # Create troubleshooting graph for remediation
             graph = create_troubleshooting_graph_with_context(
                 self.collected_info, phase="phase2", config_data=self.config_data
@@ -175,22 +204,65 @@ HISTORICAL EXPERIENCE:
             timeout_seconds = self.config_data['troubleshoot']['timeout_seconds']
             
             # Run remediation with graph
-            remediation_result = await self.run_remediation_with_graph(
-                query=query,
-                graph=graph,
-                timeout_seconds=timeout_seconds
-            )
+            formatted_query = {"messages": [{"role": "user", "content": query}]}
             
-            return remediation_result
+            # Show the remediation panel
+            self.console.print("\n")
+            self.console.print(Panel(
+                "[yellow]Starting remediation with LangGraph...\nThis may take a few minutes to complete.", 
+                title="[bold green]Remediation Phase",
+                border_style="green"
+            ))
+            
+            # Run graph with timeout
+            try:
+                response = await asyncio.wait_for(
+                    graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
+                    timeout=timeout_seconds
+                )
+                self.console.print("[green]Remediation complete![/green]")
+            except asyncio.TimeoutError:
+                self.console.print("[red]Remediation timed out![/red]")
+                remediation_result = "Remediation phase timed out - manual intervention may be required"
+                
+                # Add timeout message to message list
+                message_list.append({"role": "assistant", "content": remediation_result})
+                return remediation_result, message_list
+            except Exception as e:
+                self.console.print(f"[red]Remediation failed: {str(e)}[/red]")
+                remediation_result = f"Remediation failed: {str(e)}"
+                
+                # Add error message to message list
+                message_list.append({"role": "assistant", "content": remediation_result})
+                return remediation_result, message_list
+            
+            # Extract remediation results
+            if response["messages"]:
+                if isinstance(response["messages"], list):
+                    remediation_result = response["messages"][-1].content
+                else:
+                    remediation_result = response["messages"].content
+            else:
+                remediation_result = "Failed to generate remediation results"
+            
+            # Add remediation result to message list
+            message_list.append({"role": "assistant", "content": remediation_result})
+            
+            return remediation_result, message_list
 
         except Exception as e:
             error_msg = f"Error during remediation: {str(e)}"
             self.logger.error(error_msg)
-            return error_msg
+            
+            # Add error message to message list if provided
+            if message_list is not None:
+                message_list.append({"role": "assistant", "content": error_msg})
+            
+            return error_msg, message_list
 
 
 async def run_remediation_phase(phase1_final_response: str, collected_info: Dict[str, Any], 
-                              config_data: Dict[str, Any]) -> str:
+                              config_data: Dict[str, Any], message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
     """
     Run Phase 2: Remediation based on analysis results
     
@@ -200,7 +272,7 @@ async def run_remediation_phase(phase1_final_response: str, collected_info: Dict
         config_data: Configuration data
         
     Returns:
-        str: Remediation result
+        Tuple[str, List[Dict[str, str]]]: (Remediation result, Updated message list)
     """
     logging.info("Starting Phase 2: Remediation")
     
@@ -218,11 +290,15 @@ async def run_remediation_phase(phase1_final_response: str, collected_info: Dict
         phase = RemediationPhase(collected_info, config_data)
         
         # Execute the fix plan
-        result = await phase.execute_fix_plan(phase1_final_response)
+        result, message_list = await phase.execute_fix_plan(phase1_final_response, message_list)
         
-        return result
+        return result, message_list
         
     except Exception as e:
         error_msg = f"Error during remediation phase: {str(e)}"
         logging.error(error_msg)
-        return error_msg
+        # Add error message to message list if provided
+        if message_list is not None:
+            message_list.append({"role": "assistant", "content": error_msg})
+        
+        return error_msg, message_list

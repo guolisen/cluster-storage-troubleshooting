@@ -73,8 +73,7 @@ historical_experience:
 
 # Chat Mode Configuration
 chat_mode:
-  enabled: true  # Enable or disable chat mode
+  enabled: false  # Enable or disable chat mode
   entry_points:
     - "plan_phase"  # After Plan Phase
-    - "phase1"      # After Phase1
-  static_plan_step_path: "data/static_plan_step.json"  # Path to static plan steps
+    #- "phase1"      # After Phase1

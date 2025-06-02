@@ -61,7 +61,7 @@ class ComprehensiveInformationCollector(VolumeDiscovery, ToolExecutors, Knowledg
                 await self._execute_pod_discovery_tools(target_pod, target_namespace)
             
             # Volume chain discovery tools
-            await self._execute_volume_chain_tools(volume_chain)
+            await self._execute_volume_chain_tools(volume_chain, target_volume_path)
             
             # CSI Baremetal discovery tools
             await self._execute_csi_baremetal_tools(volume_chain.get('drives', []))

@@ -22,7 +22,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_openai import ChatOpenAI
 
 
-def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "phase1", config_data: Dict[str, Any] = None):
+def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "phase1", config_data: Dict[str, Any] = None, user_instructions: List[str] = None):
     """
     Create a LangGraph ReAct graph for troubleshooting with pre-collected context
     
@@ -30,6 +30,7 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
         collected_info: Pre-collected diagnostic information from Phase 0
         phase: Current troubleshooting phase ("phase1" for investigation, "phase2" for action)
         config_data: Configuration data
+        user_instructions: List of user instructions to include in the context
         
     Returns:
         StateGraph: LangGraph StateGraph
@@ -50,7 +51,7 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
     def call_model(state: MessagesState):
         logging.info(f"Processing state with {len(state['messages'])} messages")
         
-        # Add comprehensive system prompt with pre-collected context
+        # Add phase-specific guidance with optimized content
         phase_specific_guidance = ""
         if phase == "phase1":
             phase_specific_guidance = """
@@ -68,45 +69,6 @@ PHASE 1 RESTRICTIONS:
 - NO test resource creation
 - NO hardware modifications
 - FOCUS on comprehensive investigation and root cause analysis
-
-ROOT CAUSE ANALYSIS REQUIREMENTS:
-1. Knowledge Graph Analysis
-   - MUST use kg_get_all_issues first to identify existing issues
-   - Use kg_analyze_issues to identify patterns and relationships
-   - Cross-reference issues with system metrics and logs
-   - Calculate probability scores for each potential cause
-
-2. Issue Classification
-   - Categorize issues by:
-     * Severity (critical/high/medium/low)
-     * Type (hardware/software/configuration/permission)
-     * Scope (pod/node/cluster level)
-   - Identify primary and secondary issues
-   - Calculate impact radius for each issue
-
-3. Evidence Collection
-   - List all supporting evidence for each issue
-   - Include relevant logs, metrics, and events
-   - Document relationship patterns between components
-   - Track issue occurrence frequency and timing
-
-4. Impact Analysis
-   - Document affected components
-   - Calculate service impact percentage
-   - Identify potential cascade effects
-   - Estimate time-to-impact if not addressed
-
-DIAGNOSTIC PROCESS:
-Follow this structured process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
-a. **Knowledge Graph Analysis**: First use kg_get_all_issues and kg_analyze_issues
-b. **Confirm Issue**: Use kubectl_logs and kubectl_describe for error identification
-c. **Verify Configurations**: Check Pod, PVC, PV configurations and relationships
-d. **Check CSI Driver**: Verify driver status and resources
-e. **Verify Node Health**: Check for node-level issues
-f. **Check Permissions**: Verify security settings
-g. **Inspect Control Plane**: Review controller/scheduler logs
-h. **Test Hardware**: Check disk health and performance
-i. **Pattern Analysis**: Identify recurring patterns and relationships
 
 OUTPUT REQUIREMENTS:
 Provide a detailed investigation report that includes:
@@ -151,33 +113,10 @@ Provide a detailed investigation report that includes:
 7. Next Steps:
    - Recommended further diagnostic actions
    - Suggestions for additional data collection or analysis
-
-Remember to provide clear, concise explanations and avoid technical jargon where possible. The goal is to present a comprehensive understanding of the current state of the system and the issues it's facing.
-
-EXECUTION GUIDELINES:
-1. Root Cause Analysis:
-   - Start with Knowledge Graph tools
-   - Progress from high-severity to low-severity issues
-   - Document all possible causes with probability rankings
-   - Include comprehensive evidence for each cause
-   - List all potential impacts and risks
-
-2. Fix Plan Generation:
-   - Order steps by priority and dependencies
-   - Include clear success criteria for each step
-   - Provide specific commands and parameters
-   - Include verification steps after each action
-   - Document rollback procedures
-   - Estimate time for each step
-
-3. Quality Requirements:
-   - All steps must be specific and actionable
-   - Include command parameters and expected outputs
-   - Provide clear verification methods
-   - Document prerequisites and dependencies
-   - Include safety checks and validations
-
-Remember: You have 50 tool usage attempts. Prioritize critical issues and gather comprehensive evidence before proposing fixes.
+8. Root Cause:
+    - The most likely root cause based on the evidence collected
+8. Fix Plan:
+    - Proposed remediation steps to address the issues
 """
         elif phase == "phase2":
             phase_specific_guidance = """
@@ -192,26 +131,11 @@ All Phase 1 tools (24 investigation tools) PLUS:
 - Resource Cleanup (5): cleanup_test_resources, list_test_resources, cleanup_specific_test_pod, cleanup_orphaned_pvs, force_cleanup_stuck_resources
 
 PHASE 2 CAPABILITIES:
-- Execute remediation actions based on Phase 1 findings
+- Execute remediation actions based on Phase 1 **Fix Plan**
 - Create test resources to validate fixes
 - Run comprehensive volume testing
 - Perform hardware diagnostics and repairs
 - Clean up test resources after validation
-
-REMEDIATION PROCESS:
-1. Review Phase 1 findings and root cause analysis
-2. Implement fixes in order of priority and dependencies
-3. Create test resources to validate each fix
-4. Run volume tests to ensure functionality
-5. Clean up test resources
-6. Verify final resolution status
-
-SAFETY REQUIREMENTS:
-- Always backup data before destructive operations
-- Use test resources for validation before affecting production
-- Follow proper cleanup procedures
-- Verify each step before proceeding to the next
-- Document all changes and their outcomes
 
 OUTPUT REQUIREMENTS:
 Provide a detailed remediation report that includes:
@@ -225,8 +149,8 @@ Provide a detailed remediation report that includes:
             phase_specific_guidance = """
 You are in a legacy mode. Please specify either 'phase1' for investigation or 'phase2' for action/remediation.
 """
-        
-        # Prepare context from collected information
+
+        # Prepare context from collected information for query message
         context_summary = f"""
 === PRE-COLLECTED DIAGNOSTIC CONTEXT ===
 Instructions:
@@ -236,7 +160,7 @@ Knowledge Graph Summary:
 {json.dumps(collected_info.get('knowledge_graph_summary', {}), indent=2)}
 
 Pod Information:
-{collected_info.get('pod_info', {}).get('description', 'No pod information available')[:2000]}
+{str(collected_info.get('pod_info', {}))[:2000]}
 
 PVC Information:
 {str(collected_info.get('pvc_info', {}))[:2000]}
@@ -307,10 +231,11 @@ Environmental Factors:
 - Checked CSI Baremetal driver resources presence.
 - Verified storage class used by PVC/PV.
 
-5. Potential Root Causes:
-- Underlying hardware or driver issues on node's local disk (/dev/sda2) causing I/O errors.
-- Use of local path provisioner instead of CSI Baremetal driver, leading to lack of advanced volume management and error handling.
-- Missing or not installed CSI Baremetal driver in the cluster.
+5. Potential Root Causes:                                                                                                                              
+- **Hardware Failure on Node Disk**: Likely bad sectors or I/O errors on /dev/sda2, as indicated by kernel log patterns. Evidence: Pre-collected issues; dmesg shows boot logs but no new errors. Likelihood: High.                                                                                                 │
+- **Incomplete Knowledge Graph**: Missing entity data in KG, preventing full analysis. Evidence: Tool errors. Likelihood: Medium.                          
+- **Configuration Mismatch**: Use of local path provisioner instead of CSI Baremetal, leading to poor error handling. Evidence: PVC/PV details. Likelihood: High.                                                                                                                                          
+- **Connectivity or Access Issues**: SSH failures for smartctl, possibly due to network problems. Evidence: Tool errors. Likelihood: Medium.   
 
 Likelihood:
 - High confidence in disk hardware/driver issues due to kernel log patterns.
@@ -354,6 +279,7 @@ Fix Plan:
 """
 
 
+        # Create system message with only static guiding principles
         system_message = {
             "role": "system", 
             "content": f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
@@ -373,14 +299,9 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
    - Use kg_analyze_issues to identify patterns and root causes from the Knowledge Graph.
    - Only execute commands like kubectl or SSH when Knowledge Graph lacks needed information.
 
-2. **Safety and Security**:
-   - Only execute commands listed in `commands.allowed` in `config.yaml` (e.g., `kubectl get drive`, `smartctl -a`, `fio`).
-   - Never execute commands in `commands.disallowed` (e.g., `fsck`, `chmod`, `dd`, `kubectl delete pod`) unless explicitly enabled in `config.yaml` and approved by the user in interactive mode.
-   - Validate all commands for safety and relevance before execution.
-   - Log all SSH commands and outputs for auditing, using secure credential handling as specified in `config.yaml`.
-
-4. **Troubleshooting Process**:
+2. **Troubleshooting Process**:
    - Use the LangGraph ReAct module to reason about volume I/O errors based on parameters: `PodName`, `PodNamespace`, and `VolumePath`.
+   - Most of time the pod's volume file system type is xfs, ext4, or btrfs. 
    - Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
      a. **Check Knowledge Graph**: First use Knowledge Graph tools (kg_*) to understand the current state and existing issues.
      b. **Confirm Issue**: If Knowledge Graph lacks information, run `kubectl logs <pod-name> -n <namespace>` and `kubectl describe pod <pod-name> -n <namespace>` to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount").
@@ -401,22 +322,20 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
         - Identify disk: `kubectl get pv -o yaml` and `kubectl get drive <drive-uuid> -o yaml` to confirm `Path`.
         - Check health: `kubectl get drive <drive-uuid> -o yaml` and `ssh <node-name> sudo smartctl -a /dev/<disk-device>`. Verify `Health: GOOD`, zero `Reallocated_Sector_Ct` or `Current_Pending_Sector`.
         - Test performance: `ssh <node-name> sudo fio --name=read_test --filename=/dev/<disk-device> --rw=read --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting`.
-        - Check file system (if unmounted): `ssh <node-name> sudo fsck /dev/<disk-device>` (requires approval).
+        - Check file system (if unmounted): `ssh <node-name> sudo xfs_repair -n /dev/<disk-device>` (requires approval).
         - Test via Pod: Create a test Pod (use provided YAML) and check logs for "Write OK" and "Read OK".
      j. **Propose Remediations**:
         - Bad sectors: Recommend disk replacement if `kubectl get drive` or SMART shows `Health: BAD` or non-zero `Reallocated_Sector_Ct`.
         - Performance issues: Suggest optimizing I/O scheduler or replacing disk if `fio` results show low IOPS (HDD: 100–200, SSD: thousands, NVMe: tens of thousands).
-        - File system corruption: Recommend `fsck` (if enabled/approved) after data backup.
+        - File system corruption: Recommend `fsck` or 'xfs_repair' (if enabled/approved) after data backup.
         - Driver issues: Suggest restarting CSI Baremetal driver pod (if enabled/approved) if logs indicate errors.
    - Only propose remediations after analyzing diagnostic data. Ensure write/change commands (e.g., `fsck`, `kubectl delete pod`) are allowed and approved.
    - Try to find all of possible root causes before proposing any remediation steps. 
 
-5. **Error Handling**:
-   - Log all actions, command outputs, SSH results, and errors to the configured log file and stdout (if enabled).
-   - Handle Kubernetes API or SSH failures with retries as specified in `config.yaml`.
+3. **Error Handling**:
    - If unresolved, provide a detailed report of findings (e.g., logs, drive status, SMART data, test results) and suggest manual intervention.
 
-6. **Knowledge Graph Usage**:
+4. **Knowledge Graph Usage**:
    - Use kg_print_graph to get a human-readable overview of the entire system state.
    - First check issues with kg_get_all_issues before running diagnostic commands. this issue is critical inforamtion to find root cause
    - Use kg_get_summary to get high-level statistics about the cluster state.
@@ -431,31 +350,48 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 8. **Output**:
    - Try to find all of possible root causes before proposing any remediation steps.
    - Provide clear, concise explanations of diagnostic steps, findings, and remediation proposals.
-   - In interactive mode, format prompts as: "Proposed command: <command>. Purpose: <purpose>. Approve? (y/n)".
    - Include performance benchmarks in reports (e.g., HDD: 100–200 IOPS, SSD: thousands, NVMe: tens of thousands).
-   - Log all outputs with timestamps and context for traceability.
    - **Don't output with JSON format, use plain text for better readability.**
-9. **Output Example**:
-
-{final_output_example}
-
-
-Current System Resource Context Summary:
-{context_summary}
+   - **the output should include the following sections:**
+    # Summary of Findings
+    # Detailed Analysis
+    # Relationship Analysis
+    # Investigation Process
+    # Potential Root Causes
+    # Open Questions
+    # Next Steps
+    # Root Cause
+    # Fix Plan
 
 You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.
 """
         }
         
-        # Ensure system message is first
+        # Add pre-collected diagnostic context and output example to user message
+        user_messages = []
+        context_message = {
+            "role": "user",
+            "content": f"""Pre-collected diagnostic context:
+{context_summary}
+
+OUTPUT EXAMPLE:
+{final_output_example}"""
+        }
+        
+        # Ensure system message is first, followed by context message, then any existing user messages
         if state["messages"]:
             if isinstance(state["messages"], list):
-                if state["messages"][0].type != "system":
-                    state["messages"] = [system_message] + state["messages"]
+                # Extract existing user messages (skip system message if present)
+                for msg in state["messages"]:
+                    if msg.type != "system":
+                        user_messages.append(msg)
+                
+                # Create new message list with system message, context message, and existing user messages
+                state["messages"] = [system_message, context_message] + user_messages
             else:
-                state["messages"] = [system_message, state["messages"]]
+                state["messages"] = [system_message, context_message, state["messages"]]
         else:
-            state["messages"] = [system_message]
+            state["messages"] = [system_message, context_message]
         
         # Select tools based on phase
         if phase == "phase1":
@@ -485,11 +421,7 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         file_console = Console(file=open('troubleshoot.log', 'a'))
         
         # Display thinking process
-        console.print(Panel(
-            f"[bold cyan]LangGraph thinking process:[/bold cyan]",
-            border_style="cyan",
-            safe_box=True
-        ))
+        console.print(f"[bold cyan]LangGraph thinking process:[/bold cyan]")
 
         if response.content:
             console.print(Panel(

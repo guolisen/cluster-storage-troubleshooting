@@ -5,7 +5,7 @@ Demo script to show the nice formatted Knowledge Graph output
 This script demonstrates the print_graph functionality added to the KnowledgeGraph class.
 """
 
-from knowledge_graph import KnowledgeGraph
+from knowledge_graph.knowledge_graph import KnowledgeGraph
 
 def demo_knowledge_graph_print():
     """Demonstrate the formatted knowledge graph print functionality"""

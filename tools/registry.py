@@ -45,6 +45,7 @@ from tools.diagnostics.hardware import (
     smartctl_check,
     fio_performance_test,
     fsck_check,
+    xfs_repair_check,  # Added xfs_repair_check for XFS file system checks
     ssh_execute
 )
 
@@ -115,6 +116,7 @@ def get_all_tools() -> List[Any]:
         smartctl_check,
         fio_performance_test,
         fsck_check,
+        xfs_repair_check,  # Added XFS file system check
         ssh_execute,
         
         # System diagnostic tools
@@ -179,6 +181,7 @@ def get_diagnostic_tools() -> List[Any]:
         smartctl_check,
         fio_performance_test,
         fsck_check,
+        xfs_repair_check,  # Added XFS file system check
         ssh_execute,
         
         # System diagnostic tools
@@ -232,6 +235,7 @@ def get_phase1_tools() -> List[Any]:
         
         # Hardware information tools (2 tools)
         smartctl_check,  # Read-only disk health check
+        xfs_repair_check,  # Read-only XFS file system check
         ssh_execute     # Limited to read-only operations
     ]
 

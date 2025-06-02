@@ -24,6 +24,9 @@ class KnowledgeBuilder(MetadataParsers):
         # Reset Knowledge Graph
         self.knowledge_graph = self.knowledge_graph.__class__()
         
+        # Load historical experience data
+        await self._load_historical_experience()
+        
         # Process target pod first if specified
         if target_pod and target_namespace:
             # Extract pod metadata
@@ -1220,3 +1223,118 @@ class KnowledgeBuilder(MetadataParsers):
             error_msg = f"Error adding enhanced log analysis: {str(e)}"
             logging.error(error_msg)
             self.collected_data['errors'].append(error_msg)
+    
+    async def _load_historical_experience(self):
+        """
+        Load historical experience data from the configured file path
+        and add it to the knowledge graph
+        """
+        import os
+        import json
+        
+        try:
+            # Get file path from configuration or use default if not configured
+            historical_experience_file = self.config.get('historical_experience', {}).get('file_path', "historical_experience.json")
+            logging.info(f"Loading historical experience data from {historical_experience_file}")
+            
+            if not os.path.exists(historical_experience_file):
+                error_msg = f"Historical experience file {historical_experience_file} not found"
+                logging.warning(error_msg)
+                self.collected_data['errors'].append(error_msg)
+                return
+            
+            try:
+                with open(historical_experience_file, 'r') as f:
+                    historical_experiences = json.load(f)
+            except json.JSONDecodeError as e:
+                error_msg = f"Error parsing historical experience file: {str(e)}"
+                logging.error(error_msg)
+                self.collected_data['errors'].append(error_msg)
+                return
+            except Exception as e:
+                error_msg = f"Error reading historical experience file: {str(e)}"
+                logging.error(error_msg)
+                self.collected_data['errors'].append(error_msg)
+                return
+            
+            if not isinstance(historical_experiences, list):
+                error_msg = f"Historical experience data should be a list of objects"
+                logging.error(error_msg)
+                self.collected_data['errors'].append(error_msg)
+                return
+            
+            # Add each historical experience to the knowledge graph
+            for idx, experience in enumerate(historical_experiences):
+                # Validate required fields
+                required_fields = ['phenomenon', 'root_cause', 'localization_method', 'resolution_method']
+                missing_fields = [field for field in required_fields if field not in experience]
+                
+                if missing_fields:
+                    error_msg = f"Historical experience entry {idx} is missing required fields: {missing_fields}"
+                    logging.warning(error_msg)
+                    self.collected_data['errors'].append(error_msg)
+                    continue
+                
+                # Add historical experience node to the knowledge graph
+                experience_id = f"hist_{idx+1}"
+                he_id = self.knowledge_graph.add_gnode_historical_experience(
+                    experience_id=experience_id,
+                    phenomenon=experience['phenomenon'],
+                    root_cause=experience['root_cause'],
+                    localization_method=experience['localization_method'],
+                    resolution_method=experience['resolution_method']
+                )
+                
+                # Link historical experience to related system components based on phenomenon
+                self._link_historical_experience_to_components(he_id, experience)
+            
+            logging.info(f"Successfully loaded {len(historical_experiences)} historical experiences")
+            
+        except Exception as e:
+            error_msg = f"Error loading historical experience data: {str(e)}"
+            logging.error(error_msg)
+            self.collected_data['errors'].append(error_msg)
+    
+    def _link_historical_experience_to_components(self, he_id: str, experience: Dict[str, str]):
+        """
+        Link historical experience node to related system components based on phenomenon
+        
+        Args:
+            he_id: Historical experience node ID
+            experience: Historical experience data
+        """
+        try:
+            phenomenon = experience['phenomenon'].lower()
+            
+            # Link to logs if phenomenon mentions logs
+            if 'logs' in phenomenon:
+                log_nodes = self.knowledge_graph.find_nodes_by_type('System')
+                for log_id in log_nodes:
+                    node_attrs = self.knowledge_graph.graph.nodes[log_id]
+                    if node_attrs.get('subtype') == 'logs':
+                        self.knowledge_graph.add_relationship(he_id, log_id, "related_to")
+                        logging.debug(f"Added relationship: {he_id} -> {log_id}")
+            
+            # Link to drives if phenomenon mentions volume/disk/drive
+            if any(term in phenomenon for term in ['volume', 'disk', 'drive']):
+                drive_nodes = self.knowledge_graph.find_nodes_by_type('Drive')
+                for drive_id in drive_nodes:
+                    self.knowledge_graph.add_relationship(he_id, drive_id, "related_to")
+                    logging.debug(f"Added relationship: {he_id} -> {drive_id}")
+            
+            # Link to PVCs if phenomenon mentions PVC
+            if 'pvc' in phenomenon:
+                pvc_nodes = self.knowledge_graph.find_nodes_by_type('PVC')
+                for pvc_id in pvc_nodes:
+                    self.knowledge_graph.add_relationship(he_id, pvc_id, "related_to")
+                    logging.debug(f"Added relationship: {he_id} -> {pvc_id}")
+            
+            # Link to pods if phenomenon mentions pod
+            if 'pod' in phenomenon:
+                pod_nodes = self.knowledge_graph.find_nodes_by_type('Pod')
+                for pod_id in pod_nodes:
+                    self.knowledge_graph.add_relationship(he_id, pod_id, "related_to")
+                    logging.debug(f"Added relationship: {he_id} -> {pod_id}")
+                    
+        except Exception as e:
+            logging.warning(f"Error linking historical experience {he_id} to components: {str(e)}")

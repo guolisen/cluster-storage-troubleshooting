@@ -39,7 +39,8 @@ class KnowledgeGraph:
                 'acs': {},
                 'volumes': {},
                 'system_entities': {},
-                'cluster_nodes': {}
+                'cluster_nodes': {},
+                'historical_experiences': {}
             }
         }
         self.issues = []
@@ -319,6 +320,43 @@ class KnowledgeGraph:
             **attributes
         }
         kg_logger.debug(f"Added ClusterNode node: {node_id}")
+        return node_id
+        
+    def add_gnode_historical_experience(self, experience_id: str, phenomenon: str, root_cause: str, 
+                                       localization_method: str, resolution_method: str, **attributes) -> str:
+        """
+        Add a Historical Experience node to the knowledge graph
+        
+        Args:
+            experience_id: Unique identifier for the historical experience
+            phenomenon: Description of the observed issue
+            root_cause: Analysis of the underlying cause
+            localization_method: Steps or tools to diagnose the issue
+            resolution_method: Steps or actions to resolve the issue
+            **attributes: Additional attributes
+            
+        Returns:
+            str: Node ID
+        """
+        node_id = f"gnode:HistoricalExperience:{experience_id}"
+        self.graph.add_node(node_id,
+                           entity_type="gnode",
+                           gnode_subtype="HistoricalExperience",
+                           experience_id=experience_id,
+                           phenomenon=phenomenon,
+                           root_cause=root_cause,
+                           localization_method=localization_method,
+                           resolution_method=resolution_method,
+                           **attributes)
+        self.entities['gnodes']['historical_experiences'][node_id] = {
+            'experience_id': experience_id,
+            'phenomenon': phenomenon,
+            'root_cause': root_cause,
+            'localization_method': localization_method,
+            'resolution_method': resolution_method,
+            **attributes
+        }
+        kg_logger.debug(f"Added HistoricalExperience node: {node_id}")
         return node_id
     
     def add_relationship(self, source_id: str, target_id: str, relationship: str, **attributes):
@@ -737,8 +775,11 @@ class KnowledgeGraph:
         }
         
         # Count entities by type
-        for entity_type in ['Pod', 'PVC', 'PV', 'Drive', 'Node', 'StorageClass', 'LVG', 'AC', 'Volume', 'System', 'ClusterNode']:
+        for entity_type in ['Pod', 'PVC', 'PV', 'Drive', 'Node', 'StorageClass', 'LVG', 'AC', 'Volume', 'System', 'ClusterNode', 'HistoricalExperience']:
             summary['entity_counts'][entity_type] = len(self.find_nodes_by_type(entity_type))
+        
+        # Add historical experience count specifically 
+        summary['historical_experience_count'] = len(self.find_nodes_by_type('HistoricalExperience'))
         
         return summary
     
@@ -771,86 +812,71 @@ class KnowledgeGraph:
             use_rich = False
             
         # Create console for rich output
-        if use_rich and rich_available:
-            console = Console(record=True)
-            file_console = Console(file=open('troubleshoot.log', 'a'))
-        
+        console = Console(record=True)
+        file_console = Console(file=open('troubleshoot.log', 'a'))
+
         output = []
         
         # Header
-        if use_rich and rich_available:
-            console.print(Panel(
-                "[bold cyan]📊 KUBERNETES STORAGE KNOWLEDGE GRAPH[/bold cyan]",
-                border_style="blue",
-                width=80
-            ))
-        else:
-            output.append("=" * 80)
-            output.append("📊 KUBERNETES STORAGE KNOWLEDGE GRAPH")
-            output.append("=" * 80)
-        
+        console.print(Panel(
+            "[bold cyan]KUBERNETES STORAGE KNOWLEDGE GRAPH[/bold cyan]",
+            border_style="blue",
+            width=80
+        ))
+
         # Summary Statistics
         summary = self.get_summary()
-        if use_rich and rich_available:
-            # Create summary table
-            summary_table = Table(
-                title="[bold]🔍 GRAPH SUMMARY",
-                show_header=True,
-                header_style="bold cyan",
-                box=True,
-                border_style="blue"
-            )
-            
-            summary_table.add_column("Metric", style="dim")
-            summary_table.add_column("Value", justify="right")
-            
-            def safe_format(value: Any) -> str:
-                """Safely convert any value to a string for rich formatting"""
-                try:
-                    # Explicitly handle boolean values first
-                    if isinstance(value, bool):
-                        return "True" if value else "False"
-                    # For all other types, convert to string
-                    return str(value)
-                except Exception:
-                    return "N/A"
 
-            # Ensure all values are explicitly converted to strings
-            summary_table.add_row("Total Nodes", f"[blue]{str(summary['total_nodes'])}[/blue]")
-            summary_table.add_row("Total Edges", f"[blue]{str(summary['total_edges'])}[/blue]")
-            summary_table.add_row("Total Issues", f"[yellow]{str(summary['total_issues'])}[/yellow]")
-            summary_table.add_row("Critical Issues", f"[red]{str(summary['critical_issues'])}[/red]")
-            summary_table.add_row("High Issues", f"[orange3]{str(summary['high_issues'])}[/orange3]")
-            summary_table.add_row("Medium Issues", f"[yellow]{str(summary['medium_issues'])}[/yellow]")
-            summary_table.add_row("Low Issues", f"[green]{str(summary['low_issues'])}[/green]")
-            
+        # Create summary table
+        summary_table = Table(
+            title="[bold] GRAPH SUMMARY",
+            show_header=True,
+            header_style="bold cyan",
+            box=True,
+            border_style="blue"
+        )
+        
+        summary_table.add_column("Metric", style="dim")
+        summary_table.add_column("Value", justify="right")
+        
+        def safe_format(value: Any) -> str:
+            """Safely convert any value to a string for rich formatting"""
             try:
-                console.print(Panel(
-                    summary_table,
-                    safe_box=True  # Explicitly set safe_box to True
-                ))
-            except Exception as e:
-                kg_logger.error(f"Error printing rich summary table: {e}")
-                # Fallback to plain text
-                output.append("\n🔍 GRAPH SUMMARY:")
-                output.append("-" * 40)
-                output.append(f"📦 Total Nodes: {summary['total_nodes']}")
-                output.append(f"🔗 Total Edges: {summary['total_edges']}")
-                output.append(f"⚠️  Total Issues: {summary['total_issues']}")
-                output.append(f"🔴 Critical Issues: {summary['critical_issues']}")
-                output.append(f"🟠 High Issues: {summary['high_issues']}")
-                output.append(f"🟡 Medium Issues: {summary['medium_issues']}")
-                output.append(f"🟢 Low Issues: {summary['low_issues']}")
-        else:
+                # Explicitly handle boolean values first
+                if isinstance(value, bool):
+                    return "True" if value else "False"
+                # For all other types, convert to string
+                return str(value)
+            except Exception:
+                return "N/A"
+
+        # Ensure all values are explicitly converted to strings
+        summary_table.add_row("Total Nodes", f"[blue]{str(summary['total_nodes'])}[/blue]")
+        summary_table.add_row("Total Edges", f"[blue]{str(summary['total_edges'])}[/blue]")
+        summary_table.add_row("Total Issues", f"[yellow]{str(summary['total_issues'])}[/yellow]")
+        summary_table.add_row("Critical Issues", f"[red]{str(summary['critical_issues'])}[/red]")
+        summary_table.add_row("High Issues", f"[orange3]{str(summary['high_issues'])}[/orange3]")
+        summary_table.add_row("Medium Issues", f"[yellow]{str(summary['medium_issues'])}[/yellow]")
+        summary_table.add_row("Low Issues", f"[green]{str(summary['low_issues'])}[/green]")
+        
+        try:
+            console.print(Panel(
+                summary_table,
+                safe_box=True  # Explicitly set safe_box to True
+            ))
+        except Exception as e:
+            kg_logger.error(f"Error printing rich summary table: {e}")
+            # Fallback to plain text
             output.append("\n🔍 GRAPH SUMMARY:")
             output.append("-" * 40)
-            output.append(f"📦 Total Nodes: {summary['total_nodes']}")
+            output.append(f"🔗 Total Nodes: {summary['total_nodes']}")
             output.append(f"🔗 Total Edges: {summary['total_edges']}")
-            output.append(f"⚠️  Total Issues: {summary['total_issues']}")
+            output.append(f"⚠️ Total Issues: {summary['total_issues']}")
             output.append(f"🔴 Critical Issues: {summary['critical_issues']}")
             output.append(f"🟠 High Issues: {summary['high_issues']}")
             output.append(f"🟡 Medium Issues: {summary['medium_issues']}")
             output.append(f"🟢 Low Issues: {summary['low_issues']}")
+
         
         # Entity Breakdown
         output.append("\n📋 ENTITY BREAKDOWN:")

@@ -61,6 +61,7 @@ from tools.diagnostics.hardware import (
     smartctl_check,
     fio_performance_test,
     fsck_check,
+    xfs_repair_check,  # Added xfs_repair_check for XFS file system checks
     ssh_execute
 )
 

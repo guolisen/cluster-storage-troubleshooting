@@ -217,8 +217,27 @@ async def run_remediation_phase(phase1_final_response: str, collected_info: Dict
         # Initialize the remediation phase
         phase = RemediationPhase(collected_info, config_data)
         
+        # Setup shortcut key handler if chat mode is enabled
+        chat_mode_enabled = config_data and config_data.get('chat_mode', {}).get('enabled', False)
+        if chat_mode_enabled:
+            from phases.chat_mode import get_chat_mode, handle_shortcut_key
+            
+            # Create a context for the LangGraph workflow
+            langgraph_context = {
+                'phase1_final_response': phase1_final_response,
+                'fix_plan': phase1_final_response  # Assuming the fix plan is part of the Phase 1 response
+            }
+            
+            # Setup shortcut key handler
+            chat_mode = get_chat_mode(config_data)
+            chat_mode.setup_shortcut_handler(lambda: handle_shortcut_key(langgraph_context))
+        
         # Execute the fix plan
         result = await phase.execute_fix_plan(phase1_final_response)
+        
+        # Restore shortcut key handler if chat mode is enabled
+        if chat_mode_enabled:
+            chat_mode.restore_shortcut_handler()
         
         return result
         

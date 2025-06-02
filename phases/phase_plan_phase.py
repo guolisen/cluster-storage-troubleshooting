@@ -12,6 +12,13 @@ import json
 from typing import Dict, List, Any, Optional
 from knowledge_graph import KnowledgeGraph
 from phases.investigation_planner import InvestigationPlanner
+from rich.logging import RichHandler
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.panel import Panel
+from rich.table import Table
+from rich.tree import Tree
+from rich import print as rprint
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +268,48 @@ async def run_plan_phase(pod_name, namespace, volume_path, collected_info, confi
             f.write(results['investigation_plan'])
         
         logger.info(f"Investigation Plan saved to {plan_file}")
+    
+    # Check if chat mode is enabled
+    chat_mode_enabled = config_data and config_data.get('chat_mode', {}).get('enabled', False)
+    if chat_mode_enabled:
+        from phases.chat_mode import handle_plan_phase_chat
+        
+        # Create a context for the LLM plan generator
+        llm_context = {
+            'pod_name': pod_name,
+            'namespace': namespace,
+            'volume_path': volume_path,
+            'knowledge_graph': knowledge_graph
+        }
+        
+        # Enter chat mode for user approval or refinement
+        chat_result = handle_plan_phase_chat(llm_context)
+        
+        # If user provided instructions to refine the plan, regenerate it
+        while chat_result.get('action') == 'regenerate':
+            logger.info("Regenerating Investigation Plan based on user instructions")
+            
+            # Update the context with user instructions
+            updated_context = chat_result.get('updated_context', {})
+            
+            # Regenerate the plan with updated context
+            plan_phase = PlanPhase(config_data)
+            results = plan_phase.execute(knowledge_graph, pod_name, namespace, volume_path)
+            
+            # Update the investigation plan
+            investigation_plan = results['investigation_plan']
+
+            # output the updated plan
+            console = Console()
+            console.print(Panel(
+                f"[bold white]Updated Investigation Plan:\n{investigation_plan}",
+                title="[bold green]UPDATED INVESTIGATION PLAN",
+                border_style="green",
+                padding=(1, 2)
+            ))
+            
+            # Enter chat mode again for user approval or further refinement
+            chat_result = handle_plan_phase_chat(updated_context)
     
     # Return the investigation plan as a string
     return results['investigation_plan']

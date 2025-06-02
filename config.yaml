@@ -12,6 +12,11 @@ llm:
   temperature: 0
   max_tokens: 32768
 
+# Chat Mode Configuration
+chat_mode:
+  enabled: true
+  shortcut_key: "ctrl+c"
+
 # Monitoring Configuration
 monitor:
   interval_seconds: 60

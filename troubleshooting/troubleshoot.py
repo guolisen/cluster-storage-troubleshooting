@@ -304,6 +304,13 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
     }
     
     try:
+        # Initialize chat mode if enabled
+        chat_mode_enabled = CONFIG_DATA and CONFIG_DATA.get('chat_mode', {}).get('enabled', False)
+        if chat_mode_enabled:
+            from phases.chat_mode import get_chat_mode
+            chat_mode = get_chat_mode(CONFIG_DATA)
+            logging.info("Chat mode is enabled")
+        
         # Phase 0: Information Collection
         console.print("\n")
         console.print(Panel(

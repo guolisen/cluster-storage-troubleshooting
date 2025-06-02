@@ -22,7 +22,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_openai import ChatOpenAI
 
 
-def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "phase1", config_data: Dict[str, Any] = None):
+def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "phase1", config_data: Dict[str, Any] = None, user_instructions: List[str] = None):
     """
     Create a LangGraph ReAct graph for troubleshooting with pre-collected context
     
@@ -30,6 +30,7 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
         collected_info: Pre-collected diagnostic information from Phase 0
         phase: Current troubleshooting phase ("phase1" for investigation, "phase2" for action)
         config_data: Configuration data
+        user_instructions: List of user instructions to include in the context
         
     Returns:
         StateGraph: LangGraph StateGraph

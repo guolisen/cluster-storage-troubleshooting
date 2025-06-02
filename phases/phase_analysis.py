@@ -252,8 +252,29 @@ async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_pat
         # Initialize the analysis phase
         phase = AnalysisPhase(collected_info, config_data)
         
+        # Setup shortcut key handler if chat mode is enabled
+        chat_mode_enabled = config_data and config_data.get('chat_mode', {}).get('enabled', False)
+        if chat_mode_enabled:
+            from phases.chat_mode import get_chat_mode, handle_shortcut_key
+            
+            # Create a context for the LangGraph workflow
+            langgraph_context = {
+                'pod_name': pod_name,
+                'namespace': namespace,
+                'volume_path': volume_path,
+                'investigation_plan': investigation_plan
+            }
+            
+            # Setup shortcut key handler
+            chat_mode = get_chat_mode(config_data)
+            chat_mode.setup_shortcut_handler(lambda: handle_shortcut_key(langgraph_context))
+        
         # Run the investigation
         result = await phase.run_investigation(pod_name, namespace, volume_path, investigation_plan)
+        
+        # Restore shortcut key handler if chat mode is enabled
+        if chat_mode_enabled:
+            chat_mode.restore_shortcut_handler()
         
         # Check if the result contains the SKIP_PHASE2 marker
         skip_phase2 = "SKIP_PHASE2: YES" in result
@@ -262,6 +283,34 @@ async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_pat
         if skip_phase2:
             result = result.replace("SKIP_PHASE2: YES", "").strip()
             logging.info("Phase 1 indicated Phase 2 should be skipped")
+        
+        # Enter chat mode after Phase1 if enabled
+        if chat_mode_enabled:
+            from phases.chat_mode import handle_phase1_chat
+            
+            # Create a context for the LangGraph workflow
+            langgraph_context = {
+                'pod_name': pod_name,
+                'namespace': namespace,
+                'volume_path': volume_path,
+                'investigation_plan': investigation_plan,
+                'phase1_result': result
+            }
+            
+            # Enter chat mode for user approval or refinement
+            chat_result = handle_phase1_chat(langgraph_context)
+            
+            # If user provided instructions to guide the workflow, update the result
+            if chat_result.get('action') == 'continue':
+                # In a real implementation, we would continue the LangGraph workflow
+                # with the updated context, but for this implementation, we'll just
+                # append the user instructions to the result
+                updated_context = chat_result.get('updated_context', {})
+                user_instructions = updated_context.get('user_instructions', [])
+                if user_instructions:
+                    result += f"\n\nUser Instructions:\n"
+                    for instruction in user_instructions:
+                        result += f"- {instruction}\n"
         
         return result, skip_phase2
     

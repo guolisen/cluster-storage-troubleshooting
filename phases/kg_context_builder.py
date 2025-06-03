@@ -45,7 +45,14 @@ class KGContextBuilder:
             ValueError: If the knowledge graph is invalid
         """
         required_attributes = ['graph']
-        required_methods = ['get_all_issues']
+        required_methods = [
+            'get_all_issues', 
+            'get_entity_info', 
+            'get_related_entities',
+            'find_nodes_by_type', 
+            'find_connected_nodes', 
+            'get_summary'
+        ]
         
         for attr in required_attributes:
             if not hasattr(self.kg, attr):

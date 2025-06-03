@@ -14,16 +14,25 @@ from rich.panel import Panel
 from langgraph.graph import StateGraph
 
 from troubleshooting.graph import create_troubleshooting_graph_with_context
-from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
+from troubleshooting.utils import (
+    HistoricalExperienceFormatter,
+    GraphExecutor,
+    ErrorHandler,
+    MessageListManager,
+    OutputFormatter
+)
 
 logger = logging.getLogger(__name__)
+
 
 class AnalysisPhase:
     """
     Implementation of Phase 1: ReAct Investigation
     
     This class handles the active investigation of volume I/O errors
-    using the Investigation Plan and pre-collected data.
+    using the Investigation Plan and pre-collected data. It creates a
+    LangGraph ReAct workflow that executes the Investigation Plan and
+    generates a comprehensive analysis with root cause and fix plan.
     """
     
     def __init__(self, collected_info: Dict[str, Any], config_data: Dict[str, Any]):
@@ -38,106 +47,6 @@ class AnalysisPhase:
         self.config_data = config_data
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.console = Console()
-    
-    def _format_historical_experiences(self, collected_info: Dict[str, Any]) -> str:
-        """
-        Format historical experience data from collected information
-        
-        Args:
-            collected_info: Pre-collected diagnostic information from Phase 0
-            
-        Returns:
-            str: Formatted historical experience data for LLM consumption
-        """
-        try:
-            # Extract historical experiences from knowledge graph in collected_info
-            kg = collected_info.get('knowledge_graph', None)
-            if not kg or not hasattr(kg, 'graph'):
-                return "No historical experience data available."
-            
-            # Find historical experience nodes
-            historical_experience_nodes = []
-            for node_id, attrs in kg.graph.nodes(data=True):
-                if attrs.get('gnode_subtype') == 'HistoricalExperience':
-                    historical_experience_nodes.append((node_id, attrs))
-            
-            if not historical_experience_nodes:
-                return "No historical experience data available."
-            
-            # Format historical experiences in a clear, structured way
-            formatted_entries = []
-            
-            for idx, (node_id, attrs) in enumerate(historical_experience_nodes, 1):
-                # Get attributes from the experience
-                phenomenon = attrs.get('phenomenon', 'Unknown phenomenon')
-                root_cause = attrs.get('root_cause', 'Unknown root cause')
-                localization_method = attrs.get('localization_method', 'No localization method provided')
-                resolution_method = attrs.get('resolution_method', 'No resolution method provided')
-                
-                # Format the entry
-                entry = f"""HISTORICAL EXPERIENCE #{idx}:
-Phenomenon: {phenomenon}
-Root Cause: {root_cause}
-Localization Method: {localization_method}
-Resolution Method: {resolution_method}
-"""
-                formatted_entries.append(entry)
-            
-            return "\n".join(formatted_entries)
-            
-        except Exception as e:
-            self.logger.warning(f"Error formatting historical experiences: {str(e)}")
-            return "Error formatting historical experience data."
-    
-    async def run_analysis_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 60) -> str:
-        """
-        Run an analysis using the provided LangGraph StateGraph with enhanced progress tracking
-        
-        Args:
-            query: The initial query to send to the graph
-            graph: LangGraph StateGraph to use
-            timeout_seconds: Maximum execution time in seconds
-            
-        Returns:
-            str: Analysis result
-        """
-        try:
-            formatted_query = {"messages": [{"role": "user", "content": query}]}
-            
-            # First show the analysis panel
-            self.console.print(Panel(
-                "[yellow]Starting analysis with LangGraph...\nThis may take a few minutes to complete.", 
-                title="[bold blue]Analysis Phase",
-                border_style="blue"
-            ))
-            
-            # Run graph with timeout
-            try:
-                response = await asyncio.wait_for(
-                    graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
-                    timeout=timeout_seconds
-                )
-                self.console.print("[green]Analysis complete![/green]")
-            except asyncio.TimeoutError:
-                self.console.print("[red]Analysis timed out![/red]")
-                raise
-            except Exception as e:
-                self.console.print(f"[red]Analysis failed: {str(e)}[/red]")
-                raise
-            
-            # Extract analysis results
-            if response["messages"]:
-                if isinstance(response["messages"], list):
-                    final_message = response["messages"][-1].content
-                else:
-                    final_message = response["messages"].content
-            else:
-                final_message = "Failed to generate analysis results"
-            
-            return final_message
-        except Exception as e:
-            self.logger.error(f"Error in run_analysis_with_graph: {str(e)}")
-            return f"Error in analysis: {str(e)}"
     
     async def run_investigation(self, pod_name: str, namespace: str, volume_path: str, 
                                investigation_plan: str, message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
@@ -156,9 +65,55 @@ Resolution Method: {resolution_method}
         """
         try:
             # Initialize message list if not provided
-            if message_list is None:
-                # System prompt for Phase1
-                system_prompt = """You are an expert Kubernetes storage troubleshooter. Your task is to investigate volume I/O errors in Kubernetes pods and generate a comprehensive Fix Plan.
+            message_list = self._initialize_message_list(message_list)
+            
+            # Create troubleshooting graph with pre-collected context
+            graph = self._create_troubleshooting_graph()
+            
+            # Prepare query for the graph
+            query = self._prepare_investigation_query(
+                pod_name, namespace, volume_path, investigation_plan
+            )
+            
+            # Add investigation plan to message list if not already present
+            message_list = self._add_investigation_plan_to_messages(
+                message_list, investigation_plan
+            )
+            
+            # Execute graph and get final response
+            final_message, message_list = await self._execute_graph_and_get_response(
+                graph, message_list
+            )
+            
+            return final_message, message_list
+
+        except Exception as exception:
+            return self._handle_investigation_error(exception, message_list)
+    
+    def _initialize_message_list(self, message_list: Optional[List[Dict[str, str]]]) -> List[Dict[str, str]]:
+        """
+        Initialize message list with system prompt if not provided
+        
+        Args:
+            message_list: Optional existing message list
+            
+        Returns:
+            List[Dict[str, str]]: Initialized message list
+        """
+        if message_list is None:
+            system_prompt = self._create_system_prompt()
+            return [{"role": "system", "content": system_prompt}]
+        
+        return message_list
+    
+    def _create_system_prompt(self) -> str:
+        """
+        Create the system prompt for Phase 1
+        
+        Returns:
+            str: System prompt for Phase 1
+        """
+        return """You are an expert Kubernetes storage troubleshooter. Your task is to investigate volume I/O errors in Kubernetes pods and generate a comprehensive Fix Plan.
 
 TASK:
 1. Execute the Investigation Plan to identify the root cause of volume I/O errors
@@ -178,24 +133,40 @@ Your response must include:
 3. Root Cause
 4. Fix Plan
 """
-                message_list = [
-                    {"role": "system", "content": system_prompt}
-                ]
+    
+    def _create_troubleshooting_graph(self) -> StateGraph:
+        """
+        Create the troubleshooting graph with pre-collected context
+        
+        Returns:
+            StateGraph: LangGraph StateGraph for troubleshooting
+        """
+        return create_troubleshooting_graph_with_context(
+            self.collected_info, phase="phase1", config_data=self.config_data
+        )
+    
+    def _prepare_investigation_query(self, pod_name: str, namespace: str, 
+                                   volume_path: str, investigation_plan: str) -> str:
+        """
+        Prepare the investigation query for the graph
+        
+        Args:
+            pod_name: Name of the pod with the error
+            namespace: Namespace of the pod
+            volume_path: Path of the volume with I/O error
+            investigation_plan: Investigation Plan to follow
             
-            # Create troubleshooting graph with pre-collected context
-            graph = create_troubleshooting_graph_with_context(
-                self.collected_info, phase="phase1", config_data=self.config_data
-            )
-            
-            # Extract and format historical experience data from collected_info
-            historical_experiences_formatted = self._format_historical_experiences(self.collected_info)
-            
-            # Add investigation results to message list if not already present
-            if len(message_list) == 1:  # Only system prompt exists
-                message_list.append({"role": "assistant", "content": "Investigation Results:\n" + investigation_plan})
-            
-            # Updated query message with dynamic data for LangGraph workflow
-            query = f"""Phase 1 - ReAct Investigation: Execute the Investigation Plan to actively investigate the volume I/O error in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
+        Returns:
+            str: Formatted investigation query
+        """
+        # Extract and format historical experience data
+        historical_experiences_formatted = self._format_historical_experiences()
+        
+        # Create special case detection instructions
+        special_case_instructions = self._create_special_case_instructions()
+        
+        # Create query with dynamic data for LangGraph workflow
+        return f"""Phase 1 - ReAct Investigation: Execute the Investigation Plan to actively investigate the volume I/O error in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
 
 INVESTIGATION PLAN TO FOLLOW:
 {investigation_plan}
@@ -204,7 +175,30 @@ HISTORICAL EXPERIENCE:
 {historical_experiences_formatted}
 
 SPECIAL CASE DETECTION:
-After executing the Investigation Plan, you must determine if one of these special cases applies:
+{special_case_instructions}
+
+<<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
+"""
+    
+    def _format_historical_experiences(self) -> str:
+        """
+        Format historical experience data from collected_info
+        
+        Returns:
+            str: Formatted historical experience data
+        """
+        return HistoricalExperienceFormatter.format_historical_experiences(
+            self.collected_info
+        )
+    
+    def _create_special_case_instructions(self) -> str:
+        """
+        Create instructions for special case detection
+        
+        Returns:
+            str: Special case detection instructions
+        """
+        return """After executing the Investigation Plan, you must determine if one of these special cases applies:
 
 CASE 1 - NO ISSUES DETECTED:
 If the Knowledge Graph and Investigation Plan execution confirm the system has no issues:
@@ -230,60 +224,83 @@ CASE 3 - AUTOMATIC FIX POSSIBLE:
 If the issue can be resolved automatically:
 - Generate a fix plan based on the Investigation Plan's results
 - Output a comprehensive root cause analysis and fix plan
-- Do NOT include the SKIP_PHASE2 marker
-
-<<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
-"""
-            # Set timeout
-            timeout_seconds = self.config_data['troubleshoot']['timeout_seconds']
+- Do NOT include the SKIP_PHASE2 marker"""
+    
+    def _add_investigation_plan_to_messages(self, message_list: List[Dict[str, str]], 
+                                          investigation_plan: str) -> List[Dict[str, str]]:
+        """
+        Add investigation plan to message list if not already present
+        
+        Args:
+            message_list: Existing message list
+            investigation_plan: Investigation Plan to add
             
-            # Run analysis using the tools module
-            formatted_query = {"messages": [{"role": "user", "content": query}]}
+        Returns:
+            List[Dict[str, str]]: Updated message list
+        """
+        # Only add if message list only contains system prompt
+        if len(message_list) == 1:  # Only system prompt exists
+            return MessageListManager.add_to_message_list(
+                message_list, 
+                f"Investigation Plan:\n{investigation_plan}",
+                "user"
+            )
+        
+        return message_list
+    
+    async def _execute_graph_and_get_response(self, graph: StateGraph, 
+                                            message_list: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, str]]]:
+        """
+        Execute the graph and get the final response
+        
+        Args:
+            graph: LangGraph StateGraph to execute
+            message_list: Message list for the graph
             
-            # First show the analysis panel
-            self.console.print(Panel(
-                "[yellow]Starting analysis with LangGraph...\nThis may take a few minutes to complete.", 
-                title="[bold blue]Analysis Phase",
-                border_style="blue"
-            ))
+        Returns:
+            Tuple[str, List[Dict[str, str]]]: (Final response, Updated message list)
+        """
+        # Set timeout from config
+        timeout_seconds = self.config_data.get('troubleshoot', {}).get('timeout_seconds', 600)
+        
+        # Create initial state with messages
+        initial_state = {"messages": message_list}
+        
+        # Execute graph
+        final_state = await GraphExecutor.execute_graph(
+            graph, initial_state, timeout_seconds
+        )
+        
+        # Extract final response
+        final_message = GraphExecutor.extract_final_response(final_state)
+        
+        # Add final response to message list
+        message_list = MessageListManager.add_to_message_list(message_list, final_message)
+        
+        return final_message, message_list
+    
+    def _handle_investigation_error(self, exception: Exception, 
+                                  message_list: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, str]]]:
+        """
+        Handle errors during investigation
+        
+        Args:
+            exception: Exception that occurred
+            message_list: Message list to update
             
-            # Run graph with timeout
-            try:
-                response = await asyncio.wait_for(
-                    graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
-                    timeout=timeout_seconds
-                )
-                self.console.print("[green]Analysis complete![/green]")
-            except asyncio.TimeoutError:
-                self.console.print("[red]Analysis timed out![/red]")
-                raise
-            except Exception as e:
-                self.console.print(f"[red]Analysis failed: {str(e)}[/red]")
-                raise
-            
-            # Extract analysis results
-            if response["messages"]:
-                if isinstance(response["messages"], list):
-                    final_message = response["messages"][-1].content
-                else:
-                    final_message = response["messages"].content
-            else:
-                final_message = "Failed to generate analysis results"
-            
-            # Add fix plan to message list
-            message_list.append({"role": "assistant", "content": final_message})
-            
-            return final_message, message_list
-
-        except Exception as e:
-            error_msg = f"Error during analysis phase: {str(e)}"
-            self.logger.error(error_msg)
-            
-            # Add error message to message list if provided
-            if message_list is not None:
-                message_list.append({"role": "assistant", "content": error_msg})
-            
-            return error_msg, message_list
+        Returns:
+            Tuple[str, List[Dict[str, str]]]: (Error message, Updated message list)
+        """
+        error_msg = ErrorHandler.create_error_response(
+            exception, "Error during analysis phase"
+        )
+        
+        # Add error message to message list
+        if message_list is not None:
+            message_list = MessageListManager.add_to_message_list(message_list, error_msg)
+        
+        self.logger.error(f"Error in analysis phase: {str(exception)}")
+        return error_msg, message_list
 
 
 async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_path: str, 
@@ -299,12 +316,36 @@ async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_pat
         collected_info: Pre-collected diagnostic information from Phase 0
         investigation_plan: Investigation Plan generated by the Plan Phase
         config_data: Configuration data
+        message_list: Optional message list for chat mode
         
     Returns:
         Tuple[str, bool, List[Dict[str, str]]]: (Analysis result, Skip Phase2 flag, Updated message list)
     """
     logging.info("Starting Phase 1: ReAct Investigation with Plan")
     
+    # Display phase header
+    _display_phase_header()
+    
+    try:
+        # Initialize the analysis phase
+        phase = AnalysisPhase(collected_info, config_data)
+        
+        # Run the investigation
+        result, message_list = await phase.run_investigation(
+            pod_name, namespace, volume_path, investigation_plan, message_list
+        )
+        
+        # Process the result
+        return _process_analysis_result(result, message_list)
+    
+    except Exception as exception:
+        return _handle_phase_error(exception, message_list)
+
+
+def _display_phase_header() -> None:
+    """
+    Display the phase header in the console
+    """
     console = Console()
     console.print("\n")
     console.print(Panel(
@@ -313,30 +354,52 @@ async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_pat
         border_style="magenta",
         padding=(1, 2)
     ))
+
+
+def _process_analysis_result(result: str, message_list: List[Dict[str, str]]) -> Tuple[str, bool, List[Dict[str, str]]]:
+    """
+    Process the analysis result to determine if Phase 2 should be skipped
     
-    try:
-        # Initialize the analysis phase
-        phase = AnalysisPhase(collected_info, config_data)
+    Args:
+        result: Analysis result
+        message_list: Message list
         
-        # Run the investigation
-        result, message_list = await phase.run_investigation(pod_name, namespace, volume_path, investigation_plan, message_list)
-        
-        # Check if the result contains the SKIP_PHASE2 marker
-        skip_phase2 = "SKIP_PHASE2: YES" in result
-        
-        # Remove the SKIP_PHASE2 marker from the output if present
-        if skip_phase2:
-            result = result.replace("SKIP_PHASE2: YES", "").strip()
-            logging.info("Phase 1 indicated Phase 2 should be skipped")
-        
-        return result, skip_phase2, message_list
+    Returns:
+        Tuple[str, bool, List[Dict[str, str]]]: (Processed result, Skip Phase2 flag, Message list)
+    """
+    # Check if the result contains the SKIP_PHASE2 marker
+    skip_phase2 = "SKIP_PHASE2: YES" in result
     
-    except Exception as e:
-        error_msg = f"Error during analysis phase: {str(e)}"
-        logging.error(error_msg)
+    # Remove the SKIP_PHASE2 marker from the output if present
+    if skip_phase2:
+        result = result.replace("SKIP_PHASE2: YES", "").strip()
+        logging.info("Phase 1 indicated Phase 2 should be skipped")
+    
+    # Check if Phase 2 should be skipped based on the content of the result
+    if not skip_phase2:
+        skip_phase2 = GraphExecutor.should_skip_phase2(result)
+    
+    return result, skip_phase2, message_list
+
+
+def _handle_phase_error(exception: Exception, message_list: List[Dict[str, str]]) -> Tuple[str, bool, List[Dict[str, str]]]:
+    """
+    Handle errors during the analysis phase
+    
+    Args:
+        exception: Exception that occurred
+        message_list: Message list to update
         
-        # Add error message to message list if provided
-        if message_list is not None:
-            message_list.append({"role": "assistant", "content": error_msg})
-        
-        return error_msg, False, message_list
+    Returns:
+        Tuple[str, bool, List[Dict[str, str]]]: (Error message, Skip Phase2 flag, Updated message list)
+    """
+    error_msg = ErrorHandler.create_error_response(
+        exception, "Error during analysis phase"
+    )
+    
+    # Add error message to message list
+    if message_list is not None:
+        message_list = MessageListManager.add_to_message_list(message_list, error_msg)
+    
+    logging.error(f"Error in analysis phase: {str(exception)}")
+    return error_msg, False, message_list

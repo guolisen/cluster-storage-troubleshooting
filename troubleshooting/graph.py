@@ -8,6 +8,14 @@ used in the analysis and remediation phases of Kubernetes volume troubleshooting
 
 import json
 import logging
+import os
+from typing import Dict, List, Any, Optional, Callable, Tuple
+
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.prebuilt import ToolNode, tools_condition
+from langchain_openai import ChatOpenAI
+from rich.console import Console
+from rich.panel import Panel
 
 # Configure logging (file only, no console output)
 logger = logging.getLogger('langgraph')
@@ -15,14 +23,17 @@ logger.setLevel(logging.INFO)
 # Don't propagate to root logger to avoid console output
 logger.propagate = False
 
-from typing import Dict, List, Any
+# Initialize console for rich output
+console = Console()
 
-from langgraph.graph import StateGraph, MessagesState, START, END
-from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_openai import ChatOpenAI
+# Create log directory if it doesn't exist
+os.makedirs('logs', exist_ok=True)
+log_file_path = 'logs/troubleshoot.log'
+file_console = Console(file=open(log_file_path, 'a'))
 
 
-def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "phase1", config_data: Dict[str, Any] = None):
+def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "phase1", 
+                                            config_data: Dict[str, Any] = None) -> StateGraph:
     """
     Create a LangGraph ReAct graph for troubleshooting with pre-collected context
     
@@ -38,22 +49,109 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
         raise ValueError("Configuration data is required")
     
     # Initialize language model
-    model = ChatOpenAI(
-        model=config_data['llm']['model'],
-        api_key=config_data['llm']['api_key'],
-        base_url=config_data['llm']['api_endpoint'],
-        temperature=config_data['llm']['temperature'],
-        max_tokens=config_data['llm']['max_tokens']
-    )
+    model = _initialize_language_model(config_data)
     
     # Define function to call the model with pre-collected context
     def call_model(state: MessagesState):
         logging.info(f"Processing state with {len(state['messages'])} messages")
         
-        # Add phase-specific guidance with optimized content
-        phase_specific_guidance = ""
-        if phase == "phase1":
-            phase_specific_guidance = """
+        # Prepare messages with context
+        prepared_messages = _prepare_messages_with_context(state, collected_info, phase)
+        state["messages"] = prepared_messages
+        
+        # Select tools based on phase
+        tools = _select_tools_for_phase(phase)
+        
+        # Call the model with tools
+        response = model.bind_tools(tools).invoke(state["messages"])
+        
+        logging.info(f"Model response: {response.content[:100]}...")
+        
+        # Display and log thinking process and tool usage
+        _display_and_log_response(response)
+        
+        return {"messages": state["messages"] + [response]}
+    
+    # Build and return the state graph
+    return _build_state_graph(call_model)
+
+
+def _initialize_language_model(config_data: Dict[str, Any]) -> ChatOpenAI:
+    """
+    Initialize the language model with configuration
+    
+    Args:
+        config_data: Configuration data containing LLM settings
+        
+    Returns:
+        ChatOpenAI: Initialized language model
+    """
+    try:
+        return ChatOpenAI(
+            model=config_data['llm']['model'],
+            api_key=config_data['llm']['api_key'],
+            base_url=config_data['llm']['api_endpoint'],
+            temperature=config_data['llm']['temperature'],
+            max_tokens=config_data['llm']['max_tokens']
+        )
+    except KeyError as e:
+        missing_key = str(e)
+        raise ValueError(f"Missing required configuration key: {missing_key}")
+    except Exception as e:
+        raise ValueError(f"Error initializing language model: {str(e)}")
+
+
+def _prepare_messages_with_context(state: MessagesState, collected_info: Dict[str, Any], 
+                                 phase: str) -> List[Dict[str, str]]:
+    """
+    Prepare messages with context for the model
+    
+    Args:
+        state: Current state with messages
+        collected_info: Pre-collected diagnostic information
+        phase: Current troubleshooting phase
+        
+    Returns:
+        List[Dict[str, str]]: Prepared messages with context
+    """
+    # Get phase-specific guidance
+    phase_specific_guidance = _get_phase_specific_guidance(phase)
+    
+    # Prepare context from collected information
+    context_summary = _prepare_context_summary(collected_info)
+    
+    # Get example of expected output format
+    final_output_example = _get_output_example()
+    
+    # Create system message with guidance
+    system_message = _create_system_message(phase_specific_guidance)
+    
+    # Create context message with pre-collected context and output example
+    context_message = {
+        "role": "user",
+        "content": f"""Pre-collected diagnostic context:
+{context_summary}
+
+OUTPUT EXAMPLE:
+{final_output_example}"""
+    }
+    
+    # Prepare message list with system message, context message, and existing user messages
+    return _prepare_message_list(state["messages"], system_message, context_message)
+
+
+def _get_phase_specific_guidance(phase: str) -> str:
+    """
+    Get phase-specific guidance for the LLM
+    
+    Args:
+        phase: Current troubleshooting phase ("phase1" for investigation, "phase2" for action)
+        
+    Returns:
+        str: Phase-specific guidance
+    """
+    if phase == "phase1":
+        return """
 You are currently in Phase 1 (Investigation). Your primary task is to perform comprehensive root cause analysis and evidence collection using investigation tools only.
 
 PHASE 1 TOOLS AVAILABLE (24 investigation tools):
@@ -117,8 +215,8 @@ Provide a detailed investigation report that includes:
 8. Fix Plan:
     - Proposed remediation steps to address the issues
 """
-        elif phase == "phase2":
-            phase_specific_guidance = """
+    elif phase == "phase2":
+        return """
 You are currently in Phase 2 (Action/Remediation). You have access to all Phase 1 investigation tools PLUS action tools for implementing fixes.
 
 PHASE 2 TOOLS AVAILABLE (34+ tools):
@@ -144,46 +242,125 @@ Provide a detailed remediation report that includes:
 4. Remaining Issues: Any unresolved problems
 5. Recommendations: Suggestions for ongoing monitoring or future improvements
 """
-        else:
-            phase_specific_guidance = """
+    else:
+        return """
 You are in a legacy mode. Please specify either 'phase1' for investigation or 'phase2' for action/remediation.
 """
 
-        # Prepare context from collected information for query message
-        context_summary = f"""
+
+def _prepare_context_summary(collected_info: Dict[str, Any]) -> str:
+    """
+    Prepare context summary from collected information
+    
+    Args:
+        collected_info: Pre-collected diagnostic information from Phase 0
+        
+    Returns:
+        str: Formatted context summary
+    """
+    # Extract and format key information from collected_info
+    knowledge_graph_summary = _format_dict_for_context(
+        collected_info.get('knowledge_graph_summary', {}), 2000
+    )
+    
+    pod_info = _format_dict_for_context(
+        collected_info.get('pod_info', {}), 2000
+    )
+    
+    pvc_info = _format_dict_for_context(
+        collected_info.get('pvc_info', {}), 2000
+    )
+    
+    pv_info = _format_dict_for_context(
+        collected_info.get('pv_info', {}), 2000
+    )
+    
+    node_info = _format_dict_for_context(
+        collected_info.get('node_info', {}), 2000
+    )
+    
+    csi_driver_info = _format_dict_for_context(
+        collected_info.get('csi_driver_info', {}), 2000
+    )
+    
+    system_info = _format_dict_for_context(
+        collected_info.get('system_info', {}), 2000
+    )
+    
+    issues = _format_dict_for_context(
+        collected_info.get('issues', {}), 2000
+    )
+    
+    # Combine all information into a formatted context summary
+    return f"""
 === PRE-COLLECTED DIAGNOSTIC CONTEXT ===
 Instructions:
     You can use the pre-collected diagnostic information to understand the current state of the Kubernetes cluster and the volume I/O issues being faced. Use this information to guide your troubleshooting process.
 
 Knowledge Graph Summary:
-{json.dumps(collected_info.get('knowledge_graph_summary', {}), indent=2)}
+{knowledge_graph_summary}
 
 Pod Information:
-{str(collected_info.get('pod_info', {}))[:2000]}
+{pod_info}
 
 PVC Information:
-{str(collected_info.get('pvc_info', {}))[:2000]}
+{pvc_info}
 
 PV Information:
-{str(collected_info.get('pv_info', {}))[:2000]}
+{pv_info}
 
 Node Information Summary:
-{str(collected_info.get('node_info', {}))[:2000]}
+{node_info}
 
 CSI Driver Information:
-{str(collected_info.get('csi_driver_info', {}))[:2000]}
+{csi_driver_info}
 
 System Information:
-{str(collected_info.get('system_info', {}))[:2000]}
+{system_info}
 
 <<< Current Issues >>>
 Issues Summary:
-{str(collected_info.get('issues', {}))[:2000]}
+{issues}
 
 === END PRE-COLLECTED CONTEXT ===
 """
 
-        final_output_example = """ 
+
+def _format_dict_for_context(data: Any, max_length: int = 2000) -> str:
+    """
+    Format dictionary data for context summary with length limit
+    
+    Args:
+        data: Data to format (dictionary or other)
+        max_length: Maximum length of the formatted string
+        
+    Returns:
+        str: Formatted string
+    """
+    try:
+        if isinstance(data, dict):
+            formatted = json.dumps(data, indent=2)
+        else:
+            formatted = str(data)
+        
+        # Truncate if too long
+        if len(formatted) > max_length:
+            return formatted[:max_length] + "... [truncated]"
+        
+        return formatted
+    except Exception as e:
+        logging.warning(f"Error formatting data for context: {str(e)}")
+        return str(data)[:max_length]
+
+
+def _get_output_example() -> str:
+    """
+    Get an example of expected output format
+    
+    Returns:
+        str: Example output format
+    """
+    return """
 === GRAPH END OUTPUT EXAMPLE ===
 1. Summary of Findings:
 - The pod "test-pod-1-0" in namespace "default" is running and ready, with the volume mounted at /usr/share/storop-nginx/html-1.
@@ -230,11 +407,11 @@ Environmental Factors:
 - Checked CSI Baremetal driver resources presence.
 - Verified storage class used by PVC/PV.
 
-5. Potential Root Causes:                                                                                                                              
-- **Hardware Failure on Node Disk**: Likely bad sectors or I/O errors on /dev/sda2, as indicated by kernel log patterns. Evidence: Pre-collected issues; dmesg shows boot logs but no new errors. Likelihood: High.                                                                                                 │
-- **Incomplete Knowledge Graph**: Missing entity data in KG, preventing full analysis. Evidence: Tool errors. Likelihood: Medium.                          
-- **Configuration Mismatch**: Use of local path provisioner instead of CSI Baremetal, leading to poor error handling. Evidence: PVC/PV details. Likelihood: High.                                                                                                                                          
-- **Connectivity or Access Issues**: SSH failures for smartctl, possibly due to network problems. Evidence: Tool errors. Likelihood: Medium.   
+5. Potential Root Causes:
+- Hardware Failure on Node Disk: Likely bad sectors or I/O errors on /dev/sda2, as indicated by kernel log patterns. Evidence: Pre-collected issues; dmesg shows boot logs but no new errors. Likelihood: High.
+- Incomplete Knowledge Graph: Missing entity data in KG, preventing full analysis. Evidence: Tool errors. Likelihood: Medium.
+- Configuration Mismatch: Use of local path provisioner instead of CSI Baremetal, leading to poor error handling. Evidence: PVC/PV details. Likelihood: High.
+- Connectivity or Access Issues: SSH failures for smartctl, possibly due to network problems. Evidence: Tool errors. Likelihood: Medium.
 
 Likelihood:
 - High confidence in disk hardware/driver issues due to kernel log patterns.
@@ -254,11 +431,11 @@ Likelihood:
 - Consider migrating volumes to CSI Baremetal managed volumes for better reliability.
 - Backup data before any disk repair or fsck operations.
 
-Root Cause:
+8. Root Cause:
 - The volume I/O errors are likely caused by underlying disk hardware or driver issues on the node's local disk (/dev/sda2), as indicated by multiple kernel log error patterns.
 - Additionally, the cluster is not using the CSI Baremetal driver for local volume management, instead using rancher.io/local-path provisioner, which may lack advanced error handling and monitoring.
 
-Fix Plan:
+9. Fix Plan:
 1. Verify CSI Baremetal driver installation:
    - Command: kubectl get pods -n kube-system -l app=csi-baremetal
    - Expected: CSI Baremetal driver pods running
@@ -274,14 +451,22 @@ Fix Plan:
 8. If disk health is bad, plan disk replacement.
 9. Monitor pod logs for I/O errors after remediation.
 === GRAPH END OUTPUT EXAMPLE ===
-
 """
 
 
-        # Create system message with only static guiding principles
-        system_message = {
-            "role": "system", 
-            "content": f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
+def _create_system_message(phase_specific_guidance: str) -> Dict[str, str]:
+    """
+    Create system message with guidance for the LLM
+    
+    Args:
+        phase_specific_guidance: Phase-specific guidance to include in the system message
+        
+    Returns:
+        Dict[str, str]: System message dictionary
+    """
+    return {
+        "role": "system", 
+        "content": f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
 
 <<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
 
@@ -301,52 +486,24 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 2. **Troubleshooting Process**:
    - Use the LangGraph ReAct module to reason about volume I/O errors based on parameters: `PodName`, `PodNamespace`, and `VolumePath`.
    - Most of time the pod's volume file system type is xfs, ext4, or btrfs. 
-   - Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
-     a. **Check Knowledge Graph**: First use Knowledge Graph tools (kg_*) to understand the current state and existing issues.
-     b. **Confirm Issue**: If Knowledge Graph lacks information, run `kubectl logs <pod-name> -n <namespace>` and `kubectl describe pod <pod-name> -n <namespace>` to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount").
-     c. **Verify Configurations**: Check Pod, PVC, and PV with `kubectl get pod/pvc/pv -o yaml`. Confirm PV uses local volume, valid disk path (e.g., `/dev/sda`), and correct `nodeAffinity`. Verify mount points with `kubectl exec <pod-name> -n <namespace> -- df -h` and `ls -ld <mount-path>`.
-     d. **Check CSI Baremetal Driver and Resources**:
-        - Identify driver: `kubectl get storageclass <storageclass-name> -o yaml` (e.g., `csi-baremetal-sc-ssd`).
-        - Verify driver pod: `kubectl get pods -n kube-system -l app=csi-baremetal` and `kubectl logs <driver-pod-name> -n kube-system`. Check for errors like "failed to mount".
-        - Confirm driver registration: `kubectl get csidrivers`.
-        - Check drive status: `kubectl get drive -o wide` and `kubectl get drive <drive-uuid> -o yaml`. Verify `Health: GOOD`, `Status: ONLINE`, `Usage: IN_USE`, and match `Path` (e.g., `/dev/sda`) with `VolumePath`.
-        - Map drive to node: `kubectl get csibmnode` to correlate `NodeId` with hostname/IP.
-        - Check AvailableCapacity: `kubectl get ac -o wide` to confirm size, storage class, and location (drive UUID).
-        - Check LogicalVolumeGroup: `kubectl get lvg` to verify `Health: GOOD` and associated drive UUIDs.
-     e. **Test Driver**: Create a test PVC/Pod using `csi-baremetal-sc-ssd` storage class (use provided YAML template). Check logs and events for read/write errors.
-     f. **Verify Node Health**: Run `kubectl describe node <node-name>` to ensure `Ready` state and no `DiskPressure`. Verify disk mounting via SSH: `mount | grep <disk-path>`.
-     g. **Check Permissions**: Verify file system permissions with `kubectl exec <pod-name> -n <namespace> -- ls -ld <mount-path>` and Pod `SecurityContext` settings.
-     h. **Inspect Control Plane**: Check `kube-controller-manager` and `kube-scheduler` logs for provisioning/scheduling issues.
-     i. **Test Hardware Disk**:
-        - Identify disk: `kubectl get pv -o yaml` and `kubectl get drive <drive-uuid> -o yaml` to confirm `Path`.
-        - Check health: `kubectl get drive <drive-uuid> -o yaml` and `ssh <node-name> sudo smartctl -a /dev/<disk-device>`. Verify `Health: GOOD`, zero `Reallocated_Sector_Ct` or `Current_Pending_Sector`.
-        - Test performance: `ssh <node-name> sudo fio --name=read_test --filename=/dev/<disk-device> --rw=read --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting`.
-        - Check file system (if unmounted): `ssh <node-name> sudo xfs_repair -n /dev/<disk-device>` (requires approval).
-        - Test via Pod: Create a test Pod (use provided YAML) and check logs for "Write OK" and "Read OK".
-     j. **Propose Remediations**:
-        - Bad sectors: Recommend disk replacement if `kubectl get drive` or SMART shows `Health: BAD` or non-zero `Reallocated_Sector_Ct`.
-        - Performance issues: Suggest optimizing I/O scheduler or replacing disk if `fio` results show low IOPS (HDD: 100–200, SSD: thousands, NVMe: tens of thousands).
-        - File system corruption: Recommend `fsck` or 'xfs_repair' (if enabled/approved) after data backup.
-        - Driver issues: Suggest restarting CSI Baremetal driver pod (if enabled/approved) if logs indicate errors.
-   - Only propose remediations after analyzing diagnostic data. Ensure write/change commands (e.g., `fsck`, `kubectl delete pod`) are allowed and approved.
-   - Try to find all of possible root causes before proposing any remediation steps. 
+   - Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal.
 
 3. **Error Handling**:
    - If unresolved, provide a detailed report of findings (e.g., logs, drive status, SMART data, test results) and suggest manual intervention.
 
 4. **Knowledge Graph Usage**:
    - Use kg_print_graph to get a human-readable overview of the entire system state.
-   - First check issues with kg_get_all_issues before running diagnostic commands. this issue is critical inforamtion to find root cause
+   - First check issues with kg_get_all_issues before running diagnostic commands.
    - Use kg_get_summary to get high-level statistics about the cluster state.
    - For root cause analysis, use kg_analyze_issues to identify patterns across the system.
 
-7. **Constraints**:
+5. **Constraints**:
    - Restrict operations to the Kubernetes cluster and configured worker nodes; do not access external networks or resources.
    - Do not modify cluster state (e.g., delete pods, change configurations) unless explicitly allowed and approved.
    - Adhere to `troubleshoot.timeout_seconds` for the troubleshooting workflow.
    - Always recommend data backup before suggesting write/change operations (e.g., `fsck`).
 
-8. **Output**:
+6. **Output**:
    - Try to find all of possible root causes before proposing any remediation steps.
    - Provide clear, concise explanations of diagnostic steps, findings, and remediation proposals.
    - Include performance benchmarks in reports (e.g., HDD: 100–200 IOPS, SSD: thousands, NVMe: tens of thousands).
@@ -364,35 +521,53 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 
 You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.
 """
-        }
-        
-        # Add pre-collected diagnostic context and output example to user message
-        user_messages = []
-        context_message = {
-            "role": "user",
-            "content": f"""Pre-collected diagnostic context:
-{context_summary}
+    }
 
-OUTPUT EXAMPLE:
-{final_output_example}"""
-        }
+
+def _prepare_message_list(messages: List[Dict[str, str]], system_message: Dict[str, str], 
+                        context_message: Dict[str, str]) -> List[Dict[str, str]]:
+    """
+    Prepare message list with system message, context message, and existing user messages
+    
+    Args:
+        messages: Existing messages
+        system_message: System message to add
+        context_message: Context message to add
         
-        # Ensure system message is first, followed by context message, then any existing user messages
-        if state["messages"]:
-            if isinstance(state["messages"], list):
-                # Extract existing user messages (skip system message if present)
-                for msg in state["messages"]:
-                    if msg.type != "system":
-                        user_messages.append(msg)
-                
-                # Create new message list with system message, context message, and existing user messages
-                state["messages"] = [system_message, context_message] + user_messages
-            else:
-                state["messages"] = [system_message, context_message, state["messages"]]
-        else:
-            state["messages"] = [system_message, context_message]
+    Returns:
+        List[Dict[str, str]]: Updated message list
+    """
+    user_messages = []
+    
+    if messages:
+        # Extract existing user messages (skip system message if present)
+        for msg in messages:
+            if isinstance(msg, dict) and msg.get("role") != "system":
+                user_messages.append(msg)
+            elif hasattr(msg, "type") and msg.type != "system":
+                # Convert to dict if it's an object with type attribute
+                user_messages.append({
+                    "role": msg.type,
+                    "content": msg.content
+                })
         
-        # Select tools based on phase
+        # Create new message list with system message, context message, and existing user messages
+        return [system_message, context_message] + user_messages
+    else:
+        return [system_message, context_message]
+
+
+def _select_tools_for_phase(phase: str) -> List[Any]:
+    """
+    Select tools based on the current phase
+    
+    Args:
+        phase: Current troubleshooting phase ("phase1" for investigation, "phase2" for action)
+        
+    Returns:
+        List[Any]: List of tools for the current phase
+    """
+    try:
         if phase == "phase1":
             from tools import get_phase1_tools
             tools = get_phase1_tools()
@@ -407,86 +582,111 @@ OUTPUT EXAMPLE:
             tools = define_remediation_tools()
             logging.info(f"Using all tools (fallback): {len(tools)} tools")
         
-        # Call the model with tools for both phases (Phase 1 now actively investigates)
-        response = model.bind_tools(tools).invoke(state["messages"])
-        
-        logging.info(f"Model response: {response.content}...")
-        
-        from rich.console import Console
-        from rich.panel import Panel
-        
-        # Create console for rich output
-        console = Console()
-        file_console = Console(file=open('troubleshoot.log', 'a'))
-        
-        # Display thinking process
-        console.print(f"[bold cyan]LangGraph thinking process:[/bold cyan]")
+        return tools
+    except ImportError as e:
+        logging.error(f"Error importing tools: {str(e)}")
+        raise ValueError(f"Error importing tools: {str(e)}")
+    except Exception as e:
+        logging.error(f"Error selecting tools for phase {phase}: {str(e)}")
+        raise ValueError(f"Error selecting tools for phase {phase}: {str(e)}")
 
-        if response.content:
-            console.print(Panel(
-                f"[bold green]{response.content}[/bold green]",
-                title="[bold magenta]Thinking step",
-                border_style="magenta",
-                safe_box=True
-            ))
 
-        # Log tool usage and thinking process with rich formatting
-        if hasattr(response, 'additional_kwargs') and 'tool_calls' in response.additional_kwargs:
-            try:
-                for tool_call in response.additional_kwargs['tool_calls']:
-                    tool_name = tool_call['function']['name']
-                    
-                    # Format the tool usage in a nice way
-                    if 'arguments' in tool_call['function']:
-                        args = tool_call['function']['arguments']
-                        try:
-                            # Try to parse and format JSON arguments
-                            args_json = json.loads(args)
-                            formatted_args = json.dumps(args_json, indent=2)
-                        except:
-                            # Use the raw string if not valid JSON
-                            formatted_args = args
-                            
-                        # Print to console and log file
-                        tool_panel = Panel(
-                            f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
-                            f"[bold yellow]Arguments:[/bold yellow]\n[blue]{formatted_args}[/blue]",
-                            title="[bold magenta]Thinking Step",
-                            border_style="magenta",
-                            safe_box=True
-                        )
-                        console.print(tool_panel)
-                        file_console.print(tool_panel)
-                    else:
-                        # Simple version for tools without arguments
-                        tool_panel = Panel(
-                            f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
-                            f"[bold yellow]Arguments:[/bold yellow] None",
-                            title="[bold magenta]Thinking Step",
-                            border_style="magenta",
-                            safe_box=True
-                        )
-                        console.print(tool_panel)
-                        file_console.print(tool_panel)
-                        
-                    # Log to standard logger as well
-                    logging.info(f"Model invoking tool: {tool_name}")
-                    if 'arguments' in tool_call['function']:
-                        logging.info(f"Tool arguments: {tool_call['function']['arguments']}")
-                    else:
-                        logging.info("No arguments provided for tool call")
-            except Exception as e:
-                # Fall back to regular logging if rich formatting fails
-                logging.warning(f"Rich formatting failed for tool output: {e}")
-                for tool_call in response.additional_kwargs['tool_calls']:
-                    logging.info(f"Model invoking tool: {tool_call['function']['name']}")
-                    if 'arguments' in tool_call['function']:
-                        logging.info(f"Tool arguments: {tool_call['function']['arguments']}")
-                    else:
-                        logging.info("No arguments provided for tool call")
-        
-        return {"messages": state["messages"] + [response]}
+def _display_and_log_response(response: Any) -> None:
+    """
+    Display and log thinking process and tool usage
     
+    Args:
+        response: Model response
+    """
+    # Display thinking process
+    console.print(f"[bold cyan]LangGraph thinking process:[/bold cyan]")
+
+    if hasattr(response, 'content') and response.content:
+        console.print(Panel(
+            f"[bold green]{response.content[:500]}...[/bold green]",
+            title="[bold magenta]Thinking step",
+            border_style="magenta",
+            safe_box=True
+        ))
+    
+    # Log tool usage
+    _log_tool_usage(response)
+
+
+def _log_tool_usage(response: Any) -> None:
+    """
+    Log tool usage and thinking process with rich formatting
+    
+    Args:
+        response: Model response
+    """
+    if not hasattr(response, 'additional_kwargs') or 'tool_calls' not in response.additional_kwargs:
+        return
+    
+    try:
+        for tool_call in response.additional_kwargs['tool_calls']:
+            tool_name = tool_call['function']['name']
+            
+            # Format the tool usage in a nice way
+            if 'arguments' in tool_call['function']:
+                args = tool_call['function']['arguments']
+                try:
+                    # Try to parse and format JSON arguments
+                    args_json = json.loads(args)
+                    formatted_args = json.dumps(args_json, indent=2)
+                except:
+                    # Use the raw string if not valid JSON
+                    formatted_args = args
+                    
+                # Print to console and log file
+                tool_panel = Panel(
+                    f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
+                    f"[bold yellow]Arguments:[/bold yellow]\n[blue]{formatted_args}[/blue]",
+                    title="[bold magenta]Thinking Step",
+                    border_style="magenta",
+                    safe_box=True
+                )
+                console.print(tool_panel)
+                file_console.print(tool_panel)
+            else:
+                # Simple version for tools without arguments
+                tool_panel = Panel(
+                    f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
+                    f"[bold yellow]Arguments:[/bold yellow] None",
+                    title="[bold magenta]Thinking Step",
+                    border_style="magenta",
+                    safe_box=True
+                )
+                console.print(tool_panel)
+                file_console.print(tool_panel)
+                
+            # Log to standard logger as well
+            logging.info(f"Model invoking tool: {tool_name}")
+            if 'arguments' in tool_call['function']:
+                logging.info(f"Tool arguments: {tool_call['function']['arguments']}")
+            else:
+                logging.info("No arguments provided for tool call")
+    except Exception as e:
+        # Fall back to regular logging if rich formatting fails
+        logging.warning(f"Rich formatting failed for tool output: {str(e)}")
+        for tool_call in response.additional_kwargs['tool_calls']:
+            logging.info(f"Model invoking tool: {tool_call['function']['name']}")
+            if 'arguments' in tool_call['function']:
+                logging.info(f"Tool arguments: {tool_call['function']['arguments']}")
+            else:
+                logging.info("No arguments provided for tool call")
+
+
+def _build_state_graph(call_model: Callable) -> StateGraph:
+    """
+    Build and compile the state graph
+    
+    Args:
+        call_model: Function to call the model
+        
+    Returns:
+        StateGraph: Compiled state graph
+    """
     # Build state graph
     logging.info("Building state graph")
     builder = StateGraph(MessagesState)
@@ -524,3 +724,18 @@ OUTPUT EXAMPLE:
     
     logging.info("Graph compilation complete")
     return graph
+
+
+# Close the log file when the module is unloaded
+import atexit
+
+@atexit.register
+def _cleanup():
+    """
+    Clean up resources when the module is unloaded
+    """
+    try:
+        if hasattr(file_console, 'file') and file_console.file is not None:
+            file_console.file.close()
+    except Exception as e:
+        logging.warning(f"Error closing log file: {str(e)}")

@@ -14,16 +14,25 @@ from rich.panel import Panel
 from langgraph.graph import StateGraph
 
 from troubleshooting.graph import create_troubleshooting_graph_with_context
-from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
+from troubleshooting.utils import (
+    HistoricalExperienceFormatter,
+    GraphExecutor,
+    ErrorHandler,
+    MessageListManager,
+    OutputFormatter
+)
 
 logger = logging.getLogger(__name__)
+
 
 class RemediationPhase:
     """
     Implementation of Phase 2: Remediation
     
     This class handles the implementation of fix plans to resolve
-    the identified issues with volume I/O.
+    the identified issues with volume I/O. It creates a LangGraph ReAct
+    workflow that executes the fix plan from Phase 1 and validates the
+    results to ensure the issues are resolved.
     """
     
     def __init__(self, collected_info: Dict[str, Any], config_data: Dict[str, Any]):
@@ -40,107 +49,6 @@ class RemediationPhase:
         self.console = Console()
         self.interactive_mode = config_data.get('troubleshoot', {}).get('interactive_mode', False)
     
-    def _format_historical_experiences(self, collected_info: Dict[str, Any]) -> str:
-        """
-        Format historical experience data from collected information
-        
-        Args:
-            collected_info: Pre-collected diagnostic information from Phase 0
-            
-        Returns:
-            str: Formatted historical experience data for LLM consumption
-        """
-        try:
-            # Extract historical experiences from knowledge graph in collected_info
-            kg = collected_info.get('knowledge_graph', None)
-            if not kg or not hasattr(kg, 'graph'):
-                return "No historical experience data available."
-            
-            # Find historical experience nodes
-            historical_experience_nodes = []
-            for node_id, attrs in kg.graph.nodes(data=True):
-                if attrs.get('gnode_subtype') == 'HistoricalExperience':
-                    historical_experience_nodes.append((node_id, attrs))
-            
-            if not historical_experience_nodes:
-                return "No historical experience data available."
-            
-            # Format historical experiences in a clear, structured way
-            formatted_entries = []
-            
-            for idx, (node_id, attrs) in enumerate(historical_experience_nodes, 1):
-                # Get attributes from the experience
-                phenomenon = attrs.get('phenomenon', 'Unknown phenomenon')
-                root_cause = attrs.get('root_cause', 'Unknown root cause')
-                localization_method = attrs.get('localization_method', 'No localization method provided')
-                resolution_method = attrs.get('resolution_method', 'No resolution method provided')
-                
-                # Format the entry
-                entry = f"""HISTORICAL EXPERIENCE #{idx}:
-Phenomenon: {phenomenon}
-Root Cause: {root_cause}
-Localization Method: {localization_method}
-Resolution Method: {resolution_method}
-"""
-                formatted_entries.append(entry)
-            
-            return "\n".join(formatted_entries)
-            
-        except Exception as e:
-            self.logger.warning(f"Error formatting historical experiences: {str(e)}")
-            return "Error formatting historical experience data."
-    
-    async def run_remediation_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 60) -> str:
-        """
-        Run remediation using the provided LangGraph StateGraph
-        
-        Args:
-            query: The initial query to send to the graph
-            graph: LangGraph StateGraph to use
-            timeout_seconds: Maximum execution time in seconds
-            
-        Returns:
-            str: Remediation result
-        """
-        try:
-            formatted_query = {"messages": [{"role": "user", "content": query}]}
-            
-            # Show the remediation panel
-            self.console.print("\n")
-            self.console.print(Panel(
-                "[yellow]Starting remediation with LangGraph...\nThis may take a few minutes to complete.", 
-                title="[bold green]Remediation Phase",
-                border_style="green"
-            ))
-            
-            # Run graph with timeout
-            try:
-                response = await asyncio.wait_for(
-                    graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
-                    timeout=timeout_seconds
-                )
-                self.console.print("[green]Remediation complete![/green]")
-            except asyncio.TimeoutError:
-                self.console.print("[red]Remediation timed out![/red]")
-                return "Remediation phase timed out - manual intervention may be required"
-            except Exception as e:
-                self.console.print(f"[red]Remediation failed: {str(e)}[/red]")
-                return f"Remediation failed: {str(e)}"
-            
-            # Extract remediation results
-            if response["messages"]:
-                if isinstance(response["messages"], list):
-                    final_message = response["messages"][-1].content
-                else:
-                    final_message = response["messages"].content
-            else:
-                final_message = "Failed to generate remediation results"
-            
-            return final_message
-        except Exception as e:
-            self.logger.error(f"Error in run_remediation_with_graph: {str(e)}")
-            return f"Error in remediation: {str(e)}"
-    
     async def execute_fix_plan(self, phase1_final_response: str, message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
         """
         Execute the fix plan from Phase 1 analysis
@@ -154,9 +62,55 @@ Resolution Method: {resolution_method}
         """
         try:
             # Initialize message list if not provided
-            if message_list is None:
-                # System prompt for Phase2
-                system_prompt = """You are an expert Kubernetes storage troubleshooter. Your task is to execute the Fix Plan to resolve volume I/O errors in Kubernetes pods.
+            message_list = self._initialize_message_list(message_list, phase1_final_response)
+            
+            # Create troubleshooting graph for remediation
+            graph = self._create_troubleshooting_graph()
+            
+            # Prepare query for the graph
+            query = self._prepare_remediation_query(phase1_final_response)
+            
+            # Execute graph and get final response
+            remediation_result, message_list = await self._execute_graph_and_get_response(
+                graph, message_list
+            )
+            
+            return remediation_result, message_list
+
+        except Exception as exception:
+            return self._handle_remediation_error(exception, message_list)
+    
+    def _initialize_message_list(self, message_list: Optional[List[Dict[str, str]]], 
+                               phase1_final_response: str) -> List[Dict[str, str]]:
+        """
+        Initialize message list with system prompt if not provided
+        
+        Args:
+            message_list: Optional existing message list
+            phase1_final_response: Response from Phase 1 containing root cause and fix plan
+            
+        Returns:
+            List[Dict[str, str]]: Initialized message list
+        """
+        if message_list is None:
+            system_prompt = self._create_system_prompt()
+            
+            # Create initial message list with system prompt and fix plan
+            return [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "Fix Plan:\n" + phase1_final_response}
+            ]
+        
+        return message_list
+    
+    def _create_system_prompt(self) -> str:
+        """
+        Create the system prompt for Phase 2
+        
+        Returns:
+            str: System prompt for Phase 2
+        """
+        return """You are an expert Kubernetes storage troubleshooter. Your task is to execute the Fix Plan to resolve volume I/O errors in Kubernetes pods.
 
 TASK:
 1. Execute the Fix Plan to resolve the identified issues
@@ -176,89 +130,126 @@ Your response must include:
 3. Resolution Status
 4. Recommendations
 """
-                message_list = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "assistant", "content": "Fix Plan:\n" + phase1_final_response}
-                ]
+    
+    def _create_troubleshooting_graph(self) -> StateGraph:
+        """
+        Create the troubleshooting graph for remediation
+        
+        Returns:
+            StateGraph: LangGraph StateGraph for remediation
+        """
+        return create_troubleshooting_graph_with_context(
+            self.collected_info, phase="phase2", config_data=self.config_data
+        )
+    
+    def _prepare_remediation_query(self, phase1_final_response: str) -> str:
+        """
+        Prepare the remediation query for the graph
+        
+        Args:
+            phase1_final_response: Response from Phase 1 containing root cause and fix plan
             
-            # Create troubleshooting graph for remediation
-            graph = create_troubleshooting_graph_with_context(
-                self.collected_info, phase="phase2", config_data=self.config_data
-            )
-            
-            # Extract and format historical experience data from collected_info
-            historical_experiences_formatted = self._format_historical_experiences(self.collected_info)
-            
-            # Updated query message with dynamic data for LangGraph workflow
-            query = f"""Phase 2 - Remediation: Execute the fix plan to resolve the identified issue.
+        Returns:
+            str: Formatted remediation query
+        """
+        # Extract and format historical experience data
+        historical_experiences_formatted = self._format_historical_experiences()
+        
+        # Create execution guidelines
+        execution_guidelines = self._create_execution_guidelines()
+        
+        # Create query with dynamic data for LangGraph workflow
+        return f"""Phase 2 - Remediation: Execute the fix plan to resolve the identified issue.
 
 Root Cause and Fix Plan: {phase1_final_response}
 
 HISTORICAL EXPERIENCE:
 {historical_experiences_formatted}
 
+EXECUTION GUIDELINES:
+{execution_guidelines}
+
 <<< Note >>>: Please try to fix issue within 30 tool calls.
 """
+    
+    def _format_historical_experiences(self) -> str:
+        """
+        Format historical experience data from collected_info
+        
+        Returns:
+            str: Formatted historical experience data
+        """
+        return HistoricalExperienceFormatter.format_historical_experiences(
+            self.collected_info
+        )
+    
+    def _create_execution_guidelines(self) -> str:
+        """
+        Create execution guidelines for remediation
+        
+        Returns:
+            str: Execution guidelines
+        """
+        return """1. Follow the Fix Plan step by step
+2. For each step, use the appropriate tool from the Phase 2 tool registry
+3. After each action, validate that it was successful
+4. If an action fails, try alternative approaches or provide detailed manual instructions
+5. Clean up any test resources created during remediation
+6. Provide a comprehensive report of all actions taken and their results"""
+    
+    async def _execute_graph_and_get_response(self, graph: StateGraph, 
+                                            message_list: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, str]]]:
+        """
+        Execute the graph and get the final response
+        
+        Args:
+            graph: LangGraph StateGraph to execute
+            message_list: Message list for the graph
             
-            # Set timeout
-            timeout_seconds = self.config_data['troubleshoot']['timeout_seconds']
+        Returns:
+            Tuple[str, List[Dict[str, str]]]: (Final response, Updated message list)
+        """
+        # Set timeout from config
+        timeout_seconds = self.config_data.get('troubleshoot', {}).get('timeout_seconds', 600)
+        
+        # Create initial state with messages
+        initial_state = {"messages": message_list}
+        
+        # Execute graph
+        final_state = await GraphExecutor.execute_graph(
+            graph, initial_state, timeout_seconds
+        )
+        
+        # Extract final response
+        remediation_result = GraphExecutor.extract_final_response(final_state)
+        
+        # Add remediation result to message list
+        message_list = MessageListManager.add_to_message_list(message_list, remediation_result)
+        
+        return remediation_result, message_list
+    
+    def _handle_remediation_error(self, exception: Exception, 
+                                message_list: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, str]]]:
+        """
+        Handle errors during remediation
+        
+        Args:
+            exception: Exception that occurred
+            message_list: Message list to update
             
-            # Run remediation with graph
-            formatted_query = {"messages": [{"role": "user", "content": query}]}
-            
-            # Show the remediation panel
-            self.console.print("\n")
-            self.console.print(Panel(
-                "[yellow]Starting remediation with LangGraph...\nThis may take a few minutes to complete.", 
-                title="[bold green]Remediation Phase",
-                border_style="green"
-            ))
-            
-            # Run graph with timeout
-            try:
-                response = await asyncio.wait_for(
-                    graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
-                    timeout=timeout_seconds
-                )
-                self.console.print("[green]Remediation complete![/green]")
-            except asyncio.TimeoutError:
-                self.console.print("[red]Remediation timed out![/red]")
-                remediation_result = "Remediation phase timed out - manual intervention may be required"
-                
-                # Add timeout message to message list
-                message_list.append({"role": "assistant", "content": remediation_result})
-                return remediation_result, message_list
-            except Exception as e:
-                self.console.print(f"[red]Remediation failed: {str(e)}[/red]")
-                remediation_result = f"Remediation failed: {str(e)}"
-                
-                # Add error message to message list
-                message_list.append({"role": "assistant", "content": remediation_result})
-                return remediation_result, message_list
-            
-            # Extract remediation results
-            if response["messages"]:
-                if isinstance(response["messages"], list):
-                    remediation_result = response["messages"][-1].content
-                else:
-                    remediation_result = response["messages"].content
-            else:
-                remediation_result = "Failed to generate remediation results"
-            
-            # Add remediation result to message list
-            message_list.append({"role": "assistant", "content": remediation_result})
-            
-            return remediation_result, message_list
-
-        except Exception as e:
-            error_msg = f"Error during remediation: {str(e)}"
-            self.logger.error(error_msg)
-            
-            # Add error message to message list if provided
-            if message_list is not None:
-                message_list.append({"role": "assistant", "content": error_msg})
-            
-            return error_msg, message_list
+        Returns:
+            Tuple[str, List[Dict[str, str]]]: (Error message, Updated message list)
+        """
+        error_msg = ErrorHandler.create_error_response(
+            exception, "Error during remediation phase"
+        )
+        
+        # Add error message to message list
+        if message_list is not None:
+            message_list = MessageListManager.add_to_message_list(message_list, error_msg)
+        
+        self.logger.error(f"Error in remediation phase: {str(exception)}")
+        return error_msg, message_list
 
 
 async def run_remediation_phase(phase1_final_response: str, collected_info: Dict[str, Any], 
@@ -270,20 +261,15 @@ async def run_remediation_phase(phase1_final_response: str, collected_info: Dict
         phase1_final_response: Response from Phase 1 containing root cause and fix plan
         collected_info: Pre-collected diagnostic information from Phase 0
         config_data: Configuration data
+        message_list: Optional message list for chat mode
         
     Returns:
         Tuple[str, List[Dict[str, str]]]: (Remediation result, Updated message list)
     """
     logging.info("Starting Phase 2: Remediation")
     
-    console = Console()
-    console.print("\n")
-    console.print(Panel(
-        "[bold white]Executing fix plan to resolve identified issues...",
-        title="[bold green]PHASE 2: REMEDIATION",
-        border_style="green",
-        padding=(1, 2)
-    ))
+    # Display phase header
+    _display_phase_header()
     
     try:
         # Initialize the remediation phase
@@ -294,11 +280,62 @@ async def run_remediation_phase(phase1_final_response: str, collected_info: Dict
         
         return result, message_list
         
-    except Exception as e:
-        error_msg = f"Error during remediation phase: {str(e)}"
-        logging.error(error_msg)
-        # Add error message to message list if provided
-        if message_list is not None:
-            message_list.append({"role": "assistant", "content": error_msg})
+    except Exception as exception:
+        return _handle_phase_error(exception, message_list)
+
+
+def _display_phase_header() -> None:
+    """
+    Display the phase header in the console
+    """
+    console = Console()
+    console.print("\n")
+    console.print(Panel(
+        "[bold white]Executing fix plan to resolve identified issues...",
+        title="[bold green]PHASE 2: REMEDIATION",
+        border_style="green",
+        padding=(1, 2)
+    ))
+
+
+def _handle_phase_error(exception: Exception, message_list: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, str]]]:
+    """
+    Handle errors during the remediation phase
+    
+    Args:
+        exception: Exception that occurred
+        message_list: Message list to update
         
-        return error_msg, message_list
+    Returns:
+        Tuple[str, List[Dict[str, str]]]: (Error message, Updated message list)
+    """
+    error_msg = ErrorHandler.create_error_response(
+        exception, "Error during remediation phase"
+    )
+    
+    # Add error message to message list
+    if message_list is not None:
+        message_list = MessageListManager.add_to_message_list(message_list, error_msg)
+    
+    logging.error(f"Error in remediation phase: {str(exception)}")
+    return error_msg, message_list
+
+
+def extract_fix_plan_from_analysis(analysis_result: str) -> str:
+    """
+    Extract the fix plan section from the analysis result
+    
+    Args:
+        analysis_result: Analysis result from Phase 1
+        
+    Returns:
+            str: Extracted fix plan, or the entire analysis if no fix plan section is found
+    """
+    # Try to extract the Fix Plan section
+    fix_plan = OutputFormatter.extract_section_from_text(analysis_result, "Fix Plan")
+    
+    # If no Fix Plan section found, return the entire analysis
+    if not fix_plan:
+        return analysis_result
+    
+    return f"Fix Plan:\n{fix_plan}"

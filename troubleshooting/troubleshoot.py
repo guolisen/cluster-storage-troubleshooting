@@ -759,7 +759,7 @@ async def run_phase1_analysis_with_chat(pod_name: str, namespace: str, volume_pa
         plan_phase_message_list = None
     else:
         investigation_plan = plan_phase_result["investigation_plan"]
-        plan_phase_message_list = plan_phase_result["message_list"]
+        plan_phase_message_list = None
     
     # Check if chat mode is enabled for phase1
     chat_mode_enabled = is_chat_mode_enabled_for("phase1")

@@ -1082,6 +1082,125 @@ class KnowledgeGraph:
         
         return formatted_output
     
+    def get_entity_info(self, entity_id: str) -> Dict[str, Any]:
+        """
+        Get detailed information about a specific entity
+        
+        Args:
+            entity_id: Entity node ID
+            
+        Returns:
+            Dict[str, Any]: Entity information including attributes and issues
+        """
+        if not self.graph.has_node(entity_id):
+            kg_logger.warning(f"Entity {entity_id} not found in knowledge graph")
+            return {
+                'id': entity_id,
+                'exists': False,
+                'error': 'Entity not found in knowledge graph'
+            }
+        
+        # Get node attributes
+        node_attrs = dict(self.graph.nodes[entity_id])
+        
+        # Get entity type and subtype
+        entity_type = node_attrs.get('entity_type', 'unknown')
+        entity_subtype = node_attrs.get('gnode_subtype', 'unknown') if entity_type == 'gnode' else 'unknown'
+        
+        # Get issues for this entity
+        entity_issues = node_attrs.get('issues', [])
+        
+        # Get connected entities
+        connected_entities = self.get_related_entities(entity_id)
+        
+        # Prepare result
+        result = {
+            'id': entity_id,
+            'exists': True,
+            'entity_type': entity_type,
+            'entity_subtype': entity_subtype,
+            'attributes': {k: v for k, v in node_attrs.items() 
+                          if k not in ['entity_type', 'gnode_subtype', 'issues']},
+            'issues': entity_issues,
+            'connected_entities': connected_entities
+        }
+        
+        kg_logger.debug(f"Retrieved entity info for {entity_id}")
+        return result
+    
+    def get_related_entities(self, entity_id: str, relationship_type: str = None) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Get entities related to a specific entity
+        
+        Args:
+            entity_id: Entity node ID
+            relationship_type: Optional relationship type to filter by
+            
+        Returns:
+            Dict[str, List[Dict[str, Any]]]: Dictionary of related entities grouped by relationship type
+        """
+        if not self.graph.has_node(entity_id):
+            kg_logger.warning(f"Entity {entity_id} not found in knowledge graph")
+            return {}
+        
+        # Initialize result
+        related_entities = {}
+        
+        # Get outgoing relationships (entity_id -> target)
+        for target in self.graph.successors(entity_id):
+            edge_data = self.graph.edges[entity_id, target]
+            rel_type = edge_data.get('relationship', 'unknown')
+            
+            # Skip if relationship_type is specified and doesn't match
+            if relationship_type is not None and rel_type != relationship_type:
+                continue
+            
+            # Initialize list for this relationship type if not exists
+            if rel_type not in related_entities:
+                related_entities[rel_type] = []
+            
+            # Add target entity info
+            target_attrs = self.graph.nodes[target]
+            target_type = target_attrs.get('entity_type', 'unknown')
+            target_subtype = target_attrs.get('gnode_subtype', 'unknown') if target_type == 'gnode' else 'unknown'
+            
+            related_entities[rel_type].append({
+                'id': target,
+                'entity_type': target_type,
+                'entity_subtype': target_subtype,
+                'name': target_attrs.get('name', target_attrs.get('uuid', target.split(':')[-1])),
+                'direction': 'outgoing'
+            })
+        
+        # Get incoming relationships (source -> entity_id)
+        for source in self.graph.predecessors(entity_id):
+            edge_data = self.graph.edges[source, entity_id]
+            rel_type = edge_data.get('relationship', 'unknown')
+            
+            # Skip if relationship_type is specified and doesn't match
+            if relationship_type is not None and rel_type != relationship_type:
+                continue
+            
+            # Initialize list for this relationship type if not exists
+            if rel_type not in related_entities:
+                related_entities[rel_type] = []
+            
+            # Add source entity info
+            source_attrs = self.graph.nodes[source]
+            source_type = source_attrs.get('entity_type', 'unknown')
+            source_subtype = source_attrs.get('gnode_subtype', 'unknown') if source_type == 'gnode' else 'unknown'
+            
+            related_entities[rel_type].append({
+                'id': source,
+                'entity_type': source_type,
+                'entity_subtype': source_subtype,
+                'name': source_attrs.get('name', source_attrs.get('uuid', source.split(':')[-1])),
+                'direction': 'incoming'
+            })
+        
+        kg_logger.debug(f"Retrieved {sum(len(entities) for entities in related_entities.values())} related entities for {entity_id}")
+        return related_entities
+    
     def export_graph(self, format: str = 'json') -> str:
         """
         Export the knowledge graph in the specified format

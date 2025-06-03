@@ -77,7 +77,7 @@ class AnalysisPhase:
             
             # Add investigation plan to message list if not already present
             message_list = self._add_investigation_plan_to_messages(
-                message_list, investigation_plan
+                message_list, query
             )
             
             # Execute graph and get final response
@@ -242,7 +242,7 @@ If the issue can be resolved automatically:
         if len(message_list) == 1:  # Only system prompt exists
             return MessageListManager.add_to_message_list(
                 message_list, 
-                f"Investigation Plan:\n{investigation_plan}",
+                f"{investigation_plan}",
                 "user"
             )
         

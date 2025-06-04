@@ -82,7 +82,7 @@ class AnalysisPhase:
             
             # Execute graph and get final response
             final_message, message_list = await self._execute_graph_and_get_response(
-                graph, message_list
+                graph, query, message_list
             )
             
             return final_message, message_list
@@ -248,13 +248,14 @@ If the issue can be resolved automatically:
         
         return message_list
     
-    async def _execute_graph_and_get_response(self, graph: StateGraph, 
+    async def _execute_graph_and_get_response(self, graph: StateGraph, query: str, 
                                             message_list: List[Dict[str, str]]) -> Tuple[str, List[Dict[str, str]]]:
         """
         Execute the graph and get the final response
         
         Args:
             graph: LangGraph StateGraph to execute
+            query: Query to send to the graph
             message_list: Message list for the graph
             
         Returns:
@@ -263,16 +264,31 @@ If the issue can be resolved automatically:
         # Set timeout from config
         timeout_seconds = self.config_data.get('troubleshoot', {}).get('timeout_seconds', 600)
         
-        # Create initial state with messages
-        initial_state = {"messages": message_list}
+        formatted_query = {"messages": [{"role": "user", "content": query}]}
         
-        # Execute graph
-        final_state = await GraphExecutor.execute_graph(
-            graph, initial_state, timeout_seconds
-        )
+        # First show the analysis panel
+        self.console.print(Panel(
+            "[yellow]Starting analysis with LangGraph...\nThis may take a few minutes to complete.", 
+            title="[bold blue]Analysis Phase",
+            border_style="blue"
+        ))
+        
+        # Run graph with timeout
+        try:
+            response = await asyncio.wait_for(
+                graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
+                timeout=timeout_seconds
+            )
+            self.console.print("[green]Analysis complete![/green]")
+        except asyncio.TimeoutError:
+            self.console.print("[red]Analysis timed out![/red]")
+            raise
+        except Exception as e:
+            self.console.print(f"[red]Analysis failed: {str(e)}[/red]")
+            raise
         
         # Extract final response
-        final_message = GraphExecutor.extract_final_response(final_state)
+        final_message = GraphExecutor.extract_final_response(response)
         
         # Add final response to message list
         message_list = MessageListManager.add_to_message_list(message_list, final_message)

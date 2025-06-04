@@ -13,6 +13,7 @@ import logging
 import json
 import re
 import time
+import asyncio
 from typing import Dict, List, Any, Optional, Tuple, Callable
 from langgraph.graph import StateGraph
 
@@ -191,8 +192,6 @@ class GraphExecutor:
         Raises:
             TimeoutError: If execution exceeds timeout
         """
-        start_time = time.time()
-        
         # Create initial state
         state = {"messages": []}
         if initial_state:
@@ -202,31 +201,18 @@ class GraphExecutor:
         try:
             logging.info(f"Starting graph execution with timeout {timeout_seconds}s")
             
-            # Create async iterator
-            stream = graph.astream(state)
+            # Run graph with timeout
+            start_time = time.time()
+            response = await asyncio.wait_for(
+                graph.ainvoke(state, config={"recursion_limit": 100}),
+                timeout=timeout_seconds
+            )
             
-            # Track the latest state
-            latest_state = None
-            
-            # Process stream with timeout check
-            async for chunk in stream:
-                latest_state = chunk
+            logging.info(f"Graph execution completed in {time.time() - start_time:.2f}s")
+            return response
                 
-                # Check for timeout
-                if time.time() - start_time > timeout_seconds:
-                    logging.warning(f"Graph execution timed out after {timeout_seconds}s")
-                    raise TimeoutError(f"Graph execution timed out after {timeout_seconds}s")
-            
-            # Return the final state
-            if latest_state is not None:
-                logging.info(f"Graph execution completed in {time.time() - start_time:.2f}s")
-                return latest_state
-            else:
-                logging.error("Graph execution completed but no state was returned")
-                return state
-                
-        except TimeoutError:
-            # Re-raise timeout errors
+        except asyncio.TimeoutError:
+            logging.warning(f"Graph execution timed out after {timeout_seconds}s")
             raise
         except Exception as e:
             # Log and re-raise other errors

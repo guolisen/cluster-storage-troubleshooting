@@ -437,10 +437,14 @@ def kg_get_summary() -> str:
         issue_type = issue['type']
         issue_types[issue_type] = issue_types.get(issue_type, 0) + 1
     
+    # Use a safer way to get current timestamp
+    from datetime import datetime
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     result = {
         "graph_stats": summary,
         "issue_types": issue_types,
-        "timestamp": logging.Formatter("%Y-%m-%d %H:%M:%S").format(logging.LogRecord("", 0, "", 0, "", (), None))
+        "timestamp": current_time
     }
     
     return json.dumps(result, indent=2)
@@ -461,10 +465,14 @@ def kg_analyze_issues() -> str:
     # Generate fix plan based on analysis
     fix_plan = kg.generate_fix_plan(analysis)
     
+    # Use a safer way to get current timestamp
+    from datetime import datetime
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     result = {
         "analysis": analysis,
         "fix_plan": fix_plan,
-        "timestamp": logging.Formatter("%Y-%m-%d %H:%M:%S").format(logging.LogRecord("", 0, "", 0, "", (), None))
+        "timestamp": current_time
     }
     
     return json.dumps(result, indent=2)

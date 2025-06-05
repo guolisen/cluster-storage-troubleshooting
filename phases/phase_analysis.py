@@ -15,6 +15,7 @@ from langgraph.graph import StateGraph
 
 from troubleshooting.graph import create_troubleshooting_graph_with_context
 from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
+from phases.utils import format_historical_experiences_from_collected_info, handle_exception
 
 logger = logging.getLogger(__name__)
 
@@ -38,56 +39,6 @@ class AnalysisPhase:
         self.config_data = config_data
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.console = Console()
-    
-    def _format_historical_experiences(self, collected_info: Dict[str, Any]) -> str:
-        """
-        Format historical experience data from collected information
-        
-        Args:
-            collected_info: Pre-collected diagnostic information from Phase 0
-            
-        Returns:
-            str: Formatted historical experience data for LLM consumption
-        """
-        try:
-            # Extract historical experiences from knowledge graph in collected_info
-            kg = collected_info.get('knowledge_graph', None)
-            if not kg or not hasattr(kg, 'graph'):
-                return "No historical experience data available."
-            
-            # Find historical experience nodes
-            historical_experience_nodes = []
-            for node_id, attrs in kg.graph.nodes(data=True):
-                if attrs.get('gnode_subtype') == 'HistoricalExperience':
-                    historical_experience_nodes.append((node_id, attrs))
-            
-            if not historical_experience_nodes:
-                return "No historical experience data available."
-            
-            # Format historical experiences in a clear, structured way
-            formatted_entries = []
-            
-            for idx, (node_id, attrs) in enumerate(historical_experience_nodes, 1):
-                # Get attributes from the experience
-                phenomenon = attrs.get('phenomenon', 'Unknown phenomenon')
-                root_cause = attrs.get('root_cause', 'Unknown root cause')
-                localization_method = attrs.get('localization_method', 'No localization method provided')
-                resolution_method = attrs.get('resolution_method', 'No resolution method provided')
-                
-                # Format the entry
-                entry = f"""HISTORICAL EXPERIENCE #{idx}:
-Phenomenon: {phenomenon}
-Root Cause: {root_cause}
-Localization Method: {localization_method}
-Resolution Method: {resolution_method}
-"""
-                formatted_entries.append(entry)
-            
-            return "\n".join(formatted_entries)
-            
-        except Exception as e:
-            self.logger.warning(f"Error formatting historical experiences: {str(e)}")
-            return "Error formatting historical experience data."
     
     async def run_analysis_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 60) -> str:
         """
@@ -126,18 +77,29 @@ Resolution Method: {resolution_method}
                 raise
             
             # Extract analysis results
-            if response["messages"]:
-                if isinstance(response["messages"], list):
-                    final_message = response["messages"][-1].content
-                else:
-                    final_message = response["messages"].content
-            else:
-                final_message = "Failed to generate analysis results"
+            return self._extract_final_message(response)
             
-            return final_message
         except Exception as e:
-            self.logger.error(f"Error in run_analysis_with_graph: {str(e)}")
+            error_msg = handle_exception("run_analysis_with_graph", e, self.logger)
             return f"Error in analysis: {str(e)}"
+    
+    def _extract_final_message(self, response: Dict[str, Any]) -> str:
+        """
+        Extract the final message from a graph response
+        
+        Args:
+            response: Response from the graph
+            
+        Returns:
+            str: Final message content
+        """
+        if not response.get("messages"):
+            return "Failed to generate analysis results"
+            
+        if isinstance(response["messages"], list):
+            return response["messages"][-1].content
+        else:
+            return response["messages"].content
     
     async def run_investigation(self, pod_name: str, namespace: str, volume_path: str, 
                                investigation_plan: str, message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
@@ -188,7 +150,7 @@ Your response must include:
             )
             
             # Extract and format historical experience data from collected_info
-            historical_experiences_formatted = self._format_historical_experiences(self.collected_info)
+            historical_experiences_formatted = format_historical_experiences_from_collected_info(self.collected_info)
             
             # Add investigation results to message list if not already present
             if len(message_list) == 1:  # Only system prompt exists
@@ -262,13 +224,7 @@ If the issue can be resolved automatically:
                 raise
             
             # Extract analysis results
-            if response["messages"]:
-                if isinstance(response["messages"], list):
-                    final_message = response["messages"][-1].content
-                else:
-                    final_message = response["messages"].content
-            else:
-                final_message = "Failed to generate analysis results"
+            final_message = self._extract_final_message(response)
             
             # Add fix plan to message list
             message_list.append({"role": "assistant", "content": final_message})
@@ -276,8 +232,7 @@ If the issue can be resolved automatically:
             return final_message, message_list
 
         except Exception as e:
-            error_msg = f"Error during analysis phase: {str(e)}"
-            self.logger.error(error_msg)
+            error_msg = handle_exception("run_investigation", e, self.logger)
             
             # Add error message to message list if provided
             if message_list is not None:
@@ -299,6 +254,7 @@ async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_pat
         collected_info: Pre-collected diagnostic information from Phase 0
         investigation_plan: Investigation Plan generated by the Plan Phase
         config_data: Configuration data
+        message_list: Optional message list for chat mode
         
     Returns:
         Tuple[str, bool, List[Dict[str, str]]]: (Analysis result, Skip Phase2 flag, Updated message list)
@@ -321,22 +277,35 @@ async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_pat
         # Run the investigation
         result, message_list = await phase.run_investigation(pod_name, namespace, volume_path, investigation_plan, message_list)
         
-        # Check if the result contains the SKIP_PHASE2 marker
-        skip_phase2 = "SKIP_PHASE2: YES" in result
-        
-        # Remove the SKIP_PHASE2 marker from the output if present
-        if skip_phase2:
-            result = result.replace("SKIP_PHASE2: YES", "").strip()
-            logging.info("Phase 1 indicated Phase 2 should be skipped")
-        
-        return result, skip_phase2, message_list
+        # Process the result
+        return process_analysis_result(result, message_list)
     
     except Exception as e:
-        error_msg = f"Error during analysis phase: {str(e)}"
-        logging.error(error_msg)
+        error_msg = handle_exception("run_analysis_phase_with_plan", e, logger)
         
         # Add error message to message list if provided
         if message_list is not None:
             message_list.append({"role": "assistant", "content": error_msg})
         
         return error_msg, False, message_list
+
+def process_analysis_result(result: str, message_list: List[Dict[str, str]]) -> Tuple[str, bool, List[Dict[str, str]]]:
+    """
+    Process the analysis result to check for SKIP_PHASE2 marker
+    
+    Args:
+        result: Analysis result
+        message_list: Message list for chat mode
+        
+    Returns:
+        Tuple[str, bool, List[Dict[str, str]]]: (Processed result, Skip Phase2 flag, Message list)
+    """
+    # Check if the result contains the SKIP_PHASE2 marker
+    skip_phase2 = "SKIP_PHASE2: YES" in result
+    
+    # Remove the SKIP_PHASE2 marker from the output if present
+    if skip_phase2:
+        result = result.replace("SKIP_PHASE2: YES", "").strip()
+        logging.info("Phase 1 indicated Phase 2 should be skipped")
+    
+    return result, skip_phase2, message_list

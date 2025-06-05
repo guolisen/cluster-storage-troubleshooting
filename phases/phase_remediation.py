@@ -15,6 +15,7 @@ from langgraph.graph import StateGraph
 
 from troubleshooting.graph import create_troubleshooting_graph_with_context
 from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
+from phases.utils import format_historical_experiences_from_collected_info, handle_exception
 
 logger = logging.getLogger(__name__)
 
@@ -39,56 +40,6 @@ class RemediationPhase:
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.console = Console()
         self.interactive_mode = config_data.get('troubleshoot', {}).get('interactive_mode', False)
-    
-    def _format_historical_experiences(self, collected_info: Dict[str, Any]) -> str:
-        """
-        Format historical experience data from collected information
-        
-        Args:
-            collected_info: Pre-collected diagnostic information from Phase 0
-            
-        Returns:
-            str: Formatted historical experience data for LLM consumption
-        """
-        try:
-            # Extract historical experiences from knowledge graph in collected_info
-            kg = collected_info.get('knowledge_graph', None)
-            if not kg or not hasattr(kg, 'graph'):
-                return "No historical experience data available."
-            
-            # Find historical experience nodes
-            historical_experience_nodes = []
-            for node_id, attrs in kg.graph.nodes(data=True):
-                if attrs.get('gnode_subtype') == 'HistoricalExperience':
-                    historical_experience_nodes.append((node_id, attrs))
-            
-            if not historical_experience_nodes:
-                return "No historical experience data available."
-            
-            # Format historical experiences in a clear, structured way
-            formatted_entries = []
-            
-            for idx, (node_id, attrs) in enumerate(historical_experience_nodes, 1):
-                # Get attributes from the experience
-                phenomenon = attrs.get('phenomenon', 'Unknown phenomenon')
-                root_cause = attrs.get('root_cause', 'Unknown root cause')
-                localization_method = attrs.get('localization_method', 'No localization method provided')
-                resolution_method = attrs.get('resolution_method', 'No resolution method provided')
-                
-                # Format the entry
-                entry = f"""HISTORICAL EXPERIENCE #{idx}:
-Phenomenon: {phenomenon}
-Root Cause: {root_cause}
-Localization Method: {localization_method}
-Resolution Method: {resolution_method}
-"""
-                formatted_entries.append(entry)
-            
-            return "\n".join(formatted_entries)
-            
-        except Exception as e:
-            self.logger.warning(f"Error formatting historical experiences: {str(e)}")
-            return "Error formatting historical experience data."
     
     async def run_remediation_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 60) -> str:
         """
@@ -128,18 +79,29 @@ Resolution Method: {resolution_method}
                 return f"Remediation failed: {str(e)}"
             
             # Extract remediation results
-            if response["messages"]:
-                if isinstance(response["messages"], list):
-                    final_message = response["messages"][-1].content
-                else:
-                    final_message = response["messages"].content
-            else:
-                final_message = "Failed to generate remediation results"
+            return self._extract_final_message(response)
             
-            return final_message
         except Exception as e:
-            self.logger.error(f"Error in run_remediation_with_graph: {str(e)}")
+            error_msg = handle_exception("run_remediation_with_graph", e, self.logger)
             return f"Error in remediation: {str(e)}"
+    
+    def _extract_final_message(self, response: Dict[str, Any]) -> str:
+        """
+        Extract the final message from a graph response
+        
+        Args:
+            response: Response from the graph
+            
+        Returns:
+            str: Final message content
+        """
+        if not response.get("messages"):
+            return "Failed to generate remediation results"
+            
+        if isinstance(response["messages"], list):
+            return response["messages"][-1].content
+        else:
+            return response["messages"].content
     
     async def execute_fix_plan(self, phase1_final_response: str, message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
         """
@@ -187,7 +149,7 @@ Your response must include:
             )
             
             # Extract and format historical experience data from collected_info
-            historical_experiences_formatted = self._format_historical_experiences(self.collected_info)
+            historical_experiences_formatted = format_historical_experiences_from_collected_info(self.collected_info)
             
             # Updated query message with dynamic data for LangGraph workflow
             query = f"""Phase 2 - Remediation: Execute the fix plan to resolve the identified issue.
@@ -237,13 +199,7 @@ HISTORICAL EXPERIENCE:
                 return remediation_result, message_list
             
             # Extract remediation results
-            if response["messages"]:
-                if isinstance(response["messages"], list):
-                    remediation_result = response["messages"][-1].content
-                else:
-                    remediation_result = response["messages"].content
-            else:
-                remediation_result = "Failed to generate remediation results"
+            remediation_result = self._extract_final_message(response)
             
             # Add remediation result to message list
             message_list.append({"role": "assistant", "content": remediation_result})
@@ -251,8 +207,7 @@ HISTORICAL EXPERIENCE:
             return remediation_result, message_list
 
         except Exception as e:
-            error_msg = f"Error during remediation: {str(e)}"
-            self.logger.error(error_msg)
+            error_msg = handle_exception("execute_fix_plan", e, self.logger)
             
             # Add error message to message list if provided
             if message_list is not None:
@@ -295,8 +250,7 @@ async def run_remediation_phase(phase1_final_response: str, collected_info: Dict
         return result, message_list
         
     except Exception as e:
-        error_msg = f"Error during remediation phase: {str(e)}"
-        logging.error(error_msg)
+        error_msg = handle_exception("run_remediation_phase", e, logger)
         # Add error message to message list if provided
         if message_list is not None:
             message_list.append({"role": "assistant", "content": error_msg})

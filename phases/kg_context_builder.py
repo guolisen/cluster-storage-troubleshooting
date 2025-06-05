@@ -9,6 +9,7 @@ for consumption by the Investigation Planner and LLM.
 import logging
 from typing import Dict, List, Any, Set
 from knowledge_graph import KnowledgeGraph
+from phases.utils import validate_knowledge_graph
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +32,7 @@ class KGContextBuilder:
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         
         # Validate knowledge_graph is a KnowledgeGraph instance
-        if not hasattr(self.kg, 'graph'):
-            self.logger.error(f"Invalid Knowledge Graph: missing 'graph' attribute")
-            raise ValueError(f"Invalid Knowledge Graph: missing 'graph' attribute")
-        
-        if not hasattr(self.kg, 'get_all_issues'):
-            self.logger.error(f"Invalid Knowledge Graph: missing 'get_all_issues' method")
-            raise ValueError(f"Invalid Knowledge Graph: missing 'get_all_issues' method")
+        validate_knowledge_graph(self.kg, self.__class__.__name__)
     
     def prepare_kg_context(self, pod_name: str, namespace: str, volume_path: str) -> Dict[str, Any]:
         """
@@ -167,39 +162,49 @@ class KGContextBuilder:
         """
         try:
             all_issues = self.kg.get_all_issues()
-            
-            # Categorize issues by severity and type
-            issue_analysis = {
-                "by_severity": {"critical": [], "high": [], "medium": [], "low": []},
-                "by_type": {},
-                "total_count": len(all_issues),
-                "entities_with_issues": []  # Changed from set() to list for better serialization
-            }
-            
-            for issue in all_issues:
-                severity = issue.get('severity', 'unknown')
-                issue_type = issue.get('type', 'unknown')
-                node_id = issue.get('node_id', '')
-                
-                # Group by severity
-                if severity in issue_analysis["by_severity"]:
-                    issue_analysis["by_severity"][severity].append(issue)
-                
-                # Group by type
-                if issue_type not in issue_analysis["by_type"]:
-                    issue_analysis["by_type"][issue_type] = []
-                issue_analysis["by_type"][issue_type].append(issue)
-                
-                # Track entities with issues
-                if node_id and node_id not in issue_analysis["entities_with_issues"]:
-                    issue_analysis["entities_with_issues"].append(node_id)
-            
-            return issue_analysis
+            return self._categorize_issues(all_issues)
             
         except Exception as e:
             self.logger.warning(f"Error analyzing existing issues: {str(e)}")
             return {"by_severity": {"critical": [], "high": [], "medium": [], "low": []}, 
                    "by_type": {}, "total_count": 0, "entities_with_issues": []}
+    
+    def _categorize_issues(self, issues: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Categorize issues by severity and type
+        
+        Args:
+            issues: List of issues to categorize
+            
+        Returns:
+            Dict[str, Any]: Categorized issues
+        """
+        issue_analysis = {
+            "by_severity": {"critical": [], "high": [], "medium": [], "low": []},
+            "by_type": {},
+            "total_count": len(issues),
+            "entities_with_issues": []
+        }
+        
+        for issue in issues:
+            severity = issue.get('severity', 'unknown')
+            issue_type = issue.get('type', 'unknown')
+            node_id = issue.get('node_id', '')
+            
+            # Group by severity
+            if severity in issue_analysis["by_severity"]:
+                issue_analysis["by_severity"][severity].append(issue)
+            
+            # Group by type
+            if issue_type not in issue_analysis["by_type"]:
+                issue_analysis["by_type"][issue_type] = []
+            issue_analysis["by_type"][issue_type].append(issue)
+            
+            # Track entities with issues
+            if node_id and node_id not in issue_analysis["entities_with_issues"]:
+                issue_analysis["entities_with_issues"].append(node_id)
+        
+        return issue_analysis
     
     def identify_target_entities(self, pod_name: str, namespace: str) -> Dict[str, str]:
         """
@@ -215,52 +220,109 @@ class KGContextBuilder:
         target_entities = {"pod": f"Pod:{namespace}/{pod_name}"}
         
         try:
-            # Look for the pod in the knowledge graph
-            pod_node_id = f"Pod:{namespace}/{pod_name}"
-            if not self.kg.graph.has_node(pod_node_id):
-                # Try alternative formats
-                pod_node_id = f"Pod:{pod_name}"
-                if not self.kg.graph.has_node(pod_node_id):
-                    # Search by name attribute
-                    for node_id, attrs in self.kg.graph.nodes(data=True):
-                        if (attrs.get('entity_type') == 'Pod' and 
-                            attrs.get('name') == pod_name and
-                            attrs.get('namespace') == namespace):
-                            pod_node_id = node_id
-                            break
-            
+            # Find the pod node ID
+            pod_node_id = self._find_pod_node_id(pod_name, namespace)
             target_entities["pod"] = pod_node_id
             
-            # Trace the volume chain: Pod -> PVC -> PV -> Drive
+            # Trace the volume chain if pod exists
             if self.kg.graph.has_node(pod_node_id):
-                # Find connected PVCs
-                for _, target, edge_data in self.kg.graph.out_edges(pod_node_id, data=True):
-                    target_attrs = self.kg.graph.nodes[target]
-                    if target_attrs.get('entity_type') == 'PVC':
-                        target_entities["pvc"] = target
-                        
-                        # Find connected PV
-                        for _, pv_target, _ in self.kg.graph.out_edges(target, data=True):
-                            pv_attrs = self.kg.graph.nodes[pv_target]
-                            if pv_attrs.get('entity_type') == 'PV':
-                                target_entities["pv"] = pv_target
-                                
-                                # Find connected Drive
-                                for _, drive_target, _ in self.kg.graph.out_edges(pv_target, data=True):
-                                    drive_attrs = self.kg.graph.nodes[drive_target]
-                                    if drive_attrs.get('entity_type') == 'Drive':
-                                        target_entities["drive"] = drive_target
-                                        
-                                        # Find the Node hosting the drive
-                                        for _, node_target, _ in self.kg.graph.out_edges(drive_target, data=True):
-                                            node_attrs = self.kg.graph.nodes[node_target]
-                                            if node_attrs.get('entity_type') == 'Node':
-                                                target_entities["node"] = node_target
-                                        break
-                                break
-                        break
+                self._trace_volume_chain(pod_node_id, target_entities)
             
         except Exception as e:
             self.logger.warning(f"Error identifying target entities: {str(e)}")
         
         return target_entities
+    
+    def _find_pod_node_id(self, pod_name: str, namespace: str) -> str:
+        """
+        Find the node ID for a pod in the knowledge graph
+        
+        Args:
+            pod_name: Name of the pod
+            namespace: Namespace of the pod
+            
+        Returns:
+            str: Node ID for the pod
+        """
+        # Try standard format
+        pod_node_id = f"Pod:{namespace}/{pod_name}"
+        if self.kg.graph.has_node(pod_node_id):
+            return pod_node_id
+            
+        # Try alternative format
+        pod_node_id = f"Pod:{pod_name}"
+        if self.kg.graph.has_node(pod_node_id):
+            return pod_node_id
+            
+        # Search by name and namespace attributes
+        for node_id, attrs in self.kg.graph.nodes(data=True):
+            if (attrs.get('entity_type') == 'Pod' and 
+                attrs.get('name') == pod_name and
+                attrs.get('namespace') == namespace):
+                return node_id
+                
+        # Return default if not found
+        return f"Pod:{namespace}/{pod_name}"
+    
+    def _trace_volume_chain(self, pod_node_id: str, target_entities: Dict[str, str]) -> None:
+        """
+        Trace the volume chain from Pod -> PVC -> PV -> Drive -> Node
+        
+        Args:
+            pod_node_id: Node ID for the pod
+            target_entities: Dictionary to update with found entities
+        """
+        # Find connected PVCs
+        for _, target, _ in self.kg.graph.out_edges(pod_node_id, data=True):
+            target_attrs = self.kg.graph.nodes[target]
+            if target_attrs.get('entity_type') == 'PVC':
+                target_entities["pvc"] = target
+                self._trace_pvc_to_pv(target, target_entities)
+                break
+    
+    def _trace_pvc_to_pv(self, pvc_node_id: str, target_entities: Dict[str, str]) -> None:
+        """
+        Trace from PVC to PV
+        
+        Args:
+            pvc_node_id: Node ID for the PVC
+            target_entities: Dictionary to update with found entities
+        """
+        # Find connected PV
+        for _, pv_target, _ in self.kg.graph.out_edges(pvc_node_id, data=True):
+            pv_attrs = self.kg.graph.nodes[pv_target]
+            if pv_attrs.get('entity_type') == 'PV':
+                target_entities["pv"] = pv_target
+                self._trace_pv_to_drive(pv_target, target_entities)
+                break
+    
+    def _trace_pv_to_drive(self, pv_node_id: str, target_entities: Dict[str, str]) -> None:
+        """
+        Trace from PV to Drive
+        
+        Args:
+            pv_node_id: Node ID for the PV
+            target_entities: Dictionary to update with found entities
+        """
+        # Find connected Drive
+        for _, drive_target, _ in self.kg.graph.out_edges(pv_node_id, data=True):
+            drive_attrs = self.kg.graph.nodes[drive_target]
+            if drive_attrs.get('entity_type') == 'Drive':
+                target_entities["drive"] = drive_target
+                self._trace_drive_to_node(drive_target, target_entities)
+                break
+    
+    def _trace_drive_to_node(self, drive_node_id: str, target_entities: Dict[str, str]) -> None:
+        """
+        Trace from Drive to Node
+        
+        Args:
+            drive_node_id: Node ID for the Drive
+            target_entities: Dictionary to update with found entities
+        """
+        # Find the Node hosting the drive
+        for _, node_target, _ in self.kg.graph.out_edges(drive_node_id, data=True):
+            node_attrs = self.kg.graph.nodes[node_target]
+            if node_attrs.get('entity_type') == 'Node':
+                target_entities["node"] = node_target
+                break

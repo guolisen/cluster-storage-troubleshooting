@@ -9,9 +9,10 @@ of the troubleshooting process, generating an Investigation Plan for Phase 1.
 import logging
 import os
 import json
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from knowledge_graph import KnowledgeGraph
 from phases.investigation_planner import InvestigationPlanner
+from phases.utils import validate_knowledge_graph, generate_basic_fallback_plan, handle_exception
 
 logger = logging.getLogger(__name__)
 
@@ -57,51 +58,107 @@ class PlanPhase:
         self.logger.info(f"Executing Plan Phase for {namespace}/{pod_name} volume {volume_path}")
         
         try:
-            # Initialize Investigation Planner
-            self.investigation_planner = InvestigationPlanner(knowledge_graph, self.config_data)
-            
-            # Generate Investigation Plan
-            investigation_plan, message_list = self.investigation_planner.generate_investigation_plan(
-                pod_name, namespace, volume_path, message_list
+            # Generate the investigation plan
+            return self._generate_investigation_plan(
+                knowledge_graph, pod_name, namespace, volume_path, message_list
             )
             
-            # Parse the plan into a structured format for Phase 1
-            structured_plan = self._parse_investigation_plan(investigation_plan)
-            
-            # Return results
-            return {
-                "status": "success",
-                "investigation_plan": investigation_plan,
-                "structured_plan": structured_plan,
-                "pod_name": pod_name,
-                "namespace": namespace,
-                "volume_path": volume_path,
-                "message_list": message_list
-            }
-            
         except Exception as e:
-            self.logger.error(f"Error executing Plan Phase: {str(e)}")
-            # Generate fallback plan
-            fallback_plan = self._generate_basic_fallback_plan(pod_name, namespace, volume_path)
+            error_msg = handle_exception("execute", e, self.logger)
+            return self._handle_plan_generation_error(
+                error_msg, pod_name, namespace, volume_path, message_list
+            )
+    
+    def _generate_investigation_plan(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
+                                   volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:
+        """
+        Generate an investigation plan using the Investigation Planner
+        
+        Args:
+            knowledge_graph: KnowledgeGraph instance from Phase 0
+            pod_name: Name of the pod with the error
+            namespace: Namespace of the pod
+            volume_path: Path of the volume with I/O error
+            message_list: Optional message list for chat mode
             
-            # Add fallback plan to message list if provided
-            if message_list is not None:
-                # If the last message is from the user, append the assistant response
-                if message_list[-1]["role"] == "user":
-                    message_list.append({"role": "assistant", "content": fallback_plan})
-                else:
-                    # Replace the last message if it's from the assistant
-                    message_list[-1] = {"role": "assistant", "content": fallback_plan}
+        Returns:
+            Dict[str, Any]: Results of the plan generation
+        """
+        # Initialize Investigation Planner
+        self.investigation_planner = InvestigationPlanner(knowledge_graph, self.config_data)
+        
+        # Generate Investigation Plan
+        investigation_plan, message_list = self.investigation_planner.generate_investigation_plan(
+            pod_name, namespace, volume_path, message_list
+        )
+        
+        # Parse the plan into a structured format for Phase 1
+        structured_plan = self._parse_investigation_plan(investigation_plan)
+        
+        # Return results
+        return {
+            "status": "success",
+            "investigation_plan": investigation_plan,
+            "structured_plan": structured_plan,
+            "pod_name": pod_name,
+            "namespace": namespace,
+            "volume_path": volume_path,
+            "message_list": message_list
+        }
+    
+    def _handle_plan_generation_error(self, error_msg: str, pod_name: str, namespace: str, 
+                                    volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:
+        """
+        Handle errors during plan generation
+        
+        Args:
+            error_msg: Error message
+            pod_name: Name of the pod with the error
+            namespace: Namespace of the pod
+            volume_path: Path of the volume with I/O error
+            message_list: Optional message list for chat mode
             
-            return {
-                "status": "error",
-                "error_message": str(e),
-                "investigation_plan": fallback_plan,
-                "pod_name": pod_name,
-                "namespace": namespace,
-                "volume_path": volume_path,
-                "message_list": message_list
-            }
+        Returns:
+            Dict[str, Any]: Error results with fallback plan
+        """
+        # Generate fallback plan
+        fallback_plan = generate_basic_fallback_plan(pod_name, namespace, volume_path)
+        
+        # Add fallback plan to message list if provided
+        updated_message_list = self._update_message_list(message_list, fallback_plan)
+        
+        return {
+            "status": "error",
+            "error_message": error_msg,
+            "investigation_plan": fallback_plan,
+            "pod_name": pod_name,
+            "namespace": namespace,
+            "volume_path": volume_path,
+            "message_list": updated_message_list
+        }
+    
+    def _update_message_list(self, message_list: List[Dict[str, str]], content: str) -> List[Dict[str, str]]:
+        """
+        Update message list with new content
+        
+        Args:
+            message_list: Message list to update
+            content: Content to add to the message list
+            
+        Returns:
+            List[Dict[str, str]]: Updated message list
+        """
+        if message_list is None:
+            return None
+            
+        # If the last message is from the user, append the assistant response
+        if message_list[-1]["role"] == "user":
+            message_list.append({"role": "assistant", "content": content})
+        else:
+            # Replace the last message if it's from the assistant
+            message_list[-1] = {"role": "assistant", "content": content}
+        
+        return message_list
     
     def _parse_investigation_plan(self, investigation_plan: str) -> Dict[str, Any]:
         """
@@ -128,7 +185,7 @@ class PlanPhase:
                 line = line.strip()
                 
                 # Skip empty lines and headers
-                if not line or line.startswith("Investigation Plan:") or line.startswith("Target:") or line.startswith("Generated Steps:"):
+                if self._is_header_line(line):
                     continue
                 
                 # Check if we're in the fallback section
@@ -138,58 +195,8 @@ class PlanPhase:
                 
                 # Parse step
                 if line.startswith("Step "):
-                    step_parts = line.split(" | ")
-                    
-                    if len(step_parts) >= 3:
-                        # Extract step number and description
-                        step_info = step_parts[0].split(": ", 1)
-                        step_number = step_info[0].replace("Step ", "")
-                        description = step_info[1] if len(step_info) > 1 else ""
-                        
-                        # Extract tool and arguments
-                        tool_info = step_parts[1].replace("Tool: ", "")
-                        tool_name = tool_info.split("(")[0] if "(" in tool_info else tool_info
-                        
-                        # Extract arguments if present
-                        arguments = {}
-                        if "(" in tool_info and ")" in tool_info:
-                            args_str = tool_info.split("(", 1)[1].rsplit(")", 1)[0]
-                            if args_str:
-                                # Parse arguments
-                                for arg in args_str.split(", "):
-                                    if "=" in arg:
-                                        key, value = arg.split("=", 1)
-                                        # Convert string representations to actual values
-                                        if value.lower() == "true":
-                                            value = True
-                                        elif value.lower() == "false":
-                                            value = False
-                                        elif value.isdigit():
-                                            value = int(value)
-                                        elif value.startswith("'") and value.endswith("'"):
-                                            value = value[1:-1]
-                                        elif value.startswith('"') and value.endswith('"'):
-                                            value = value[1:-1]
-                                        arguments[key] = value
-                        
-                        # Extract expected outcome
-                        expected = step_parts[2].replace("Expected: ", "") if len(step_parts) > 2 else ""
-                        
-                        # Extract trigger for fallback steps
-                        trigger = step_parts[3].replace("Trigger: ", "") if len(step_parts) > 3 and in_fallback_section else None
-                        
-                        # Create step dictionary
-                        step = {
-                            "step": step_number,
-                            "description": description,
-                            "tool": tool_name,
-                            "arguments": arguments,
-                            "expected": expected
-                        }
-                        
-                        if trigger:
-                            step["trigger"] = trigger
-                        
+                    step = self._parse_step_line(line, in_fallback_section)
+                    if step:
                         # Add to appropriate list
                         if in_fallback_section:
                             structured_plan["fallback_steps"].append(step)
@@ -199,35 +206,117 @@ class PlanPhase:
             return structured_plan
             
         except Exception as e:
-            self.logger.error(f"Error parsing investigation plan: {str(e)}")
+            error_msg = handle_exception("_parse_investigation_plan", e, self.logger)
             return {"steps": [], "fallback_steps": []}
     
-    def _generate_basic_fallback_plan(self, pod_name: str, namespace: str, volume_path: str) -> str:
+    def _is_header_line(self, line: str) -> bool:
         """
-        Generate a basic fallback plan when all else fails
+        Check if a line is a header line that should be skipped
         
         Args:
-            pod_name: Name of the pod with the error
-            namespace: Namespace of the pod
-            volume_path: Path of the volume with I/O error
+            line: Line to check
             
         Returns:
-            str: Basic fallback Investigation Plan
+            bool: True if the line is a header, False otherwise
         """
-        basic_plan = f"""Investigation Plan:
-Target: Pod {namespace}/{pod_name}, Volume Path: {volume_path}
-Generated Steps: 4 basic steps (fallback mode)
-
-Step 1: Get all critical issues from Knowledge Graph | Tool: kg_get_all_issues(severity='critical') | Expected: List of critical issues affecting the system
-Step 2: Analyze existing issues and patterns | Tool: kg_analyze_issues() | Expected: Root cause analysis and issue relationships  
-Step 3: Get system overview | Tool: kg_get_summary() | Expected: Overall system health and entity statistics
-Step 4: Print complete Knowledge Graph for manual analysis | Tool: kg_print_graph(include_details=True, include_issues=True) | Expected: Full system visualization for troubleshooting
-
-Fallback Steps (if main steps fail):
-Step F1: Search for any Pod entities | Tool: kg_get_related_entities(entity_type='Pod', entity_id='any', max_depth=1) | Expected: List of all Pods | Trigger: entity_not_found
-Step F2: Search for any Drive entities | Tool: kg_get_related_entities(entity_type='Drive', entity_id='any', max_depth=1) | Expected: List of all Drives | Trigger: no_target_found
-"""
-        return basic_plan
+        return (not line or 
+                line.startswith("Investigation Plan:") or 
+                line.startswith("Target:") or 
+                line.startswith("Generated Steps:"))
+    
+    def _parse_step_line(self, line: str, in_fallback_section: bool) -> Dict[str, Any]:
+        """
+        Parse a step line into a structured step
+        
+        Args:
+            line: Step line to parse
+            in_fallback_section: Whether we're in the fallback section
+            
+        Returns:
+            Dict[str, Any]: Parsed step, or None if parsing failed
+        """
+        step_parts = line.split(" | ")
+        
+        if len(step_parts) < 3:
+            return None
+        
+        # Extract step number and description
+        step_info = step_parts[0].split(": ", 1)
+        step_number = step_info[0].replace("Step ", "")
+        description = step_info[1] if len(step_info) > 1 else ""
+        
+        # Extract tool and arguments
+        tool_info = step_parts[1].replace("Tool: ", "")
+        tool_name = tool_info.split("(")[0] if "(" in tool_info else tool_info
+        
+        # Extract arguments
+        arguments = self._parse_tool_arguments(tool_info)
+        
+        # Extract expected outcome
+        expected = step_parts[2].replace("Expected: ", "") if len(step_parts) > 2 else ""
+        
+        # Extract trigger for fallback steps
+        trigger = step_parts[3].replace("Trigger: ", "") if len(step_parts) > 3 and in_fallback_section else None
+        
+        # Create step dictionary
+        step = {
+            "step": step_number,
+            "description": description,
+            "tool": tool_name,
+            "arguments": arguments,
+            "expected": expected
+        }
+        
+        if trigger:
+            step["trigger"] = trigger
+        
+        return step
+    
+    def _parse_tool_arguments(self, tool_info: str) -> Dict[str, Any]:
+        """
+        Parse tool arguments from tool info string
+        
+        Args:
+            tool_info: Tool info string
+            
+        Returns:
+            Dict[str, Any]: Parsed arguments
+        """
+        arguments = {}
+        if "(" in tool_info and ")" in tool_info:
+            args_str = tool_info.split("(", 1)[1].rsplit(")", 1)[0]
+            if args_str:
+                # Parse arguments
+                for arg in args_str.split(", "):
+                    if "=" in arg:
+                        key, value = arg.split("=", 1)
+                        # Convert string representations to actual values
+                        arguments[key] = self._convert_argument_value(value)
+        
+        return arguments
+    
+    def _convert_argument_value(self, value: str) -> Any:
+        """
+        Convert a string argument value to its appropriate type
+        
+        Args:
+            value: String value to convert
+            
+        Returns:
+            Any: Converted value
+        """
+        if value.lower() == "true":
+            return True
+        elif value.lower() == "false":
+            return False
+        elif value.isdigit():
+            return int(value)
+        elif value.startswith("'") and value.endswith("'"):
+            return value[1:-1]
+        elif value.startswith('"') and value.endswith('"'):
+            return value[1:-1]
+        return value
+    
 
 
 async def run_plan_phase(pod_name, namespace, volume_path, collected_info, config_data=None, message_list=None):
@@ -240,6 +329,7 @@ async def run_plan_phase(pod_name, namespace, volume_path, collected_info, confi
         volume_path: Path of the volume with I/O error
         collected_info: Dictionary containing collected information from Phase 0, including knowledge_graph
         config_data: Configuration data for the system (optional)
+        message_list: Optional message list for chat mode
         
     Returns:
         Tuple[str, List[Dict[str, str]]]: (Investigation Plan as a formatted string, Updated message list)
@@ -247,35 +337,85 @@ async def run_plan_phase(pod_name, namespace, volume_path, collected_info, confi
     logger = logging.getLogger(__name__)
     logger.info(f"Running Plan Phase for {namespace}/{pod_name} volume {volume_path}")
     
+    try:
+        # Extract and validate knowledge_graph
+        knowledge_graph = _extract_and_validate_knowledge_graph(collected_info, logger)
+        
+        # Initialize and execute Plan Phase
+        plan_phase = PlanPhase(config_data)
+        results = plan_phase.execute(knowledge_graph, pod_name, namespace, volume_path, message_list)
+        
+        # Log the results
+        logger.info(f"Plan Phase completed with status: {results['status']}")
+        
+        # Save the investigation plan to a file if configured
+        _save_plan_to_file_if_configured(
+            results['investigation_plan'], namespace, pod_name, config_data, logger
+        )
+        
+        # Return the investigation plan as a string and the updated message list
+        return results['investigation_plan'], results['message_list']
+        
+    except Exception as e:
+        error_msg = handle_exception("run_plan_phase", e, logger)
+        return error_msg, message_list
+
+
+def _extract_and_validate_knowledge_graph(collected_info: Dict[str, Any], logger: logging.Logger) -> KnowledgeGraph:
+    """
+    Extract and validate the knowledge graph from collected information
+    
+    Args:
+        collected_info: Dictionary containing collected information from Phase 0
+        logger: Logger instance
+        
+    Returns:
+        KnowledgeGraph: Validated knowledge graph
+        
+    Raises:
+        ValueError: If the knowledge graph is invalid
+    """
     # Extract knowledge_graph from collected_info
     knowledge_graph = collected_info.get('knowledge_graph')
     
-    # Validate knowledge_graph is a KnowledgeGraph instance
+    # Validate knowledge_graph is present
     if knowledge_graph is None:
-        logger.error("Knowledge Graph not found in collected_info")
-        return "Error: Knowledge Graph not found in collected information"
+        error_msg = "Knowledge Graph not found in collected_info"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
     
+    # Validate knowledge_graph is a KnowledgeGraph instance
     if not isinstance(knowledge_graph, KnowledgeGraph):
-        logger.error(f"Invalid Knowledge Graph type: {type(knowledge_graph)}")
-        return f"Error: Invalid Knowledge Graph type: {type(knowledge_graph)}"
+        error_msg = f"Invalid Knowledge Graph type: {type(knowledge_graph)}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
     
-    # Initialize and execute Plan Phase
-    plan_phase = PlanPhase(config_data)
-    results = plan_phase.execute(knowledge_graph, pod_name, namespace, volume_path, message_list)
+    return knowledge_graph
+
+
+def _save_plan_to_file_if_configured(investigation_plan: str, namespace: str, pod_name: str, 
+                                   config_data: Dict[str, Any], logger: logging.Logger) -> None:
+    """
+    Save the investigation plan to a file if configured
     
-    # Log the results
-    logger.info(f"Plan Phase completed with status: {results['status']}")
-    
-    # Save the investigation plan to a file if configured
-    if config_data and config_data.get('plan_phase', {}).get('save_plan', False):
+    Args:
+        investigation_plan: Investigation plan to save
+        namespace: Namespace of the pod
+        pod_name: Name of the pod
+        config_data: Configuration data
+        logger: Logger instance
+    """
+    if not config_data or not config_data.get('plan_phase', {}).get('save_plan', False):
+        return
+        
+    try:
         output_dir = config_data.get('output_dir', 'output')
         os.makedirs(output_dir, exist_ok=True)
         
         plan_file = os.path.join(output_dir, f"investigation_plan_{namespace}_{pod_name}.txt")
         with open(plan_file, 'w') as f:
-            f.write(results['investigation_plan'])
+            f.write(investigation_plan)
         
         logger.info(f"Investigation Plan saved to {plan_file}")
-    
-    # Return the investigation plan as a string and the updated message list
-    return results['investigation_plan'], results['message_list']
+    except Exception as e:
+        logger.warning(f"Failed to save investigation plan to file: {str(e)}")

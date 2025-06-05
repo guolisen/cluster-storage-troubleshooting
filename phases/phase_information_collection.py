@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from information_collector import ComprehensiveInformationCollector
+from phases.utils import handle_exception
 
 logger = logging.getLogger(__name__)
 
@@ -65,40 +66,65 @@ class InformationCollectionPhase:
             knowledge_graph = collection_result.get('knowledge_graph')
             
             # Format collected data into expected structure
-            collected_info = {
-                "pod_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('pods', {}),
-                "pvc_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('pvcs', {}),
-                "pv_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('pvs', {}),
-                "node_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('nodes', {}),
-                "csi_driver_info": collection_result.get('collected_data', {}).get('csi_baremetal', {}),
-                "storage_class_info": {},  # Will be included in kubernetes data
-                "system_info": collection_result.get('collected_data', {}).get('system', {}),
-                "knowledge_graph_summary": collection_result.get('context_summary', {}),
-                "issues": knowledge_graph.issues if knowledge_graph else [],
-                "knowledge_graph": knowledge_graph
-            }
+            collected_info = self._format_collected_data(collection_result, knowledge_graph)
             
             self._print_knowledge_graph_summary(knowledge_graph)
             
             return collected_info
             
         except Exception as e:
-            error_msg = f"Error during information collection phase: {str(e)}"
-            self.logger.error(error_msg)
-            collected_info = {
-                "collection_error": error_msg,
-                "pod_info": {},
-                "pvc_info": {},
-                "pv_info": {},
-                "node_info": {},
-                "csi_driver_info": {},
-                "storage_class_info": {},
-                "system_info": {},
-                "knowledge_graph_summary": {}
-            }
-            return collected_info
+            error_msg = handle_exception("collect_information", e, self.logger)
+            return self._create_empty_collected_info(error_msg)
     
-    def _print_knowledge_graph_summary(self, knowledge_graph):
+    def _format_collected_data(self, collection_result: Dict[str, Any], knowledge_graph: Any) -> Dict[str, Any]:
+        """
+        Format collected data into expected structure
+        
+        Args:
+            collection_result: Result from comprehensive collection
+            knowledge_graph: Knowledge Graph instance
+            
+        Returns:
+            Dict[str, Any]: Formatted collected data
+        """
+        return {
+            "pod_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('pods', {}),
+            "pvc_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('pvcs', {}),
+            "pv_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('pvs', {}),
+            "node_info": collection_result.get('collected_data', {}).get('kubernetes', {}).get('nodes', {}),
+            "csi_driver_info": collection_result.get('collected_data', {}).get('csi_baremetal', {}),
+            "storage_class_info": {},  # Will be included in kubernetes data
+            "system_info": collection_result.get('collected_data', {}).get('system', {}),
+            "knowledge_graph_summary": collection_result.get('context_summary', {}),
+            "issues": knowledge_graph.issues if knowledge_graph else [],
+            "knowledge_graph": knowledge_graph
+        }
+    
+    def _create_empty_collected_info(self, error_msg: str) -> Dict[str, Any]:
+        """
+        Create empty collected info structure with error message
+        
+        Args:
+            error_msg: Error message
+            
+        Returns:
+            Dict[str, Any]: Empty collected info structure
+        """
+        return {
+            "collection_error": error_msg,
+            "pod_info": {},
+            "pvc_info": {},
+            "pv_info": {},
+            "node_info": {},
+            "csi_driver_info": {},
+            "storage_class_info": {},
+            "system_info": {},
+            "knowledge_graph_summary": {},
+            "issues": [],
+            "knowledge_graph": None
+        }
+    
+    def _print_knowledge_graph_summary(self, knowledge_graph: Any) -> None:
         """
         Print Knowledge Graph summary with rich formatting
         
@@ -129,14 +155,14 @@ class InformationCollectionPhase:
                 self.console.print("[green]Knowledge graph analysis complete[/green]")
         except Exception as e:
             # Fall back to plain text if rich formatting fails
-            self.logger.error(f"Error in rich formatting, falling back to plain text: {str(e)}")
+            error_msg = handle_exception("_print_knowledge_graph_summary", e, self.logger)
             try:
                 # Try plain text formatting
                 formatted_output = knowledge_graph.print_graph(use_rich=False)
                 print(formatted_output)
             except Exception as e2:
                 # Last resort fallback
-                self.logger.error(f"Error in plain text formatting: {str(e2)}")
+                error_msg = handle_exception("_print_knowledge_graph_summary (plain text fallback)", e2, self.logger)
                 print("=" * 80)
                 print("KNOWLEDGE GRAPH SUMMARY (FALLBACK FORMAT)")
                 print("=" * 80)
@@ -172,9 +198,8 @@ async def run_information_collection_phase(pod_name: str, namespace: str, volume
         return collected_info
         
     except Exception as e:
-        error_msg = f"Error during information collection phase: {str(e)}"
-        logging.error(error_msg)
-        collected_info = {
+        error_msg = handle_exception("run_information_collection_phase", e, logger)
+        return {
             "collection_error": error_msg,
             "pod_info": {},
             "pvc_info": {},
@@ -185,4 +210,3 @@ async def run_information_collection_phase(pod_name: str, namespace: str, volume
             "system_info": {},
             "knowledge_graph_summary": {}
         }
-        return collected_info

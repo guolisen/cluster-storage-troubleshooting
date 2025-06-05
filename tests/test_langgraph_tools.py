@@ -36,6 +36,11 @@ from tools.registry import (
 # Initialize rich console for nice output
 console = Console()
 
+os.environ['LANGCHAIN_TRACING_V2'] = "true"   
+os.environ['LANGCHAIN_ENDPOINT'] = "https://api.smith.langchain.com"   
+os.environ['LANGCHAIN_API_KEY'] = "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"   
+os.environ['LANGCHAIN_PROJECT'] = "pr-silver-bank-1"
+
 def load_config():
     """Load configuration from config.yaml"""
     try:
@@ -125,6 +130,7 @@ async def test_tool(tool_func, test_args=None, config_data=None):
         else:
             args_with_config = {**test_args, "config": config_data}
         
+        result = None
         if hasattr(tool_func, '_run'):
             # For StructuredTool objects
             if test_args is None:
@@ -203,6 +209,7 @@ async def test_knowledge_graph_tools(kg, config_data=None):
         # Print result
         status_color = "green" if result["status"] == "success" else "red"
         console.print(f"[bold]{result['name']}[/bold]: [{status_color}]{result['status']}[/{status_color}]")
+        console.print(f"Result: {result.get('result', 'No result')[:500]}")
     
     return results
 
@@ -243,6 +250,7 @@ async def test_kubernetes_tools(config_data=None):
         # Print result
         status_color = "green" if result["status"] == "success" else "red"
         console.print(f"[bold]{result['name']}[/bold]: [{status_color}]{result['status']}[/{status_color}]")
+        console.print(f"Result: {result.get('result', 'No result')[:500]}")
     
     return results
 
@@ -281,6 +289,7 @@ async def test_diagnostic_tools(config_data=None):
         # Print result
         status_color = "green" if result["status"] == "success" else "red"
         console.print(f"[bold]{result['name']}[/bold]: [{status_color}]{result['status']}[/{status_color}]")
+        console.print(f"Result: {result.get('result', 'No result')[:500]}")
     
     return results
 
@@ -321,6 +330,7 @@ async def test_testing_tools(config_data=None):
         # Print result
         status_color = "green" if result["status"] == "success" else "red"
         console.print(f"[bold]{result['name']}[/bold]: [{status_color}]{result['status']}[/{status_color}]")
+        console.print(f"Result: {result.get('result', 'No result')[:500]}")
     
     return results
 

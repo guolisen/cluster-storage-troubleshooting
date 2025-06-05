@@ -54,7 +54,7 @@ echo "================================"
 echo ""
 
 # Run the test script with arguments
-python3 tests/test_langgraph_tools.py $VERBOSE $CATEGORY --output "$OUTPUT"
+python3 tests/test_langgraph_tools.py $VERBOSE $CATEGORY --output "$OUTPUT" 
 
 # Check the exit code
 if [ $? -eq 0 ]; then

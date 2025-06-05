@@ -830,9 +830,9 @@ class KnowledgeGraph:
         # Create summary table
         summary_table = Table(
             title="[bold] GRAPH SUMMARY",
-            show_header=True,
+            #show_header=True,
             header_style="bold cyan",
-            box=True,
+            #box=True,
             border_style="blue"
         )
         

@@ -14,13 +14,14 @@ from typing import Dict, List, Any, Optional, Tuple
 INTERACTIVE_MODE = False  # To be set by the caller
 CONFIG_DATA = None  # To be set by the caller with configuration
 
-def validate_command(command_list: List[str], config_data: Dict[str, Any] = None) -> Tuple[bool, str]:
+def validate_command(command_list: List[str], config_data: Dict[str, Any], interactive_mode: bool) -> Tuple[bool, str]:
     """
     Validate command against allowed/disallowed patterns in configuration
     
     Args:
         command_list: Command to validate as list of strings
         config_data: Configuration data containing command restrictions
+        interactive_mode: Whether the system is in interactive mode
         
     Returns:
         Tuple[bool, str]: (is_allowed, reason)
@@ -28,11 +29,9 @@ def validate_command(command_list: List[str], config_data: Dict[str, Any] = None
     if not command_list:
         return False, "Empty command list"
     
-    if config_data is None:
-        config_data = CONFIG_DATA
-    
-    if config_data is None:
-        return True, "No configuration available - allowing command"
+    # config_data is now mandatory
+    if config_data is None: # This check might be redundant if type hinting is enforced, but good for safety
+        return False, "Configuration data not provided"
     
     command_str = ' '.join(command_list)
     commands_config = config_data.get('commands', {})
@@ -54,6 +53,9 @@ def validate_command(command_list: List[str], config_data: Dict[str, Any] = None
     # If no allowed list, allow by default (only disallowed list matters)
     return True, "No allowed list specified - command permitted"
 
+# Note: interactive_mode parameter is added to validate_command as requested,
+# but not currently used in its internal logic. It's available for future use.
+
 def _matches_pattern(command: str, pattern: str) -> bool:
     """
     Check if command matches a pattern (supports wildcards)
@@ -68,19 +70,21 @@ def _matches_pattern(command: str, pattern: str) -> bool:
     import fnmatch
     return fnmatch.fnmatch(command, pattern)
 
-def execute_command(command_list: List[str], purpose: str, requires_approval: bool = True) -> str:
+def execute_command(command_list: List[str], config_data: Dict[str, Any], interactive_mode: bool, purpose: str, requires_approval: bool = True) -> str:
     """
     Execute a command and return its output
     
     Args:
         command_list: Command to execute as a list of strings
+        config_data: Configuration data (currently unused but added for future consistency)
+        interactive_mode: Whether the system is in interactive mode
         purpose: Purpose of the command
         requires_approval: Whether this command requires user approval in interactive mode
         
     Returns:
         str: Command output
     """
-    global INTERACTIVE_MODE
+    # global INTERACTIVE_MODE # Removed
     
     if not command_list:
         logging.error("execute_command received an empty command_list")
@@ -88,11 +92,26 @@ def execute_command(command_list: List[str], purpose: str, requires_approval: bo
 
     executable = command_list[0]
     command_display_str = ' '.join(command_list)
-    
+
+    # Approval logic
+    if interactive_mode and requires_approval:
+        # Ensure prompt goes to stderr if stdout is being captured by a parent process or for other reasons.
+        # Or use a dedicated prompting mechanism if available. For now, print to console.
+        print(f"\nCommand requires approval: {command_display_str}")
+        print(f"Purpose: {purpose}")
+        try:
+            user_input = input("Proceed? (yes/no): ").strip().lower()
+            if user_input != 'yes':
+                logging.warning(f"Command execution cancelled by user for: {command_display_str}")
+                return "Error: Command execution cancelled by user."
+        except EOFError: # Handling cases where input stream is not available (e.g. non-interactive script)
+            logging.error("Attempted to request approval in a non-interactive environment (EOFError). Denying execution.")
+            return "Error: Command approval required but could not obtain user input (EOFError)."
+
     # Execute command
     try:
-        logging.info(f"Executing command: {command_display_str}")
-        result = subprocess.run(command_list, shell=False, check=True, 
+        logging.info(f"Executing command for purpose '{purpose}': {command_display_str}")
+        result = subprocess.run(command_list, shell=False, check=True,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                universal_newlines=True)
         output = result.stdout

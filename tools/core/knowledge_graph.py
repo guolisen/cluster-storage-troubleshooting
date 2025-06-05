@@ -8,7 +8,7 @@ including entity queries, relationship analysis, and issue management.
 
 import json
 import logging
-from typing import Any
+from typing import Any, Optional # Added Optional
 from langchain_core.tools import tool
 
 # Configure logger for knowledge graph tools
@@ -20,77 +20,65 @@ kg_tools_logger.propagate = False
 # Import Knowledge Graph
 from knowledge_graph import KnowledgeGraph
 
-# Global Knowledge Graph instance
-KNOWLEDGE_GRAPH = None
+# Global Knowledge Graph instance (REMOVED)
+# KNOWLEDGE_GRAPH = None
 
-def initialize_knowledge_graph(kg_instance: 'KnowledgeGraph' = None) -> 'KnowledgeGraph':
+# initialize_knowledge_graph and get_knowledge_graph (REMOVED)
+# These functions are no longer needed as KnowledgeGraph instances
+# will be passed directly to tool functions.
+
+def _find_node_id(kg_instance: KnowledgeGraph, entity_type: str, entity_id_or_name: str) -> Optional[str]:
     """
-    Initialize or set the global Knowledge Graph instance
+    Find the canonical node ID for a given entity type and its ID or name.
     
     Args:
-        kg_instance: Existing KnowledgeGraph instance (optional)
+        kg_instance: The KnowledgeGraph instance to use.
+        entity_type: The type of the entity.
+        entity_id_or_name: The ID (potentially prefixed) or name of the entity.
         
     Returns:
-        KnowledgeGraph: Global KnowledgeGraph instance
+        The canonical node ID (e.g., "Pod:my-pod-uuid") or None if not found.
     """
-    global KNOWLEDGE_GRAPH
-    
-    if kg_instance:
-        KNOWLEDGE_GRAPH = kg_instance
-        kg_tools_logger.info("Using provided Knowledge Graph instance")
-    elif KNOWLEDGE_GRAPH is None:
-        KNOWLEDGE_GRAPH = KnowledgeGraph()
-        kg_tools_logger.info("Created new Knowledge Graph instance")
-    
-    return KNOWLEDGE_GRAPH
+    # Check if entity_id_or_name is already a full node ID and exists
+    if ':' in entity_id_or_name:
+        if kg_instance.graph.has_node(entity_id_or_name):
+            # Verify entity_type if possible (some nodes might not have it, or it might mismatch)
+            node_data = kg_instance.graph.nodes[entity_id_or_name]
+            if node_data.get('entity_type') == entity_type:
+                return entity_id_or_name
+            # If entity_type mismatches, it's ambiguous or wrong, fall through to search
 
-def get_knowledge_graph() -> 'KnowledgeGraph':
-    """
-    Get the global Knowledge Graph instance
-    
-    Returns:
-        KnowledgeGraph: Global KnowledgeGraph instance
-    """
-    global KNOWLEDGE_GRAPH
-    
-    if KNOWLEDGE_GRAPH is None:
-        KNOWLEDGE_GRAPH = initialize_knowledge_graph()
-    
-    return KNOWLEDGE_GRAPH
+    # Try constructing a prefixed ID if not already prefixed
+    potential_node_id = f"{entity_type}:{entity_id_or_name}"
+    if kg_instance.graph.has_node(potential_node_id):
+        return potential_node_id
+
+    # If not found directly, iterate and check 'name' or 'uuid' attributes
+    for n_id, attrs in kg_instance.graph.nodes(data=True):
+        if attrs.get('entity_type') == entity_type:
+            if attrs.get('name') == entity_id_or_name or attrs.get('uuid') == entity_id_or_name:
+                return n_id
+    return None
 
 @tool
-def kg_get_entity_info(entity_type: str, entity_id: str) -> str:
+def kg_get_entity_info(kg_instance: KnowledgeGraph, entity_type: str, entity_id: str) -> str:
     """
     Get detailed information about an entity in the Knowledge Graph
     
     Args:
+        kg_instance: The KnowledgeGraph instance to use.
         entity_type: Type of entity (Pod, PVC, PV, Drive, Node, etc.)
-        entity_id: ID or name of the entity
+        entity_id: ID or name of the entity (e.g., "my-pod" or "Pod:my-pod-id")
         
     Returns:
         str: JSON serialized entity details with attributes and relationships
     """
-    kg = get_knowledge_graph()
+    kg = kg_instance
     
-    # Construct the full node_id if only name was provided
-    if ':' not in entity_id:
-        node_id = f"{entity_type}:{entity_id}"
-    else:
-        node_id = entity_id
-    
-    # Check if node exists in graph
-    if not kg.graph.has_node(node_id):
-        # Try to find by name or uuid attribute
-        found = False
-        for n_id, attrs in kg.graph.nodes(data=True):
-            if (attrs.get('entity_type') == entity_type and 
-                (attrs.get('name') == entity_id or attrs.get('uuid') == entity_id)):
-                node_id = n_id
-                found = True
-                break
-        
-        if not found:
-            return json.dumps({"error": f"Entity not found: {entity_type}:{entity_id}"})
+    node_id = _find_node_id(kg, entity_type, entity_id)
+
+    if node_id is None:
+        return json.dumps({"error": f"Entity not found: {entity_type} with ID/name '{entity_id}'"})
     
     # Get node attributes
     node_attrs = dict(kg.graph.nodes[node_id])
@@ -134,40 +122,26 @@ def kg_get_entity_info(entity_type: str, entity_id: str) -> str:
     return json.dumps(result, indent=2)
 
 @tool
-def kg_get_related_entities(entity_type: str, entity_id: str, relationship_type: str = None, max_depth: int = 1) -> str:
+def kg_get_related_entities(kg_instance: KnowledgeGraph, entity_type: str, entity_id: str, relationship_type: str = None, max_depth: int = 1) -> str:
     """
     Get entities related to a target entity in the Knowledge Graph
     
     Args:
+        kg_instance: The KnowledgeGraph instance to use.
         entity_type: Type of entity (Pod, PVC, PV, Drive, Node, etc.)
-        entity_id: ID or name of the entity
+        entity_id: ID or name of the entity (e.g., "my-pod" or "Pod:my-pod-id")
         relationship_type: Optional relationship type to filter by
         max_depth: Maximum traversal depth (1 = direct relationships only)
         
     Returns:
         str: JSON serialized list of related entities
     """
-    kg = get_knowledge_graph()
+    kg = kg_instance
     
-    # Construct the full node_id if only name was provided
-    if ':' not in entity_id:
-        node_id = f"{entity_type}:{entity_id}"
-    else:
-        node_id = entity_id
-    
-    # Check if node exists in graph
-    if not kg.graph.has_node(node_id):
-        # Try to find by name or uuid attribute
-        found = False
-        for n_id, attrs in kg.graph.nodes(data=True):
-            if (attrs.get('entity_type') == entity_type and 
-                (attrs.get('name') == entity_id or attrs.get('uuid') == entity_id)):
-                node_id = n_id
-                found = True
-                break
-        
-        if not found:
-            return json.dumps({"error": f"Entity not found: {entity_type}:{entity_id}"})
+    node_id = _find_node_id(kg, entity_type, entity_id)
+
+    if node_id is None:
+        return json.dumps({"error": f"Entity not found: {entity_type} with ID/name '{entity_id}'"})
     
     # Find related entities recursively up to max_depth
     related_entities = []
@@ -249,18 +223,19 @@ def kg_get_related_entities(entity_type: str, entity_id: str, relationship_type:
     }, indent=2)
 
 @tool
-def kg_get_all_issues(severity: str = None, issue_type: str = None) -> str:
+def kg_get_all_issues(kg_instance: KnowledgeGraph, severity: str = None, issue_type: str = None) -> str:
     """
     Get all issues from the Knowledge Graph, optionally filtered by severity or type
     
     Args:
+        kg_instance: The KnowledgeGraph instance to use.
         severity: Optional filter by issue severity (critical, high, medium, low)
         issue_type: Optional filter by issue type (disk_health, permission, etc.)
         
     Returns:
         str: JSON serialized list of issues with related entities
     """
-    kg = get_knowledge_graph()
+    kg = kg_instance
     
     # Get all issues based on filters
     if severity and issue_type:
@@ -305,12 +280,13 @@ def kg_get_all_issues(severity: str = None, issue_type: str = None) -> str:
     return json.dumps(result, indent=2)
 
 @tool
-def kg_find_path(source_entity_type: str, source_entity_id: str, 
+def kg_find_path(kg_instance: KnowledgeGraph, source_entity_type: str, source_entity_id: str,
                 target_entity_type: str, target_entity_id: str) -> str:
     """
     Find the shortest path between two entities in the Knowledge Graph
     
     Args:
+        kg_instance: The KnowledgeGraph instance to use.
         source_entity_type: Type of source entity (Pod, PVC, PV, Drive, Node, etc.)
         source_entity_id: ID or name of the source entity
         target_entity_type: Type of target entity (Pod, PVC, PV, Drive, Node, etc.)
@@ -319,36 +295,16 @@ def kg_find_path(source_entity_type: str, source_entity_id: str,
     Returns:
         str: JSON serialized path between entities with relationship details
     """
-    kg = get_knowledge_graph()
+    kg = kg_instance
     
-    # Construct node IDs
-    source_node_id = f"{source_entity_type}:{source_entity_id}"
-    target_node_id = f"{target_entity_type}:{target_entity_id}"
-    
-    # Check if nodes exist
-    if not kg.graph.has_node(source_node_id):
-        # Try to find by name or uuid
-        for n_id, attrs in kg.graph.nodes(data=True):
-            if (attrs.get('entity_type') == source_entity_type and 
-                (attrs.get('name') == source_entity_id or attrs.get('uuid') == source_entity_id)):
-                source_node_id = n_id
-                break
-    
-    if not kg.graph.has_node(target_node_id):
-        # Try to find by name or uuid
-        for n_id, attrs in kg.graph.nodes(data=True):
-            if (attrs.get('entity_type') == target_entity_type and 
-                (attrs.get('name') == target_entity_id or attrs.get('uuid') == target_entity_id)):
-                target_node_id = n_id
-                break
-    
-    # Return error if either node is not found
-    if not kg.graph.has_node(source_node_id):
-        return json.dumps({"error": f"Source entity not found: {source_entity_type}:{source_entity_id}"})
-    
-    if not kg.graph.has_node(target_node_id):
-        return json.dumps({"error": f"Target entity not found: {target_entity_type}:{target_entity_id}"})
-    
+    source_node_id = _find_node_id(kg, source_entity_type, source_entity_id)
+    if source_node_id is None:
+        return json.dumps({"error": f"Source entity not found: {source_entity_type} with ID/name '{source_entity_id}'"})
+
+    target_node_id = _find_node_id(kg, target_entity_type, target_entity_id)
+    if target_node_id is None:
+        return json.dumps({"error": f"Target entity not found: {target_entity_type} with ID/name '{target_entity_id}'"})
+
     # Find shortest path
     path_nodes = kg.find_path(source_node_id, target_node_id)
     
@@ -421,14 +377,17 @@ def kg_find_path(source_entity_type: str, source_entity_id: str,
     return json.dumps(result, indent=2)
 
 @tool
-def kg_get_summary() -> str:
+def kg_get_summary(kg_instance: KnowledgeGraph) -> str:
     """
     Get a summary of the Knowledge Graph including entity counts and issues
     
+    Args:
+        kg_instance: The KnowledgeGraph instance to use.
+
     Returns:
         str: JSON serialized summary of the Knowledge Graph
     """
-    kg = get_knowledge_graph()
+    kg = kg_instance
     summary = kg.get_summary()
     
     # Enhance with issue types distribution
@@ -446,14 +405,17 @@ def kg_get_summary() -> str:
     return json.dumps(result, indent=2)
 
 @tool
-def kg_analyze_issues() -> str:
+def kg_analyze_issues(kg_instance: KnowledgeGraph) -> str:
     """
     Analyze issues in the Knowledge Graph to identify patterns and root causes
     
+    Args:
+        kg_instance: The KnowledgeGraph instance to use.
+
     Returns:
         str: JSON serialized analysis results with potential root causes and fix plans
     """
-    kg = get_knowledge_graph()
+    kg = kg_instance
     
     # Run analysis
     analysis = kg.analyze_issues()
@@ -470,18 +432,19 @@ def kg_analyze_issues() -> str:
     return json.dumps(result, indent=2)
 
 @tool
-def kg_print_graph(include_details: bool = True, include_issues: bool = True) -> str:
+def kg_print_graph(kg_instance: KnowledgeGraph, include_details: bool = True, include_issues: bool = True) -> str:
     """
     Get a human-friendly formatted representation of the Knowledge Graph
     
     Args:
+        kg_instance: The KnowledgeGraph instance to use.
         include_details: Whether to include detailed entity information
         include_issues: Whether to include issues in the output
         
     Returns:
         str: Formatted representation of the Knowledge Graph
     """
-    kg = get_knowledge_graph()
+    kg = kg_instance
     return kg.print_graph(
         include_detailed_entities=include_details,
         include_issues=include_issues,

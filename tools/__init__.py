@@ -10,7 +10,7 @@ This package provides a comprehensive set of tools organized by category:
 """
 
 # Import main registry functions for easy access
-from tools.registry import (
+from .registry import ( # Relative import
     get_all_tools,
     get_knowledge_graph_tools,
     get_kubernetes_tools,
@@ -23,16 +23,13 @@ from tools.registry import (
 )
 
 # Import core utilities
-from tools.core.config import (
-    INTERACTIVE_MODE,
-    CONFIG_DATA,
+from .core.config import ( # Relative import
     validate_command,
     execute_command
+    # INTERACTIVE_MODE, CONFIG_DATA removed
 )
 
-from tools.core.knowledge_graph import (
-    initialize_knowledge_graph,
-    get_knowledge_graph,
+from .core.knowledge_graph import ( # Relative import
     kg_get_entity_info,
     kg_get_related_entities,
     kg_get_all_issues,
@@ -40,10 +37,11 @@ from tools.core.knowledge_graph import (
     kg_get_summary,
     kg_analyze_issues,
     kg_print_graph
+    # initialize_knowledge_graph, get_knowledge_graph removed
 )
 
 # Import all individual tools for backward compatibility
-from tools.kubernetes.core import (
+from .kubernetes.core import ( # Relative import
     kubectl_get,
     kubectl_describe,
     kubectl_apply,
@@ -52,7 +50,7 @@ from tools.kubernetes.core import (
     kubectl_logs
 )
 
-from tools.kubernetes.csi_baremetal import (
+from .kubernetes.csi_baremetal import ( # Relative import
     kubectl_get_drive,
     kubectl_get_csibmnode,
     kubectl_get_availablecapacity,
@@ -61,15 +59,15 @@ from tools.kubernetes.csi_baremetal import (
     kubectl_get_csidrivers
 )
 
-from tools.diagnostics.hardware import (
+from .diagnostics.hardware import ( # Relative import
     smartctl_check,
     fio_performance_test,
     fsck_check,
-    xfs_repair_check,  # Added xfs_repair_check for XFS file system checks
+    xfs_repair_check,
     ssh_execute
 )
 
-from tools.diagnostics.system import (
+from .diagnostics.system import ( # Relative import
     df_command,
     lsblk_command,
     mount_command,
@@ -90,12 +88,12 @@ __all__ = [
     'define_remediation_tools',
     
     # Core utilities
-    'INTERACTIVE_MODE',
-    'CONFIG_DATA',
+    # 'INTERACTIVE_MODE', # Removed
+    # 'CONFIG_DATA', # Removed
     'validate_command',
     'execute_command',
-    'initialize_knowledge_graph',
-    'get_knowledge_graph',
+    # 'initialize_knowledge_graph', # Removed
+    # 'get_knowledge_graph', # Removed
     
     # Knowledge Graph tools
     'kg_get_entity_info',

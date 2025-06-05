@@ -8,6 +8,7 @@ This module contains utilities for generating investigation plans using rule-bas
 import logging
 from typing import Dict, List, Any, Set
 from knowledge_graph import KnowledgeGraph
+from phases.utils import validate_knowledge_graph, handle_exception
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +32,7 @@ class RuleBasedPlanGenerator:
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         
         # Validate knowledge_graph is a KnowledgeGraph instance
-        if not hasattr(self.kg, 'graph'):
-            self.logger.error(f"Invalid Knowledge Graph: missing 'graph' attribute")
-            raise ValueError(f"Invalid Knowledge Graph: missing 'graph' attribute")
-        
-        if not hasattr(self.kg, 'get_all_issues'):
-            self.logger.error(f"Invalid Knowledge Graph: missing 'get_all_issues' method")
-            raise ValueError(f"Invalid Knowledge Graph: missing 'get_all_issues' method")
+        validate_knowledge_graph(self.kg, self.__class__.__name__)
     
     def generate_preliminary_steps(self, pod_name: str, namespace: str, volume_path: str,
                                   target_entities: Dict[str, str], issues_analysis: Dict[str, Any],
@@ -71,7 +66,7 @@ class RuleBasedPlanGenerator:
             return preliminary_steps
             
         except Exception as e:
-            self.logger.error(f"Error generating rule-based preliminary steps: {str(e)}")
+            error_msg = handle_exception("generate_preliminary_steps", e, self.logger)
             return self._generate_basic_fallback_steps()
     
     def _determine_investigation_priority(self, issues_analysis: Dict[str, Any], 
@@ -90,18 +85,71 @@ class RuleBasedPlanGenerator:
         """
         priorities = []
         
-        # Add priorities based on historical experience if available
-        if historical_experience:
-            for experience in historical_experience:
-                attributes = experience.get('attributes', {})
-                root_cause = attributes.get('root_cause')
-                if root_cause:
-                    if 'hardware failure' in root_cause.lower():
-                        priorities.append("hardware_verification")
-                    elif 'network' in root_cause.lower():
-                        priorities.append("network_verification")
-                    elif 'configuration' in root_cause.lower():
-                        priorities.append("config_verification")
+        # Add priorities from historical experience
+        priorities.extend(self._get_priorities_from_historical_experience(historical_experience))
+        
+        # Add priorities from critical issues on target entities
+        priorities.extend(self._get_priorities_from_critical_issues(issues_analysis, target_entities))
+        
+        # Add priorities from high severity issues
+        priorities.extend(self._get_priorities_from_high_issues(issues_analysis, target_entities))
+        
+        # Add lower priority issues
+        priorities.extend(self._get_priorities_from_medium_issues(issues_analysis))
+        
+        # Always include basic investigation and hardware verification as fallback
+        if "basic_investigation" not in priorities:
+            priorities.append("basic_investigation")
+            
+        if "hardware_verification" not in priorities:
+            priorities.append("hardware_verification")
+        
+        return priorities
+    
+    def _get_priorities_from_historical_experience(self, historical_experience: List[Dict[str, Any]]) -> List[str]:
+        """
+        Extract investigation priorities from historical experience data
+        
+        Args:
+            historical_experience: Historical experience data
+            
+        Returns:
+            List[str]: Priorities derived from historical experience
+        """
+        priorities = []
+        
+        if not historical_experience:
+            return priorities
+            
+        for experience in historical_experience:
+            attributes = experience.get('attributes', {})
+            root_cause = attributes.get('root_cause', '').lower()
+            
+            if not root_cause:
+                continue
+                
+            if 'hardware failure' in root_cause:
+                priorities.append("hardware_verification")
+            elif 'network' in root_cause:
+                priorities.append("network_verification")
+            elif 'configuration' in root_cause:
+                priorities.append("config_verification")
+        
+        return priorities
+    
+    def _get_priorities_from_critical_issues(self, issues_analysis: Dict[str, Any], 
+                                           target_entities: Dict[str, str]) -> List[str]:
+        """
+        Extract investigation priorities from critical issues
+        
+        Args:
+            issues_analysis: Analysis of existing issues
+            target_entities: Dictionary of target entity IDs
+            
+        Returns:
+            List[str]: Priorities derived from critical issues
+        """
+        priorities = []
         
         # High priority: Critical issues affecting target entities
         target_entity_ids = set(target_entities.values())
@@ -116,8 +164,25 @@ class RuleBasedPlanGenerator:
         # Medium-high priority: Critical issues on any entities  
         if issues_analysis["by_severity"]["critical"]:
             priorities.append("critical_system_issues")
+            
+        return priorities
+    
+    def _get_priorities_from_high_issues(self, issues_analysis: Dict[str, Any], 
+                                       target_entities: Dict[str, str]) -> List[str]:
+        """
+        Extract investigation priorities from high severity issues
+        
+        Args:
+            issues_analysis: Analysis of existing issues
+            target_entities: Dictionary of target entity IDs
+            
+        Returns:
+            List[str]: Priorities derived from high severity issues
+        """
+        priorities = []
         
         # Medium priority: High severity issues on target entities
+        target_entity_ids = set(target_entities.values())
         high_issues_on_targets = [
             issue for issue in issues_analysis["by_severity"]["high"]
             if issue.get('node_id') in target_entity_ids
@@ -126,17 +191,27 @@ class RuleBasedPlanGenerator:
         if high_issues_on_targets:
             priorities.append("high_target_issues")
         
-        # Lower priorities
+        # Lower priority: High severity issues on any entities
         if issues_analysis["by_severity"]["high"]:
             priorities.append("high_system_issues")
+            
+        return priorities
+    
+    def _get_priorities_from_medium_issues(self, issues_analysis: Dict[str, Any]) -> List[str]:
+        """
+        Extract investigation priorities from medium severity issues
+        
+        Args:
+            issues_analysis: Analysis of existing issues
+            
+        Returns:
+            List[str]: Priorities derived from medium severity issues
+        """
+        priorities = []
         
         if issues_analysis["by_severity"]["medium"]:
             priorities.append("medium_issues")
-        
-        # Always include basic investigation
-        priorities.append("basic_investigation")
-        priorities.append("hardware_verification")
-        
+            
         return priorities
     
     def _generate_priority_steps(self, target_entities: Dict[str, str], 
@@ -155,15 +230,30 @@ class RuleBasedPlanGenerator:
         Returns:
             List[Dict[str, Any]]: List of preliminary investigation steps
         """
-        steps = []
-        step_number = 1
         all_potential_steps = []
         
-        # Collect potential steps based on priorities
+        # Add steps for each priority category
+        self._add_critical_issue_steps(all_potential_steps, priorities, target_entities)
+        self._add_hardware_verification_steps(all_potential_steps, priorities, target_entities)
+        self._add_pod_investigation_steps(all_potential_steps, target_entities)
+        self._add_drive_investigation_steps(all_potential_steps, target_entities)
+        self._add_network_verification_steps(all_potential_steps, priorities)
         
-        # Critical issues analysis - highest priority
+        # Sort steps by priority score and limit to max_steps
+        return self._select_and_format_steps(all_potential_steps, max_steps)
+    
+    def _add_critical_issue_steps(self, steps_list: List[Dict[str, Any]], 
+                                priorities: List[str], target_entities: Dict[str, str]) -> None:
+        """
+        Add steps for critical issues analysis
+        
+        Args:
+            steps_list: List to add steps to
+            priorities: List of investigation priorities
+            target_entities: Dictionary of target entity IDs
+        """
         if "critical_target_issues" in priorities or "critical_system_issues" in priorities:
-            all_potential_steps.append({
+            steps_list.append({
                 "step": None,  # Will be set later
                 "description": "Get all critical issues that may be causing volume I/O errors",
                 "tool": "kg_get_all_issues",
@@ -173,49 +263,85 @@ class RuleBasedPlanGenerator:
                 "category": "issue_analysis",
                 "priority_score": 100  # Highest priority
             })
+    
+    def _add_hardware_verification_steps(self, steps_list: List[Dict[str, Any]], 
+                                       priorities: List[str], target_entities: Dict[str, str]) -> None:
+        """
+        Add steps for hardware verification
         
-        # Hardware verification - from historical experience or critical issues
+        Args:
+            steps_list: List to add steps to
+            priorities: List of investigation priorities
+            target_entities: Dictionary of target entity IDs
+        """
         if "hardware_verification" in priorities:
-            all_potential_steps.append({
+            node = target_entities.get("node", "").split(":")[-1] if "node" in target_entities else "all"
+            steps_list.append({
                 "step": None,
                 "description": "Check disk health on the affected node",
                 "tool": "check_disk_health",
-                "arguments": {"node": target_entities.get("node", "").split(":")[-1] if "node" in target_entities else "all"},
+                "arguments": {"node": node},
                 "expected": "Disk status and hardware errors",
                 "priority": "high",
                 "category": "hardware_investigation",
                 "priority_score": 90
             })
+    
+    def _add_pod_investigation_steps(self, steps_list: List[Dict[str, Any]], 
+                                   target_entities: Dict[str, str]) -> None:
+        """
+        Add steps for pod-specific investigation
         
-        # Pod-specific investigation for the problem pod
+        Args:
+            steps_list: List to add steps to
+            target_entities: Dictionary of target entity IDs
+        """
         if "pod" in target_entities:
-            all_potential_steps.append({
+            pod_id = target_entities["pod"].split(":")[-1]
+            steps_list.append({
                 "step": None,
                 "description": f"Get detailed information about the problem pod and its current state",
                 "tool": "kg_get_entity_info",
-                "arguments": {"entity_type": "Pod", "entity_id": target_entities["pod"].split(":")[-1]},
+                "arguments": {"entity_type": "Pod", "entity_id": pod_id},
                 "expected": "Pod configuration, status, and any detected issues",
                 "priority": "critical",
                 "category": "entity_investigation",
                 "priority_score": 85
             })
+    
+    def _add_drive_investigation_steps(self, steps_list: List[Dict[str, Any]], 
+                                     target_entities: Dict[str, str]) -> None:
+        """
+        Add steps for drive-specific investigation
         
-        # Drive-specific investigation
+        Args:
+            steps_list: List to add steps to
+            target_entities: Dictionary of target entity IDs
+        """
         if "drive" in target_entities:
-            all_potential_steps.append({
+            drive_id = target_entities["drive"].split(":")[-1]
+            steps_list.append({
                 "step": None,
                 "description": "Get detailed Drive information including health status and metrics",
                 "tool": "kg_get_entity_info",
-                "arguments": {"entity_type": "Drive", "entity_id": target_entities["drive"].split(":")[-1]},
+                "arguments": {"entity_type": "Drive", "entity_id": drive_id},
                 "expected": "Drive health status, SMART data, and any hardware issues",
                 "priority": "high",
                 "category": "hardware_investigation",
                 "priority_score": 80
             })
+    
+    def _add_network_verification_steps(self, steps_list: List[Dict[str, Any]], 
+                                      priorities: List[str]) -> None:
+        """
+        Add steps for network verification
         
-        # Network verification if prioritized from historical experience
+        Args:
+            steps_list: List to add steps to
+            priorities: List of investigation priorities
+        """
         if "network_verification" in priorities:
-            all_potential_steps.append({
+            steps_list.append({
                 "step": None,
                 "description": "Check network connectivity between pod and storage",
                 "tool": "kg_query_relationships",
@@ -225,20 +351,33 @@ class RuleBasedPlanGenerator:
                 "category": "network_investigation",
                 "priority_score": 75
             })
+    
+    def _select_and_format_steps(self, all_potential_steps: List[Dict[str, Any]], 
+                               max_steps: int) -> List[Dict[str, Any]]:
+        """
+        Select and format steps based on priority score
         
+        Args:
+            all_potential_steps: List of all potential steps
+            max_steps: Maximum number of steps to select
+            
+        Returns:
+            List[Dict[str, Any]]: Selected and formatted steps
+        """
         # Sort steps by priority score
         all_potential_steps.sort(key=lambda x: x.get("priority_score", 0), reverse=True)
         
         # Take only the top max_steps steps
         selected_steps = all_potential_steps[:max_steps]
         
-        # Assign step numbers
+        # Format steps with step numbers
+        formatted_steps = []
         for i, step in enumerate(selected_steps, 1):
             step["step"] = i
             step.pop("priority_score", None)  # Remove the priority score used for sorting
-            steps.append(step)
+            formatted_steps.append(step)
         
-        return steps
+        return formatted_steps
     
     def _generate_basic_fallback_steps(self) -> List[Dict[str, Any]]:
         """

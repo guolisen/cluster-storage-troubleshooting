@@ -8,8 +8,9 @@ This module contains utilities for generating investigation plans using LLMs.
 import logging
 import json
 import inspect
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from langchain_openai import ChatOpenAI
+from phases.utils import handle_exception, format_json_safely
 
 logger = logging.getLogger(__name__)
 
@@ -41,20 +42,24 @@ class LLMPlanGenerator:
             ChatOpenAI: Initialized LLM instance or None if initialization fails
         """
         try:
+            # Get LLM configuration
+            llm_config = self.config_data.get('llm', {})
+            
             # Initialize LLM with configuration
             return ChatOpenAI(
-                model=self.config_data.get('llm', {}).get('model', 'gpt-4'),
-                api_key=self.config_data.get('llm', {}).get('api_key', None),
-                base_url=self.config_data.get('llm', {}).get('api_endpoint', None),
-                temperature=self.config_data.get('llm', {}).get('temperature', 0.1),
-                max_tokens=self.config_data.get('llm', {}).get('max_tokens', 4000)
+                model=llm_config.get('model', 'gpt-4'),
+                api_key=llm_config.get('api_key', None),
+                base_url=llm_config.get('api_endpoint', None),
+                temperature=llm_config.get('temperature', 0.1),
+                max_tokens=llm_config.get('max_tokens', 4000)
             )
         except Exception as e:
-            self.logger.error(f"Error initializing LLM: {str(e)}")
+            error_msg = handle_exception("_initialize_llm", e, self.logger)
             return None
     
     def refine_plan(self, draft_plan: List[Dict[str, Any]], pod_name: str, namespace: str, 
-                   volume_path: str, kg_context: Dict[str, Any], phase1_tools: List[Dict[str, Any]]) -> str:
+                   volume_path: str, kg_context: Dict[str, Any], phase1_tools: List[Dict[str, Any]],
+                   message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
         """
         Refine a draft investigation plan using LLM
         
@@ -65,56 +70,59 @@ class LLMPlanGenerator:
             volume_path: Path of the volume with I/O error
             kg_context: Knowledge Graph context with historical experience
             phase1_tools: Complete Phase1 tool registry with names, descriptions, parameters, and invocation methods
+            message_list: Optional message list for chat mode
             
         Returns:
-            str: Refined Investigation Plan
+            Tuple[str, List[Dict[str, str]]]: (Refined Investigation Plan, Updated message list)
         """
         try:
-            # Step 1: Generate system prompt for refinement
+            # Prepare data for LLM
             system_prompt = self._generate_refinement_system_prompt()
+            user_message = self._prepare_user_message(
+                draft_plan, pod_name, namespace, volume_path, kg_context, phase1_tools
+            )
             
-            # Step 2: Format input data for LLM context
-            def json_serializer(obj):
-                """Custom JSON serializer to handle non-serializable objects"""
-                try:
-                    # Try to convert to a simple dict first
-                    if hasattr(obj, "__dict__"):
-                        return obj.__dict__
-                    # Handle sets
-                    elif isinstance(obj, set):
-                        return list(obj)
-                    # Handle other non-serializable types
-                    else:
-                        return str(obj)
-                except:
-                    return str(obj)
+            # Prepare message list for LLM
+            messages = self._prepare_messages(system_prompt, user_message, message_list)
             
-            try:
-                kg_context_str = json.dumps(kg_context, indent=2, default=json_serializer)
-            except Exception as e:
-                self.logger.warning(f"Error serializing Knowledge Graph context: {str(e)}")
-                # Fallback to a simpler representation
-                kg_context_str = str(kg_context)
-
-            # Format draft plan for LLM input
-            try:
-                draft_plan_str = json.dumps(draft_plan, indent=2, default=json_serializer)
-            except Exception as e:
-                self.logger.warning(f"Error serializing draft plan: {str(e)}")
-                draft_plan_str = str(draft_plan)
-                
-            # Extract and format historical experience data from kg_context
-            historical_experiences_formatted = self._format_historical_experiences(kg_context)
+            # Call LLM and process response
+            return self._call_llm_and_process_response(
+                messages, pod_name, namespace, volume_path, message_list, user_message
+            )
             
-            # Format phase1_tools for LLM input
-            try:
-                phase1_tools_str = json.dumps(phase1_tools, indent=2, default=json_serializer)
-            except Exception as e:
-                self.logger.warning(f"Error serializing Phase1 tools: {str(e)}")
-                phase1_tools_str = str(phase1_tools)
+        except Exception as e:
+            error_msg = handle_exception("refine_plan", e, self.logger)
+            return self._handle_plan_generation_error(
+                error_msg, pod_name, namespace, volume_path, message_list, user_message
+            )
+    
+    def _prepare_user_message(self, draft_plan: List[Dict[str, Any]], pod_name: str, 
+                            namespace: str, volume_path: str, kg_context: Dict[str, Any], 
+                            phase1_tools: List[Dict[str, Any]]) -> str:
+        """
+        Prepare user message for LLM with formatted data
+        
+        Args:
+            draft_plan: Draft plan from rule-based generator and static steps
+            pod_name: Name of the pod with the error
+            namespace: Namespace of the pod
+            volume_path: Path of the volume with I/O error
+            kg_context: Knowledge Graph context with historical experience
+            phase1_tools: Complete Phase1 tool registry
             
-            # Step 3: Prepare user message for refinement task
-            user_message = f"""Refine the draft Investigation Plan for volume read/write errors in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
+        Returns:
+            str: Formatted user message
+        """
+        # Format input data for LLM context
+        kg_context_str = format_json_safely(kg_context, fallback_message="Knowledge Graph context (simplified format)")
+        draft_plan_str = format_json_safely(draft_plan, fallback_message="Draft plan (simplified format)")
+        phase1_tools_str = format_json_safely(phase1_tools, fallback_message="Phase1 tools (simplified format)")
+        
+        # Extract and format historical experience data from kg_context
+        historical_experiences_formatted = self._format_historical_experiences(kg_context)
+        
+        # Prepare user message for refinement task
+        return f"""Refine the draft Investigation Plan for volume read/write errors in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
 this plan will be used to troubleshoot the issue in next phases. The next phase will execute or run tool according to the steps in this plan.
 
 KNOWLEDGE GRAPH CONTEXT(current base knowledge and some hardware information): 
@@ -147,29 +155,135 @@ Step 1: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
 Step 2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
 ...
 """
+    
+    def _prepare_messages(self, system_prompt: str, user_message: str, 
+                        message_list: List[Dict[str, str]] = None) -> List[Dict[str, str]]:
+        """
+        Prepare message list for LLM
+        
+        Args:
+            system_prompt: System prompt for LLM
+            user_message: User message for LLM
+            message_list: Optional existing message list
             
-            # Step 4: Call LLM
-            messages = [
+        Returns:
+            List[Dict[str, str]]: Prepared message list
+        """
+        if message_list is None:
+            # Create new message list
+            return [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ]
+        
+        # Use existing message list
+        # If the last message is from the user, we need to regenerate the plan
+        if message_list[-1]["role"] == "user":
+            # Keep the system prompt and add the new user message
+            return message_list
+        else:
+            # This is the first call, initialize with system prompt and user message
+            return [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+    
+    def _call_llm_and_process_response(self, messages: List[Dict[str, str]], 
+                                     pod_name: str, namespace: str, volume_path: str,
+                                     message_list: List[Dict[str, str]] = None,
+                                     user_message: str = "") -> Tuple[str, List[Dict[str, str]]]:
+        """
+        Call LLM and process the response
+        
+        Args:
+            messages: Messages for LLM
+            pod_name: Name of the pod with the error
+            namespace: Namespace of the pod
+            volume_path: Path of the volume with I/O error
+            message_list: Optional message list for chat mode
+            user_message: User message for fallback
             
-            self.logger.info("Calling LLM to generate investigation plan")
-            response = self.llm.invoke(messages)
+        Returns:
+            Tuple[str, List[Dict[str, str]]]: (Refined Investigation Plan, Updated message list)
+        """
+        self.logger.info("Calling LLM to generate investigation plan")
+        response = self.llm.invoke(messages)
+        
+        # Extract and format the plan
+        plan_text = response.content
+        
+        # Ensure the plan has the required format
+        if "Investigation Plan:" not in plan_text:
+            plan_text = self._format_raw_plan(plan_text, pod_name, namespace, volume_path)
+        
+        # Update message list
+        updated_message_list = self._update_message_list(messages, message_list, plan_text)
+        
+        self.logger.info("Successfully generated LLM-based investigation plan")
+        return plan_text, updated_message_list
+    
+    def _update_message_list(self, messages: List[Dict[str, str]], 
+                           message_list: List[Dict[str, str]], 
+                           plan_text: str) -> List[Dict[str, str]]:
+        """
+        Update message list with LLM response
+        
+        Args:
+            messages: Messages used for LLM
+            message_list: Optional existing message list
+            plan_text: Generated plan text
             
-            # Step 5: Extract and format the plan
-            plan_text = response.content
+        Returns:
+            List[Dict[str, str]]: Updated message list
+        """
+        if message_list is None:
+            return messages + [{"role": "assistant", "content": plan_text}]
+        
+        # If the last message is from the user, append the assistant response
+        if message_list[-1]["role"] == "user":
+            message_list.append({"role": "assistant", "content": plan_text})
+        else:
+            # Replace the last message if it's from the assistant
+            message_list[-1] = {"role": "assistant", "content": plan_text}
+        
+        return message_list
+    
+    def _handle_plan_generation_error(self, error_msg: str, pod_name: str, namespace: str, 
+                                    volume_path: str, message_list: List[Dict[str, str]] = None,
+                                    user_message: str = "") -> Tuple[str, List[Dict[str, str]]]:
+        """
+        Handle errors during plan generation
+        
+        Args:
+            error_msg: Error message
+            pod_name: Name of the pod with the error
+            namespace: Namespace of the pod
+            volume_path: Path of the volume with I/O error
+            message_list: Optional message list for chat mode
+            user_message: User message for fallback
             
-            # Step 6: Ensure the plan has the required format
-            if "Investigation Plan:" not in plan_text:
-                plan_text = self._format_raw_plan(plan_text, pod_name, namespace, volume_path)
-            
-            self.logger.info("Successfully generated LLM-based investigation plan")
-            return plan_text
-            
-        except Exception as e:
-            self.logger.error(f"Error in LLM-based plan generation: {str(e)}")
-            return self._generate_basic_fallback_plan(pod_name, namespace, volume_path)
+        Returns:
+            Tuple[str, List[Dict[str, str]]]: (Fallback plan, Updated message list)
+        """
+        # Generate fallback plan
+        fallback_plan = self._generate_basic_fallback_plan(pod_name, namespace, volume_path)
+        
+        # Add fallback plan to message list
+        if message_list is None:
+            message_list = [
+                {"role": "system", "content": self._generate_refinement_system_prompt()},
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": fallback_plan}
+            ]
+        else:
+            # If the last message is from the user, append the assistant response
+            if message_list[-1]["role"] == "user":
+                message_list.append({"role": "assistant", "content": fallback_plan})
+            else:
+                # Replace the last message if it's from the assistant
+                message_list[-1] = {"role": "assistant", "content": fallback_plan}
+        
+        return fallback_plan, message_list
     
     def _generate_refinement_system_prompt(self) -> str:
         """
@@ -260,30 +374,42 @@ The plan must be comprehensive, logically structured, and include all necessary 
                 return "No historical experience data available."
             
             # Format historical experiences in a clear, structured way
-            formatted_entries = []
+            return self._format_historical_experience_entries(historical_experiences)
             
-            for idx, exp in enumerate(historical_experiences, 1):
-                # Get attributes from the experience
-                attributes = exp.get('attributes', {})
-                phenomenon = attributes.get('phenomenon', 'Unknown phenomenon')
-                root_cause = attributes.get('root_cause', 'Unknown root cause')
-                localization_method = attributes.get('localization_method', 'No localization method provided')
-                resolution_method = attributes.get('resolution_method', 'No resolution method provided')
-                
-                # Format the entry
-                entry = f"""HISTORICAL EXPERIENCE #{idx}:
+        except Exception as e:
+            error_msg = handle_exception("_format_historical_experiences", e, self.logger)
+            return "Error formatting historical experience data."
+    
+    def _format_historical_experience_entries(self, experiences: List[Dict[str, Any]]) -> str:
+        """
+        Format historical experience entries
+        
+        Args:
+            experiences: List of historical experience entries
+            
+        Returns:
+            str: Formatted entries
+        """
+        formatted_entries = []
+        
+        for idx, exp in enumerate(experiences, 1):
+            # Get attributes from the experience
+            attributes = exp.get('attributes', {})
+            phenomenon = attributes.get('phenomenon', 'Unknown phenomenon')
+            root_cause = attributes.get('root_cause', 'Unknown root cause')
+            localization_method = attributes.get('localization_method', 'No localization method provided')
+            resolution_method = attributes.get('resolution_method', 'No resolution method provided')
+            
+            # Format the entry
+            entry = f"""HISTORICAL EXPERIENCE #{idx}:
 Phenomenon: {phenomenon}
 Root Cause: {root_cause}
 Localization Method: {localization_method}
 Resolution Method: {resolution_method}
 """
-                formatted_entries.append(entry)
-            
-            return "\n".join(formatted_entries)
-            
-        except Exception as e:
-            self.logger.warning(f"Error formatting historical experiences: {str(e)}")
-            return "Error formatting historical experience data."
+            formatted_entries.append(entry)
+        
+        return "\n".join(formatted_entries)
     
     def _format_draft_plan_as_fallback(self, draft_plan: List[Dict[str, Any]]) -> str:
         """
@@ -300,18 +426,34 @@ Resolution Method: {resolution_method}
             
             # Add the draft plan steps
             for step in draft_plan:
-                step_line = (
-                    f"Step {step['step']}: {step['description']} | "
-                    f"Tool: {step['tool']}({', '.join(f'{k}={repr(v)}' for k, v in step.get('arguments', {}).items())}) | "
-                    f"Expected: {step['expected']}"
-                )
+                step_line = self._format_step_line(step)
                 plan_lines.append(step_line)
             
             return "\n".join(plan_lines)
             
         except Exception as e:
-            self.logger.error(f"Error formatting draft plan as fallback: {str(e)}")
+            error_msg = handle_exception("_format_draft_plan_as_fallback", e, self.logger)
             return "Investigation Plan:\nError occurred during plan generation."
+    
+    def _format_step_line(self, step: Dict[str, Any]) -> str:
+        """
+        Format a step into a string line
+        
+        Args:
+            step: Step data
+            
+        Returns:
+            str: Formatted step line
+        """
+        # Format arguments
+        args_str = ', '.join(f'{k}={repr(v)}' for k, v in step.get('arguments', {}).items())
+        
+        # Format the step line
+        return (
+            f"Step {step['step']}: {step['description']} | "
+            f"Tool: {step['tool']}({args_str}) | "
+            f"Expected: {step['expected']}"
+        )
     
     def _generate_basic_fallback_plan(self, pod_name: str, namespace: str, volume_path: str) -> str:
         """
@@ -325,17 +467,5 @@ Resolution Method: {resolution_method}
         Returns:
             str: Basic fallback Investigation Plan
         """
-        basic_plan = f"""Investigation Plan:
-Target: Pod {namespace}/{pod_name}, Volume Path: {volume_path}
-Generated Steps: 4 basic steps (fallback mode)
-
-Step 1: Get all critical issues from Knowledge Graph | Tool: kg_get_all_issues(severity='critical') | Expected: List of critical issues affecting the system
-Step 2: Analyze existing issues and patterns | Tool: kg_analyze_issues() | Expected: Root cause analysis and issue relationships  
-Step 3: Get system overview | Tool: kg_get_summary() | Expected: Overall system health and entity statistics
-Step 4: Print complete Knowledge Graph for manual analysis | Tool: kg_print_graph(include_details=True, include_issues=True) | Expected: Full system visualization for troubleshooting
-
-Fallback Steps (if main steps fail):
-Step F1: Search for any Pod entities | Tool: kg_get_related_entities(entity_type='Pod', entity_id='any', max_depth=1) | Expected: List of all Pods | Trigger: entity_not_found
-Step F2: Search for any Drive entities | Tool: kg_get_related_entities(entity_type='Drive', entity_id='any', max_depth=1) | Expected: List of all Drives | Trigger: no_target_found
-"""
-        return basic_plan
+        from phases.utils import generate_basic_fallback_plan
+        return generate_basic_fallback_plan(pod_name, namespace, volume_path)

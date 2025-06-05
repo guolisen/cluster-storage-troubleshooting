@@ -15,6 +15,19 @@ except ImportError:
 
 class TestToolRegistry(unittest.TestCase):
 
+    def test_module_importable(self):
+        """Test that tools.registry module can be imported without syntax errors."""
+        try:
+            import tools.registry
+            # If the import works, we can consider this a basic pass.
+            # The module itself might do more complex imports that could fail,
+            # but a direct SyntaxError in tools.registry would be caught here.
+            self.assertTrue(True, "tools.registry imported successfully.")
+        except ImportError as e:
+            # This will catch syntax errors during import of tools.registry,
+            # or issues with its direct dependencies.
+            self.fail(f"Failed to import tools.registry: {e}")
+
     def find_tool_by_name(self, tools, name):
         """Helper to find a tool in a list, checking functools.partial wrapped functions."""
         for tool in tools:

@@ -180,9 +180,7 @@ def get_diagnostic_tools(config_data: Dict[str, Any], interactive_mode: bool) ->
     return _partial_config_tools(diag_tools_list, config_data, interactive_mode)
 
 def get_testing_tools() -> List[Callable[..., Any]]:
-    """
-    """
-    Get testing and validation tools. These tools do not require context arguments.
+    """Get testing and validation tools. These tools do not require context arguments.
     
     Returns:
         List[Callable[..., Any]]: List of testing tool callables.
@@ -253,7 +251,7 @@ def get_phase1_tools(kg_instance: KnowledgeGraph, config_data: Dict[str, Any], i
 def get_phase2_tools(kg_instance: KnowledgeGraph, config_data: Dict[str, Any], interactive_mode: bool) -> List[Callable[..., Any]]:
     """
     Get Phase 2 tools (Phase 1 + Action tools), with context partially applied.
-    
+
     Args:
         kg_instance: The KnowledgeGraph instance.
         config_data: Configuration data for command execution.
@@ -280,10 +278,10 @@ def get_phase2_tools(kg_instance: KnowledgeGraph, config_data: Dict[str, Any], i
 
 
 def get_remediation_tools(kg_instance: KnowledgeGraph, config_data: Dict[str, Any], interactive_mode: bool) -> List[Callable[..., Any]]:
-    """
-    Get tools needed for remediation and analysis phases, with context partially applied.
+    """Get tools needed for remediation and analysis phases, with context partially applied.
+
     This is the main function used by the troubleshooting system.
-    
+
     Args:
         kg_instance: The KnowledgeGraph instance.
         config_data: Configuration data for command execution.

@@ -7,16 +7,20 @@ and storage-specific operations.
 """
 
 import subprocess
+from typing import Dict, Any # Added typing imports
 from langchain_core.tools import tool
+from tools.core.config import execute_command # Added execute_command import
 
 @tool
-def kubectl_get_drive(drive_uuid: str = None, output_format: str = "wide") -> str:
+def kubectl_get_drive(drive_uuid: str = None, output_format: str = "wide", config_data: Dict[str, Any] = None, interactive_mode: bool = False) -> str:
     """
     Get CSI Baremetal drive information
     
     Args:
         drive_uuid: Drive UUID (optional, gets all drives if not specified)
         output_format: Output format (wide, yaml, json)
+        config_data: Configuration data for command execution.
+        interactive_mode: Flag for interactive mode.
         
     Returns:
         str: Command output showing drive status, health, path, etc.
@@ -28,22 +32,19 @@ def kubectl_get_drive(drive_uuid: str = None, output_format: str = "wide") -> st
     
     cmd.extend(["-o", output_format])
     
-    try:
-        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        return f"Error: {e.stderr}"
-    except Exception as e:
-        return f"Error executing kubectl get drive: {str(e)}"
+    purpose = f"Get CSI Baremetal drive(s) information, UUID: {drive_uuid if drive_uuid else 'all'}"
+    return execute_command(command_list=cmd, config_data=config_data, interactive_mode=interactive_mode, purpose=purpose, requires_approval=False)
 
 @tool
-def kubectl_get_csibmnode(node_name: str = None, output_format: str = "wide") -> str:
+def kubectl_get_csibmnode(node_name: str = None, output_format: str = "wide", config_data: Dict[str, Any] = None, interactive_mode: bool = False) -> str:
     """
     Get CSI Baremetal node information
     
     Args:
         node_name: Node name (optional, gets all nodes if not specified)
         output_format: Output format (wide, yaml, json)
+        config_data: Configuration data for command execution.
+        interactive_mode: Flag for interactive mode.
         
     Returns:
         str: Command output showing node mapping and drive associations
@@ -54,50 +55,44 @@ def kubectl_get_csibmnode(node_name: str = None, output_format: str = "wide") ->
         cmd.append(node_name)
     
     cmd.extend(["-o", output_format])
-    
-    try:
-        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        return f"Error: {e.stderr}"
-    except Exception as e:
-        return f"Error executing kubectl get csibmnode: {str(e)}"
+
+    purpose = f"Get CSI Baremetal node(s) information, Node: {node_name if node_name else 'all'}"
+    return execute_command(command_list=cmd, config_data=config_data, interactive_mode=interactive_mode, purpose=purpose, requires_approval=False)
 
 @tool
-def kubectl_get_availablecapacity(ac_name: str = None, output_format: str = "wide") -> str:
+def kubectl_get_availablecapacity(ac_name: str = None, output_format: str = "wide", config_data: Dict[str, Any] = None, interactive_mode: bool = False) -> str:
     """
     Get CSI Baremetal available capacity information
     
     Args:
         ac_name: Available capacity name (optional, gets all if not specified)
         output_format: Output format (wide, yaml, json)
+        config_data: Configuration data for command execution.
+        interactive_mode: Flag for interactive mode.
         
     Returns:
         str: Command output showing available capacity and storage class mapping
     """
-    cmd = ["kubectl", "get", "ac"]
+    cmd = ["kubectl", "get", "ac"] # ac is short for availablecapacity
     
     if ac_name:
         cmd.append(ac_name)
     
     cmd.extend(["-o", output_format])
-    
-    try:
-        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        return f"Error: {e.stderr}"
-    except Exception as e:
-        return f"Error executing kubectl get ac: {str(e)}"
+
+    purpose = f"Get CSI Baremetal available capacity information, Name: {ac_name if ac_name else 'all'}"
+    return execute_command(command_list=cmd, config_data=config_data, interactive_mode=interactive_mode, purpose=purpose, requires_approval=False)
 
 @tool
-def kubectl_get_logicalvolumegroup(lvg_name: str = None, output_format: str = "wide") -> str:
+def kubectl_get_logicalvolumegroup(lvg_name: str = None, output_format: str = "wide", config_data: Dict[str, Any] = None, interactive_mode: bool = False) -> str:
     """
     Get CSI Baremetal logical volume group information
     
     Args:
         lvg_name: Logical volume group name (optional, gets all if not specified)
         output_format: Output format (wide, yaml, json)
+        config_data: Configuration data for command execution.
+        interactive_mode: Flag for interactive mode.
         
     Returns:
         str: Command output showing LVG health and associated drives
@@ -108,23 +103,20 @@ def kubectl_get_logicalvolumegroup(lvg_name: str = None, output_format: str = "w
         cmd.append(lvg_name)
     
     cmd.extend(["-o", output_format])
-    
-    try:
-        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        return f"Error: {e.stderr}"
-    except Exception as e:
-        return f"Error executing kubectl get lvg: {str(e)}"
+
+    purpose = f"Get CSI Baremetal logical volume group information, Name: {lvg_name if lvg_name else 'all'}"
+    return execute_command(command_list=cmd, config_data=config_data, interactive_mode=interactive_mode, purpose=purpose, requires_approval=False)
 
 @tool
-def kubectl_get_storageclass(sc_name: str = None, output_format: str = "yaml") -> str:
+def kubectl_get_storageclass(sc_name: str = None, output_format: str = "yaml", config_data: Dict[str, Any] = None, interactive_mode: bool = False) -> str:
     """
     Get storage class information
     
     Args:
         sc_name: Storage class name (optional, gets all if not specified)
         output_format: Output format (yaml, json, wide)
+        config_data: Configuration data for command execution.
+        interactive_mode: Flag for interactive mode.
         
     Returns:
         str: Command output showing storage class configuration
@@ -135,32 +127,24 @@ def kubectl_get_storageclass(sc_name: str = None, output_format: str = "yaml") -
         cmd.append(sc_name)
     
     cmd.extend(["-o", output_format])
-    
-    try:
-        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        return f"Error: {e.stderr}"
-    except Exception as e:
-        return f"Error executing kubectl get storageclass: {str(e)}"
+
+    purpose = f"Get Kubernetes storage class information, Name: {sc_name if sc_name else 'all'}"
+    return execute_command(command_list=cmd, config_data=config_data, interactive_mode=interactive_mode, purpose=purpose, requires_approval=False)
 
 @tool
-def kubectl_get_csidrivers(output_format: str = "wide") -> str:
+def kubectl_get_csidrivers(output_format: str = "wide", config_data: Dict[str, Any] = None, interactive_mode: bool = False) -> str:
     """
     Get CSI driver registration information
     
     Args:
         output_format: Output format (wide, yaml, json)
+        config_data: Configuration data for command execution.
+        interactive_mode: Flag for interactive mode.
         
     Returns:
         str: Command output showing registered CSI drivers
     """
     cmd = ["kubectl", "get", "csidrivers", "-o", output_format]
     
-    try:
-        result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        return f"Error: {e.stderr}"
-    except Exception as e:
-        return f"Error executing kubectl get csidrivers: {str(e)}"
+    purpose = "Get registered CSI drivers information"
+    return execute_command(command_list=cmd, config_data=config_data, interactive_mode=interactive_mode, purpose=purpose, requires_approval=False)

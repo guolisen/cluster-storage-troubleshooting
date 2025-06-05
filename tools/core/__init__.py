@@ -7,16 +7,12 @@ This module contains:
 - knowledge_graph: Knowledge Graph tools and management
 """
 
-from tools.core.config import (
-    INTERACTIVE_MODE,
-    CONFIG_DATA,
+from .config import ( # Changed to relative import
     validate_command,
     execute_command
 )
 
-from tools.core.knowledge_graph import (
-    initialize_knowledge_graph,
-    get_knowledge_graph,
+from .knowledge_graph import ( # Changed to relative import
     kg_get_entity_info,
     kg_get_related_entities,
     kg_get_all_issues,
@@ -28,16 +24,11 @@ from tools.core.knowledge_graph import (
 
 __all__ = [
     # Configuration utilities
-    'INTERACTIVE_MODE',
-    'CONFIG_DATA',
     'validate_command',
     'execute_command',
     
-    # Knowledge Graph management
-    'initialize_knowledge_graph',
-    'get_knowledge_graph',
-    
     # Knowledge Graph tools
+    # initialize_knowledge_graph and get_knowledge_graph removed
     'kg_get_entity_info',
     'kg_get_related_entities',
     'kg_get_all_issues',

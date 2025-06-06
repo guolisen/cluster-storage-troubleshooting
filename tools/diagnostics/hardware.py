@@ -6,6 +6,12 @@ This module contains tools for hardware-level diagnostics including
 disk health checks, performance testing, and file system validation.
 """
 
+import time
+import json
+import subprocess
+import re
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple, Any
 from langchain_core.tools import tool
 
 @tool

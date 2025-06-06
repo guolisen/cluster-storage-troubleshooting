@@ -159,26 +159,26 @@ Knowledge Graph Summary:
 {json.dumps(collected_info.get('knowledge_graph_summary', {}), indent=2)}
 
 Pod Information:
-{str(collected_info.get('pod_info', {}))[:2000]}
+{str(collected_info.get('pod_info', {}))}
 
 PVC Information:
-{str(collected_info.get('pvc_info', {}))[:2000]}
+{str(collected_info.get('pvc_info', {}))}
 
 PV Information:
-{str(collected_info.get('pv_info', {}))[:2000]}
+{str(collected_info.get('pv_info', {}))}
 
 Node Information Summary:
-{str(collected_info.get('node_info', {}))[:2000]}
+{str(collected_info.get('node_info', {}))}
 
 CSI Driver Information:
-{str(collected_info.get('csi_driver_info', {}))[:2000]}
+{str(collected_info.get('csi_driver_info', {}))}
 
 System Information:
-{str(collected_info.get('system_info', {}))[:2000]}
+{str(collected_info.get('system_info', {}))}
 
 <<< Current Issues >>>
 Issues Summary:
-{str(collected_info.get('issues', {}))[:2000]}
+{str(collected_info.get('issues', {}))}
 
 === END PRE-COLLECTED CONTEXT ===
 """

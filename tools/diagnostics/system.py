@@ -99,7 +99,7 @@ def dmesg_command(options: str = "--since='5 minutes ago' -T") -> str:
     Returns:
         str: Command output
     """
-    cmd = ["dmesg"]
+    cmd = ["dmesg", "--since=5 minutes ago", "-T"]
     
     if options:
         cmd.extend(options.split())
@@ -124,7 +124,7 @@ def journalctl_command(options: str = "--since='5 minutes ago'") -> str:
     Returns:
         str: Command output
     """
-    cmd = ["journalctl", "--since=\'5 minutes ago\'"]
+    cmd = ["journalctl", "--since=5 minutes ago"]
     
     if options:
         cmd.extend(options.split())

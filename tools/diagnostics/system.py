@@ -89,12 +89,12 @@ def mount_command(options: str = "") -> str:
         return f"Error executing mount: {str(e)}"
 
 @tool
-def dmesg_command(options: str = "") -> str:
+def dmesg_command(options: str = "--since='5 minutes ago' -T") -> str:
     """
     Execute dmesg command to show kernel messages
     
     Args:
-        options: Command options (optional)
+        options: Command options (default: show logs from last 5 minutes with timestamps)
         
     Returns:
         str: Command output
@@ -114,17 +114,17 @@ def dmesg_command(options: str = "") -> str:
         return f"Error executing dmesg: {str(e)}"
 
 @tool
-def journalctl_command(options: str = "") -> str:
+def journalctl_command(options: str = "--since='5 minutes ago'") -> str:
     """
-    Execute journalctl command to show systemd journal logs. Output the logs from the last 5 minutes as much as possible.
+    Execute journalctl command to show systemd journal logs from the last 5 minutes
     
     Args:
-        options: Command options (optional)
+        options: Command options (default: show logs from last 5 minutes)
         
     Returns:
         str: Command output
     """
-    cmd = ["journalctl"]
+    cmd = ["journalctl", "--since=\'5 minutes ago\'"]
     
     if options:
         cmd.extend(options.split())

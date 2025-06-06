@@ -68,7 +68,7 @@ def _matches_pattern(command: str, pattern: str) -> bool:
     import fnmatch
     return fnmatch.fnmatch(command, pattern)
 
-def execute_command(command_list: List[str], purpose: str, requires_approval: bool = True) -> str:
+def execute_command(command_list: List[str], purpose: str = "none", requires_approval: bool = True) -> str:
     """
     Execute a command and return its output
     

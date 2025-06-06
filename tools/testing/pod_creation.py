@@ -84,7 +84,17 @@ spec:
     if pvc_yaml:
         try:
             cmd = ["kubectl", "apply", "-f", "-"]
-            result = execute_command(cmd, input_data=pvc_yaml)
+            # Create a process with stdin pipe to pass the YAML
+            import subprocess
+            process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            stdout, stderr = process.communicate(input=pvc_yaml)
+            result = stdout if process.returncode == 0 else f"Error: {stderr}"
             results.append(f"PVC Creation: {result}")
         except Exception as e:
             return f"Error creating PVC: {str(e)}"
@@ -92,13 +102,23 @@ spec:
     # Create pod
     try:
         cmd = ["kubectl", "apply", "-f", "-"]
-        result = execute_command(cmd, input_data=pod_yaml)
+        # Create a process with stdin pipe to pass the YAML
+        import subprocess
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        stdout, stderr = process.communicate(input=pod_yaml)
+        result = stdout if process.returncode == 0 else f"Error: {stderr}"
         results.append(f"Pod Creation: {result}")
         
         # Wait for pod to be ready (optional check)
         cmd = ["kubectl", "wait", "--for=condition=Ready", f"pod/{pod_name}", 
                "-n", namespace, "--timeout=60s"]
-        wait_result = execute_command(cmd)
+        wait_result = execute_command(cmd, purpose="Waiting for pod to be ready")
         results.append(f"Pod Ready Status: {wait_result}")
         
         return "\n".join(results)
@@ -142,11 +162,21 @@ spec:
     
     try:
         cmd = ["kubectl", "apply", "-f", "-"]
-        result = execute_command(cmd, input_data=pvc_yaml)
+        # Create a process with stdin pipe to pass the YAML
+        import subprocess
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        stdout, stderr = process.communicate(input=pvc_yaml)
+        result = stdout if process.returncode == 0 else f"Error: {stderr}"
         
         # Check PVC status
         cmd = ["kubectl", "get", "pvc", pvc_name, "-n", namespace, "-o", "yaml"]
-        status_result = execute_command(cmd)
+        status_result = execute_command(cmd, purpose="Checking PVC status")
         
         return f"PVC Creation: {result}\n\nPVC Status:\n{status_result}"
         
@@ -186,11 +216,21 @@ reclaimPolicy: Delete
     
     try:
         cmd = ["kubectl", "apply", "-f", "-"]
-        result = execute_command(cmd, input_data=sc_yaml)
+        # Create a process with stdin pipe to pass the YAML
+        import subprocess
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        stdout, stderr = process.communicate(input=sc_yaml)
+        result = stdout if process.returncode == 0 else f"Error: {stderr}"
         
         # Verify storage class
         cmd = ["kubectl", "get", "storageclass", sc_name, "-o", "yaml"]
-        verify_result = execute_command(cmd)
+        verify_result = execute_command(cmd, purpose="Verifying storage class")
         
         return f"Storage Class Creation: {result}\n\nStorage Class Details:\n{verify_result}"
         

@@ -185,7 +185,7 @@ async def test_knowledge_graph_tools(kg, config_data=None):
             "source_entity_type": "Pod", 
             "source_entity_id": "gnode:Pod:default/test-pod",
             "target_entity_type": "Node", 
-            "target_entity_id": "gnode:Node:test-node"
+            "target_entity_id": "gnode:Node:kind-control-plane"
         },
         "kg_get_summary": None,
         "kg_analyze_issues": None,
@@ -260,11 +260,11 @@ async def test_diagnostic_tools(config_data=None):
     
     # Initialize test arguments for each diagnostic tool
     test_args = {
-        "smartctl_check": {"node_name": "test-node", "device_path": "/dev/sda"},
-        "fio_performance_test": {"node_name": "test-node", "device_path": "/dev/sda"},
-        "fsck_check": {"node_name": "test-node", "device_path": "/dev/sda"},
-        "xfs_repair_check": {"node_name": "test-node", "device_path": "/dev/sda"},
-        "ssh_execute": {"node_name": "test-node", "command": "ls -la"},
+        "smartctl_check": {"node_name": "kind-control-plane", "device_path": "/dev/sda"},
+        "fio_performance_test": {"node_name": "kind-control-plane", "device_path": "/dev/sda"},
+        "fsck_check": {"node_name": "kind-control-plane", "device_path": "/dev/sda"},
+        "xfs_repair_check": {"node_name": "kind-control-plane", "device_path": "/dev/sda"},
+        "ssh_execute": {"node_name": "kind-control-plane", "command": "ls -la"},
         "df_command": {"path": "/tmp", "options": "-h"},
         "lsblk_command": {"options": "-f"},
         "mount_command": {"options": "-t xfs"},
@@ -344,7 +344,7 @@ async def test_langgraph_components(config_data):
             "pod_info": {"test-pod": {"status": "Running"}},
             "pvc_info": {"test-pvc": {"status": "Bound"}},
             "pv_info": {"test-pv": {"status": "Bound"}},
-            "node_info": {"test-node": {"status": "Ready"}},
+            "node_info": {"kind-control-plane": {"status": "Ready"}},
             "csi_driver_info": {},
             "system_info": {},
             "knowledge_graph_summary": {},
@@ -486,7 +486,7 @@ async def main():
     
     # Add some test data to the knowledge graph
     pod_id = kg.add_gnode_pod("test-pod", "default", status="Running")
-    node_id = kg.add_gnode_node("test-node", status="Ready")
+    node_id = kg.add_gnode_node("kind-control-plane", status="Ready")
     pvc_id = kg.add_gnode_pvc("test-pvc", "default", status="Bound")
     pv_id = kg.add_gnode_pv("test-pv", status="Bound")
     

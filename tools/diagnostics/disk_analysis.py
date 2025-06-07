@@ -32,8 +32,8 @@ def check_disk_health(node_name: str, device_path: str) -> str:
         from tools.diagnostics.hardware import ssh_execute, smartctl_check
         
         # Get SMART data
-        smart_output = smartctl_check(node_name, device_path)
-        
+        smart_output = smartctl_check.invoke({'node_name': node_name, 'device_path': device_path})
+
         # Parse SMART data for key health indicators
         health_status = "Unknown"
         temperature = "Unknown"
@@ -124,20 +124,20 @@ def analyze_disk_space_usage(node_name: str, mount_path: str = "/",
         
         # Get overall disk usage
         df_cmd = f"df -h {mount_path}"
-        df_output = ssh_execute(node_name, df_cmd)
+        df_output = ssh_execute.invoke({'node_name': node_name, 'command': df_cmd})
         
         # Get directory usage breakdown
         du_cmd = f"du -h --max-depth=2 {mount_path} | sort -hr | head -n {show_top_n}"
-        du_output = ssh_execute(node_name, du_cmd)
-        
+        du_output = ssh_execute.invoke({'node_name': node_name, 'command': du_cmd})
+
         # Find large files
         find_cmd = f"find {mount_path} -type f -size +{min_file_size_mb}M -exec ls -lh {{}} \\; | sort -k5hr | head -n {show_top_n}"
-        find_output = ssh_execute(node_name, find_cmd)
-        
+        find_output = ssh_execute.invoke({'node_name': node_name, 'command': find_cmd})
+
         # Find old unused files (not accessed in 90+ days)
         old_files_cmd = f"find {mount_path} -type f -atime +90 -size +{min_file_size_mb}M -exec ls -lh {{}} \\; | sort -k5hr | head -n {show_top_n}"
-        old_files_output = ssh_execute(node_name, old_files_cmd)
-        
+        old_files_output = ssh_execute.invoke({'node_name': node_name, 'command': old_files_cmd})
+
         # Format analysis report
         report = [
             f"Disk Space Analysis for {mount_path} on {node_name}:",
@@ -224,7 +224,7 @@ def scan_disk_error_logs(node_name: str, hours_back: int = 24,
         for log_path in log_paths:
             # Check if log file exists
             check_cmd = f"test -f {log_path} && echo exists || echo not found"
-            check_result = ssh_execute(node_name, check_cmd).strip()
+            check_result = ssh_execute.invoke({'node_name': node_name, 'command': check_cmd}).strip()
             
             if check_result == "not found":
                 results.append(f"Log file {log_path} not found")
@@ -232,11 +232,11 @@ def scan_disk_error_logs(node_name: str, hours_back: int = 24,
             
             # Get timestamp for hours_back
             time_cmd = f"date -d '{hours_back} hours ago' +'%Y-%m-%d %H:%M:%S'"
-            time_result = ssh_execute(node_name, time_cmd).strip()
+            time_result = ssh_execute.invoke({'node_name': node_name, 'command': time_cmd}).strip()
             
             # Search log file for disk errors after the timestamp
             grep_cmd = f"grep -E '{grep_pattern}' {log_path} | grep -A 2 -B 2 '{grep_pattern}'"
-            grep_result = ssh_execute(node_name, grep_cmd)
+            grep_result = ssh_execute.invoke({'node_name': node_name, 'command': grep_cmd}).strip()
             
             # Count errors
             error_lines = grep_result.strip().split('\n')

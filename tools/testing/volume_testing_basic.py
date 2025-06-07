@@ -33,27 +33,27 @@ def run_volume_io_test(pod_name: str, namespace: str = "default",
     
     try:
         # Test 1: Write test
-        write_cmd = f"dd if=/dev/zero of={mount_path}/test_write.dat bs=1M count=10 2>&1"
+        write_cmd = f"dd if=/dev/zero of={mount_path}/AI_test_write.dat bs=1M count=10 2>&1"
         cmd = ["kubectl", "exec", pod_name, "-n", namespace, "--", "sh", "-c", write_cmd]
         write_result = execute_command(cmd)
         results.append(f"Write Test:\n{write_result}")
         
         # Test 2: Read test
-        read_cmd = f"dd if={mount_path}/test_write.dat of=/dev/null bs=1M 2>&1"
+        read_cmd = f"dd if={mount_path}/AI_test_write.dat of=/dev/null bs=1M 2>&1"
         cmd = ["kubectl", "exec", pod_name, "-n", namespace, "--", "sh", "-c", read_cmd]
         read_result = execute_command(cmd)
         results.append(f"Read Test:\n{read_result}")
         
         # Test 3: Random I/O test using dd
-        random_cmd = f"dd if=/dev/urandom of={mount_path}/test_random.dat bs=4k count=100 2>&1"
+        random_cmd = f"dd if=/dev/urandom of={mount_path}/AI_test_random.dat bs=4k count=100 2>&1"
         cmd = ["kubectl", "exec", pod_name, "-n", namespace, "--", "sh", "-c", random_cmd]
         random_result = execute_command(cmd)
         results.append(f"Random Write Test:\n{random_result}")
         
         # Test 4: File operations test
         file_ops_cmd = f"""
-        echo 'Testing file operations...' > {mount_path}/test_file.txt &&
-        cat {mount_path}/test_file.txt &&
+        echo 'Testing file operations...' > {mount_path}/AI_test_file.txt &&
+        cat {mount_path}/AI_test_file.txt &&
         ls -la {mount_path}/ &&
         df -h {mount_path}
         """
@@ -62,7 +62,7 @@ def run_volume_io_test(pod_name: str, namespace: str = "default",
         results.append(f"File Operations Test:\n{file_ops_result}")
         
         # Test 5: Cleanup test files
-        cleanup_cmd = f"rm -f {mount_path}/test_*.dat {mount_path}/test_file.txt"
+        cleanup_cmd = f"rm -f {mount_path}/AI_test_*.dat {mount_path}/AI_test_file.txt"
         cmd = ["kubectl", "exec", pod_name, "-n", namespace, "--", "sh", "-c", cleanup_cmd]
         cleanup_result = execute_command(cmd)
         results.append(f"Cleanup:\n{cleanup_result}")

@@ -88,7 +88,7 @@ def get_disk_model(node_name: str, device_path: str, ssh_execute) -> str:
     """
     # Try to get disk model using lsblk
     cmd = f"lsblk -o NAME,MODEL,SERIAL {device_path} -n"
-    result = ssh_execute(node_name, cmd)
+    result = ssh_execute.invoke({'node_name': node_name, 'command': cmd})
     
     # Parse the output to extract the model
     model = ""
@@ -103,7 +103,7 @@ def get_disk_model(node_name: str, device_path: str, ssh_execute) -> str:
     # If lsblk didn't work, try smartctl
     if not model:
         cmd = f"smartctl -i {device_path} | grep 'Device Model'"
-        result = ssh_execute(node_name, cmd)
+        result = ssh_execute.invoke({'node_name': node_name, 'command': cmd})
         
         # Parse the output
         match = re.search(r'Device Model:\s+(.+)', result)
@@ -127,8 +127,8 @@ def find_comparison_disk(node_name: str, target_disk: str, disk_model: str, ssh_
     """
     # List all disks
     cmd = "lsblk -d -o NAME,MODEL,SIZE -n"
-    result = ssh_execute(node_name, cmd)
-    
+    result = ssh_execute.invoke({'node_name': node_name, 'command': cmd})
+
     # Parse the output to find disks with the same model
     for line in result.split('\n'):
         if line.strip():
@@ -167,7 +167,7 @@ def run_single_disk_test(node_name: str, device_path: str, duration_seconds: int
     )
     
     # Execute command
-    result = ssh_execute(node_name, cmd)
+    result = ssh_execute.invoke({'node_name': node_name, 'command': cmd})
     
     # End time
     end_time = datetime.now()

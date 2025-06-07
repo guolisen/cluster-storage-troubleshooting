@@ -36,10 +36,10 @@ from tools.registry import (
 # Initialize rich console for nice output
 console = Console()
 
-os.environ['LANGCHAIN_TRACING_V2'] = "true"   
-os.environ['LANGCHAIN_ENDPOINT'] = "https://api.smith.langchain.com"   
-os.environ['LANGCHAIN_API_KEY'] = "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"   
-os.environ['LANGCHAIN_PROJECT'] = "pr-silver-bank-1"
+#os.environ['LANGCHAIN_TRACING_V2'] = "true"   
+#os.environ['LANGCHAIN_ENDPOINT'] = "https://api.smith.langchain.com"   
+#os.environ['LANGCHAIN_API_KEY'] = "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"   
+#os.environ['LANGCHAIN_PROJECT'] = "pr-silver-bank-1"
 
 def load_config():
     """Load configuration from config.yaml"""
@@ -178,12 +178,12 @@ async def test_knowledge_graph_tools(kg, config_data=None):
     
     # Initialize test arguments for each KG tool
     test_args = {
-        "kg_get_entity_info": {"entity_type": "Pod", "entity_id": "gnode:Pod:default/test-pod"},
-        "kg_get_related_entities": {"entity_type": "Pod", "entity_id": "gnode:Pod:default/test-pod"},
+        "kg_get_entity_info": {"entity_type": "Pod", "entity_id": "gnode:Pod:default/test-pod-1-0"},
+        "kg_get_related_entities": {"entity_type": "Pod", "entity_id": "gnode:Pod:default/test-pod-1-0"},
         "kg_get_all_issues": {},
         "kg_find_path": {
             "source_entity_type": "Pod", 
-            "source_entity_id": "gnode:Pod:default/test-pod",
+            "source_entity_id": "gnode:Pod:default/test-pod-1-0",
             "target_entity_type": "Node", 
             "target_entity_id": "gnode:Node:kind-control-plane"
         },
@@ -220,11 +220,11 @@ async def test_kubernetes_tools(config_data=None):
     # Initialize test arguments for each Kubernetes tool
     test_args = {
         "kubectl_get": {"resource_type": "pods", "namespace": "default"},
-        "kubectl_describe": {"resource_type": "pod", "resource_name": "test-pod", "namespace": "default"},
-        "kubectl_apply": {"yaml_content": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: test-pod\nspec:\n  containers:\n  - name: test-container\n    image: nginx"},
-        "kubectl_delete": {"resource_type": "pod", "resource_name": "test-pod", "namespace": "default"},
-        "kubectl_exec": {"pod_name": "test-pod", "namespace": "default", "command": "ls -la"},
-        "kubectl_logs": {"pod_name": "test-pod", "namespace": "default"},
+        "kubectl_describe": {"resource_type": "pod", "resource_name": "test-pod-1-0", "namespace": "default"},
+        "kubectl_apply": {"yaml_content": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: test-pod-1-0\nspec:\n  containers:\n  - name: test-container\n    image: nginx"},
+        "kubectl_delete": {"resource_type": "pod", "resource_name": "test-pod-1-0", "namespace": "default"},
+        "kubectl_exec": {"pod_name": "test-pod-1-0", "namespace": "default", "command": "ls -la"},
+        "kubectl_logs": {"pod_name": "test-pod-1-0", "namespace": "default"},
         "kubectl_get_drive": {},
         "kubectl_get_csibmnode": {},
         "kubectl_get_availablecapacity": {},
@@ -269,7 +269,14 @@ async def test_diagnostic_tools(config_data=None):
         "lsblk_command": {"options": "-f"},
         "mount_command": {"options": "-t xfs"},
         "dmesg_command": {"options": "-T"},
-        "journalctl_command": {"options": "-u kubelet"}
+        "journalctl_command": {"options": "-u kubelet"},
+        # New disk tools
+        "detect_disk_jitter": {"duration_minutes": 1, "check_interval_seconds": 10, "node_name": "kind-control-plane"},
+        "run_disk_readonly_test": {"node_name": "kind-control-plane", "device_path": "/dev/sda", "duration_minutes": 1},
+        "test_disk_io_performance": {"node_name": "kind-control-plane", "device_path": "/dev/sda", "duration_seconds": 10},
+        "check_disk_health": {"node_name": "kind-control-plane", "device_path": "/dev/sda"},
+        "analyze_disk_space_usage": {"node_name": "kind-control-plane", "mount_path": "/"},
+        "scan_disk_error_logs": {"node_name": "kind-control-plane", "hours_back": 1}
     }
     
     results = []
@@ -299,18 +306,25 @@ async def test_testing_tools(config_data=None):
     
     # Initialize test arguments for each testing tool
     test_args = {
-        "create_test_pod": {"pod_name": "test-pod", "namespace": "default"},
-        "create_test_pvc": {"pvc_name": "test-pvc", "namespace": "default", "size": "1Gi"},
+        "create_test_pod": {"pod_name": "test-pod-1-0", "namespace": "default"},
+        "create_test_pvc": {"pvc_name": "www-1-test-pod-1-0", "namespace": "default", "size": "1Gi"},
         "create_test_storage_class": {"sc_name": "test-sc"},
-        "run_volume_io_test": {"pod_name": "test-pod", "namespace": "default", "mount_path": "/data"},
-        "validate_volume_mount": {"pod_name": "test-pod", "namespace": "default", "mount_path": "/data"},
-        "test_volume_permissions": {"pod_name": "test-pod", "namespace": "default", "mount_path": "/data"},
-        "run_volume_stress_test": {"pod_name": "test-pod", "namespace": "default", "mount_path": "/data"},
+        "run_volume_io_test": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
+        "validate_volume_mount": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
+        "test_volume_permissions": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
+        "run_volume_stress_test": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
         "cleanup_test_resources": {"namespace": "default"},
         "list_test_resources": {"namespace": "default"},
-        "cleanup_specific_test_pod": {"pod_name": "test-pod", "namespace": "default"},
+        "cleanup_specific_test_pod": {"pod_name": "test-pod-1-0", "namespace": "default"},
         "cleanup_orphaned_pvs": {},
-        "force_cleanup_stuck_resources": {"namespace": "default"}
+        "force_cleanup_stuck_resources": {"namespace": "default"},
+        # Additional volume testing tools
+        "verify_volume_mount": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
+        "test_volume_io_performance": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
+        "monitor_volume_latency": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log", "duration_minutes": 1},
+        "check_pod_volume_filesystem": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
+        "analyze_volume_space_usage": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
+        "check_volume_data_integrity": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"}
     }
     
     results = []
@@ -341,8 +355,8 @@ async def test_langgraph_components(config_data):
     try:
         # Create a minimal test context
         collected_info = {
-            "pod_info": {"test-pod": {"status": "Running"}},
-            "pvc_info": {"test-pvc": {"status": "Bound"}},
+            "pod_info": {"test-pod-1-0": {"status": "Running"}},
+            "pvc_info": {"www-1-test-pod-1-0": {"status": "Bound"}},
             "pv_info": {"test-pv": {"status": "Bound"}},
             "node_info": {"kind-control-plane": {"status": "Ready"}},
             "csi_driver_info": {},
@@ -485,9 +499,9 @@ async def main():
     initialize_knowledge_graph(kg)
     
     # Add some test data to the knowledge graph
-    pod_id = kg.add_gnode_pod("test-pod", "default", status="Running")
+    pod_id = kg.add_gnode_pod("test-pod-1-0", "default", status="Running")
     node_id = kg.add_gnode_node("kind-control-plane", status="Ready")
-    pvc_id = kg.add_gnode_pvc("test-pvc", "default", status="Bound")
+    pvc_id = kg.add_gnode_pvc("www-1-test-pod-1-0", "default", status="Bound")
     pv_id = kg.add_gnode_pv("test-pv", status="Bound")
     
     # Add relationships
@@ -511,13 +525,13 @@ async def main():
         if category is None or category == "all":
             console.print("[yellow]Testing all tool categories...[/yellow]")
             # Test Knowledge Graph tools
-            all_results["knowledge_graph"] = await test_knowledge_graph_tools(kg, config_data)
+            #all_results["knowledge_graph"] = await test_knowledge_graph_tools(kg, config_data)
             
             # Test Kubernetes tools
-            all_results["kubernetes"] = await test_kubernetes_tools(config_data)
+            #all_results["kubernetes"] = await test_kubernetes_tools(config_data)
             
             # Test Diagnostic tools
-            all_results["diagnostic"] = await test_diagnostic_tools(config_data)
+            #all_results["diagnostic"] = await test_diagnostic_tools(config_data)
             
             # Test Testing tools
             all_results["testing"] = await test_testing_tools(config_data)

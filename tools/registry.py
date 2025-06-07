@@ -84,7 +84,13 @@ from tools.testing.volume_testing import (
     run_volume_io_test,
     validate_volume_mount,
     test_volume_permissions,
-    run_volume_stress_test
+    run_volume_stress_test,
+    verify_volume_mount,
+    test_volume_io_performance,
+    monitor_volume_latency,
+    check_pod_volume_filesystem,
+    analyze_volume_space_usage,
+    check_volume_data_integrity
 )
 
 from tools.testing.resource_cleanup import (
@@ -148,7 +154,19 @@ def get_all_tools() -> List[Any]:
         test_disk_io_performance,
         check_disk_health,
         analyze_disk_space_usage,
-        scan_disk_error_logs
+        scan_disk_error_logs,
+        
+        # Volume testing tools
+        run_volume_io_test,
+        validate_volume_mount,
+        test_volume_permissions,
+        run_volume_stress_test,
+        verify_volume_mount,
+        test_volume_io_performance,
+        monitor_volume_latency,
+        check_pod_volume_filesystem,
+        analyze_volume_space_usage,
+        check_volume_data_integrity
     ]
 
 def get_knowledge_graph_tools() -> List[Any]:
@@ -268,13 +286,23 @@ def get_phase1_tools() -> List[Any]:
         # Hardware information tools
         smartctl_check,  # Read-only disk health check
         xfs_repair_check,  # Read-only XFS file system check
-        ssh_execute,     # Limited to read-only operations
+        #ssh_execute,     # Limited to read-only operations
         
         # New read-only disk check tools
         detect_disk_jitter,  # Monitoring tool
         check_disk_health,   # Disk health assessment
         analyze_disk_space_usage,  # Space usage analysis
-        scan_disk_error_logs  # Log scanning
+        scan_disk_error_logs,  # Log scanning
+        run_disk_readonly_test,
+        test_disk_io_performance,  # Read-only I/O performance test
+
+        # Volume testing tools - Read-only checks
+        verify_volume_mount,
+        test_volume_io_performance,
+        monitor_volume_latency,
+        check_pod_volume_filesystem,
+        analyze_volume_space_usage,
+        check_volume_data_integrity,
     ]
 
 def get_phase2_tools() -> List[Any]:
@@ -310,6 +338,12 @@ def get_phase2_tools() -> List[Any]:
         validate_volume_mount,
         test_volume_permissions,
         run_volume_stress_test,
+        verify_volume_mount,
+        test_volume_io_performance,
+        monitor_volume_latency,
+        check_pod_volume_filesystem,
+        analyze_volume_space_usage,
+        check_volume_data_integrity,
         
         # Testing tools - Resource cleanup
         cleanup_test_resources,
@@ -347,7 +381,13 @@ def get_testing_tools() -> List[Any]:
         
         # New disk performance testing tools
         run_disk_readonly_test,
-        test_disk_io_performance
+        test_disk_io_performance,
+        verify_volume_mount,
+        test_volume_io_performance,
+        monitor_volume_latency,
+        check_pod_volume_filesystem,
+        analyze_volume_space_usage,
+        check_volume_data_integrity
     ]
 
 def get_remediation_tools() -> List[Any]:

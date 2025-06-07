@@ -54,7 +54,11 @@ def detect_disk_jitter(duration_minutes: int = 5, check_interval_seconds: int = 
             timestamp = current_time.strftime("%Y-%m-%d %H:%M:%S")
             
             # Get drive status
-            drive_output = kubectl_get_drive(drive_uuid, "wide")
+            drive_output = kubectl_get_drive.invoke({
+                    'resource_type': 'drive',
+                    'resource_name': drive_uuid,
+                    'output_format': 'wide'
+                })
             
             # Parse drive status output
             for line in drive_output.strip().split('\n')[1:]:  # Skip header

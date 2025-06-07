@@ -1,17 +1,67 @@
 [
   {
-    "description": "Check recent system logs for volume errors",
-    "tool": "kg_query_nodes(type='log', time_range='24h', filters={'message': 'I/O error'})",
-    "expected": "List of error logs indicating volume issues"
-  },
-  {
-    "description": "Verify pod-to-PVC binding",
-    "tool": "kg_query_relationships(source='pod', target='pvc')",
-    "expected": "Confirmation of correct PVC binding"
-  },
-  {
     "description": "Retrieve PVC metadata to check configuration",
     "tool": "kg_get_node_metadata(node_type='pvc')",
     "expected": "PVC configuration details to identify misconfigurations"
+  },
+  {
+    "description": "Monitor disk status changes to detect intermittent online/offline jitter",
+    "tool": "detect_disk_jitter",
+    "expected": "Jitter detection report with timestamps and frequency of status changes"
+  },
+  {
+    "description": "Query disk SMART data to assess overall disk health",
+    "tool": "check_disk_health",
+    "expected": "Disk health assessment with key metrics and status indicators"
+  },
+  {
+    "description": "Analyze disk space usage to identify large files and potential space issues",
+    "tool": "analyze_disk_space_usage",
+    "expected": "Disk space analysis report with large files, directories, and usage patterns"
+  },
+  {
+    "description": "Scan system logs for disk-related errors or warnings",
+    "tool": "scan_disk_error_logs",
+    "expected": "Summary of disk-related errors with insights and actionable recommendations"
+  },
+  {
+    "description": "Perform a read-only test on the disk to verify readability",
+    "tool": "run_disk_readonly_test",
+    "expected": "Summary report with read metrics and any errors encountered"
+  },
+  {
+    "description": "Measure disk I/O performance under different workloads",
+    "tool": "test_disk_io_performance",
+    "expected": "Performance test results showing IOPS, throughput, and latency metrics"
+  },
+  {
+    "description": "Verify that a pod volume is correctly mounted and accessible",
+    "tool": "verify_volume_mount",
+    "expected": "Volume mount verification results including mount details and accessibility"
+  },
+  {
+    "description": "Test I/O performance of a pod volume including read/write speeds and latency",
+    "tool": "test_volume_io_performance",
+    "expected": "I/O performance test results with metrics for sequential and random operations"
+  },
+  {
+    "description": "Monitor real-time latency of volume operations within a pod",
+    "tool": "monitor_volume_latency",
+    "expected": "Volume latency monitoring results with statistical analysis of operations"
+  },
+  {
+    "description": "Perform a non-destructive filesystem check on pod volume",
+    "tool": "check_pod_volume_filesystem",
+    "expected": "Filesystem check results indicating health and potential issues"
+  },
+  {
+    "description": "Analyze volume space usage within a pod, identifying large files and usage patterns",
+    "tool": "analyze_volume_space_usage",
+    "expected": "Volume space usage analysis with directory breakdown and file distribution"
+  },
+  {
+    "description": "Perform a checksum-based integrity check on critical files in the pod volume",
+    "tool": "check_volume_data_integrity",
+    "expected": "Data integrity check results comparing against baseline checksums"
   }
 ]

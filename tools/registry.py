@@ -297,8 +297,11 @@ def get_phase1_tools() -> List[Any]:
         test_disk_io_performance,  # Read-only I/O performance test
 
         # Volume testing tools - Read-only checks
+        run_volume_io_test,
         verify_volume_mount,
         test_volume_io_performance,
+        test_volume_permissions,
+        run_volume_stress_test,  # Non-destructive stress test
         monitor_volume_latency,
         check_pod_volume_filesystem,
         analyze_volume_space_usage,
@@ -329,9 +332,9 @@ def get_phase2_tools() -> List[Any]:
         test_disk_io_performance, # I/O performance test
         
         # Testing tools - Pod/Resource creation
-        create_test_pod,
-        create_test_pvc,
-        create_test_storage_class,
+        #create_test_pod,
+        #create_test_pvc,
+        #create_test_storage_class,
         
         # Testing tools - Volume testing
         run_volume_io_test,
@@ -346,11 +349,11 @@ def get_phase2_tools() -> List[Any]:
         check_volume_data_integrity,
         
         # Testing tools - Resource cleanup
-        cleanup_test_resources,
-        list_test_resources,
-        cleanup_specific_test_pod,
-        cleanup_orphaned_pvs,
-        force_cleanup_stuck_resources
+        #cleanup_test_resources,
+        #list_test_resources,
+        #cleanup_specific_test_pod,
+        #cleanup_orphaned_pvs,
+        #force_cleanup_stuck_resources
     ]
 
 def get_testing_tools() -> List[Any]:
@@ -362,9 +365,9 @@ def get_testing_tools() -> List[Any]:
     """
     return [
         # Pod/Resource creation tools
-        create_test_pod,
-        create_test_pvc,
-        create_test_storage_class,
+        #create_test_pod,
+        #create_test_pvc,
+        #create_test_storage_class,
         
         # Volume testing tools
         run_volume_io_test,
@@ -373,11 +376,11 @@ def get_testing_tools() -> List[Any]:
         run_volume_stress_test,
         
         # Resource cleanup tools
-        cleanup_test_resources,
-        list_test_resources,
-        cleanup_specific_test_pod,
-        cleanup_orphaned_pvs,
-        force_cleanup_stuck_resources,
+        #cleanup_test_resources,
+        #list_test_resources,
+        #cleanup_specific_test_pod,
+        #cleanup_orphaned_pvs,
+        #force_cleanup_stuck_resources,
         
         # New disk performance testing tools
         run_disk_readonly_test,

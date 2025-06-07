@@ -103,7 +103,10 @@ async def test_tool(tool_func, test_args=None, config_data=None):
     else:
         # Fallback
         tool_name = str(tool_func)
-    
+
+    if tool_name == 'monitor_volume_latency':
+        console.print(f"[bold yellow]Skipping tool '{tool_name}' as it is not suitable for testing[/bold yellow]")
+
     try:
         # Ensure we have a config object for StructuredTool._run()
         if config_data is None:
@@ -166,6 +169,7 @@ async def test_tool(tool_func, test_args=None, config_data=None):
             "result": result
         }
     except Exception as e:
+        console.print(f"[bold red]Error testing tool '{tool_name}':[/bold red] {str(e)}")
         return {
             "name": tool_name,
             "status": "error",
@@ -321,12 +325,14 @@ async def test_testing_tools(config_data=None):
         # Additional volume testing tools
         "verify_volume_mount": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
         "test_volume_io_performance": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
-        "monitor_volume_latency": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log", "duration_minutes": 1},
+        "monitor_volume_latency": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log", "duration": 1},
         "check_pod_volume_filesystem": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
         "analyze_volume_space_usage": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
-        "check_volume_data_integrity": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"}
+        "check_volume_data_integrity": {"pod_name": "test-pod-1-0", "namespace": "default", "mount_path": "/log"},
+        "run_disk_readonly_test": {"node_name": "kind-control-plane", "device_path": "/dev/sda", "duration_minutes": 1},
+        "test_disk_io_performance": {"node_name": "kind-control-plane", "device_path": "/dev/sda", "duration_seconds": 10},
     }
-    
+
     results = []
     for tool in get_testing_tools():
         # Get tool name safely

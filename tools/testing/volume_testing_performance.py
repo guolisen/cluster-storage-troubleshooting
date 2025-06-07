@@ -453,7 +453,6 @@ awk -F, '$2=="metadata" {sum+=$4; count++} END {print "  Average latency: " (cou
                 time_result = execute_command(cmd)
                 results.append(f"Basic Latency Measurements:\n{time_result}")
         
-        # Clean up test files
         cleanup_cmd = f"rm -rf {test_dir}"
         cmd = ["kubectl", "exec", pod_name, "-n", namespace, "--", "sh", "-c", cleanup_cmd]
         execute_command(cmd)

@@ -234,9 +234,9 @@ class RuleBasedPlanGenerator:
         
         # Add steps for each priority category
         self._add_critical_issue_steps(all_potential_steps, priorities, target_entities)
-        self._add_hardware_verification_steps(all_potential_steps, priorities, target_entities)
+        #self._add_hardware_verification_steps(all_potential_steps, priorities, target_entities)
         self._add_pod_investigation_steps(all_potential_steps, target_entities)
-        self._add_drive_investigation_steps(all_potential_steps, target_entities)
+        #self._add_drive_investigation_steps(all_potential_steps, target_entities)
         self._add_network_verification_steps(all_potential_steps, priorities)
         
         # Sort steps by priority score and limit to max_steps

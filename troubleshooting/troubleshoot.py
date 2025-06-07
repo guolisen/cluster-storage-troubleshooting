@@ -194,7 +194,7 @@ async def run_information_collection_phase_wrapper(pod_name: str, namespace: str
     
     return collected_info
 
-async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds: int = 60) -> str:
+async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds: int = 420) -> str:
     """
     Run an analysis using the provided LangGraph StateGraph with enhanced progress tracking
     

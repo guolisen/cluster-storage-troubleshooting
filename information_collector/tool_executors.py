@@ -149,14 +149,16 @@ class ToolExecutors(InformationCollectorBase):
             )
             self.collected_data['kubernetes']['nodes'] = drv_output
 
-        # Get storage classes
-        sc_output = self._execute_tool_with_validation(
-            kubectl_get_storageclass, {
-                'output_format': 'yaml'
-            },
-            'kubectl_get_storageclass', 'Get storage class configuration'
-        )
-        self.collected_data['kubernetes']['storage_classes'] = sc_output
+        if volume_chain.get('StorageClass', []):
+            sc_output = self._execute_tool_with_validation(
+                kubectl_get, {
+                    'resource_type': 'StorageClass',
+                    'resource_name': volume_chain.get('StorageClass', [])[0],
+                    'output_format': 'yaml'
+                },
+                'kubectl_get_StorageClass', 'Get all StorageClass information'
+            )
+            self.collected_data['kubernetes']['storage_classes'] = sc_output
     
     async def _execute_csi_baremetal_tools(self, drives: List[str]):
         """Execute CSI Baremetal discovery tools"""

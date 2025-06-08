@@ -177,8 +177,6 @@ class VolumeDiscovery(InformationCollectorBase):
                                             chain['drives'].append(drive_name)
                                         else:
                                             drivestart = False
-                    else:
-                        chain['volumes'] = []
 
         except Exception as e:
             error_msg = f"Error discovering volume dependency chain: {str(e)}"

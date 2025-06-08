@@ -139,7 +139,7 @@ def get_all_tools() -> List[Any]:
         fio_performance_test,
         fsck_check,
         xfs_repair_check,
-        ssh_execute,
+        #ssh_execute,
         
         # System diagnostic tools
         df_command,
@@ -224,7 +224,7 @@ def get_diagnostic_tools() -> List[Any]:
         fio_performance_test,
         fsck_check,
         xfs_repair_check,
-        ssh_execute,
+        #ssh_execute,
         
         # System diagnostic tools
         df_command,

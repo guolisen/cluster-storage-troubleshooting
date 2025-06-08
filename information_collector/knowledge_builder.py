@@ -56,6 +56,14 @@ class KnowledgeBuilder(MetadataParsers):
                 pvc_metadata = self._parse_pvc_metadata(name, namespace)
                 pvc_id = self.knowledge_graph.add_gnode_pvc(name, namespace, **pvc_metadata)
                 
+                if pvc_metadata['AccessModes'] not in ['ReadWriteOnce', 'ReadWriteMany']:
+                    self.knowledge_graph.add_issue(
+                        pvc_id,
+                        "pvc_access_mode",
+                        f"PVC access mode issue: {pvc_metadata['AccessModes']}",
+                        "Critical" if pvc_metadata['AccessModes'] == 'ReadOnlyMany' else "high"
+                    )
+
                 # Link to target pod if it exists
                 if target_pod and target_namespace:
                     pod_id = f"gnode:Pod:{target_namespace}/{target_pod}"

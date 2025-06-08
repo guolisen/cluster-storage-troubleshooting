@@ -335,6 +335,7 @@ def test_disk_io_performance(node_name: str, device_path: str,
                 
                 # Execute command
                 print(f"Running {test_type} test with {block_size} block size...")
+                print(f"Command: {cmd}")
                 output = ssh_execute.invoke({"node_name": node_name, "command": cmd})
                 
                 # Parse JSON output if available

@@ -125,6 +125,22 @@ TASK:
 2. Validate the fixes to ensure they resolved the problem
 3. Provide a detailed report of the remediation actions taken
 
+KNOWLEDGE GRAPH TOOLS USAGE:
+- When using knowledge graph tools, use the parameters of entity_type and id format:
+  * e.g., "entity_type=Pod, id=default/nginx-pod", "entity_type=PV, id=pv-00001", "entity_type=Drive, id=drive-sda"
+  * Common entity types: Pod, PVC, PV, Drive, Node, StorageClass, CSIDriver, etc.
+
+- Start with discovery tools to understand what's in the Knowledge Graph:
+  * Use kg_list_entity_types() to discover available entity types and their counts
+  * Use kg_list_entities(entity_type) to find specific entities of a given type
+  * Use kg_list_relationship_types() to understand how entities are related
+
+- Then use detailed query tools:
+  * Use kg_get_entity_info(entity_type, id) to retrieve detailed information about specific entities
+  * Use kg_get_related_entities(entity_type, id) to understand relationships between components
+  * Use kg_get_all_issues() to find already detected issues in the system
+  * Use kg_find_path(source_entity_type, source_id, target_entity_type, target_id) to trace dependencies
+
 CONSTRAINTS:
 - Follow the Fix Plan step by step
 - Use only the tools available in the Phase2 tool registry

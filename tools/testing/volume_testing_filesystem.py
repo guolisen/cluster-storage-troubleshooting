@@ -22,7 +22,7 @@ def check_pod_volume_filesystem(pod_name: str, namespace: str = "default",
     Args:
         pod_name: Name of the pod with mounted volume
         namespace: Kubernetes namespace
-        mount_path: Path where volume is mounted
+        mount_path: Path where volume is mounted, must be specified
         device_path: Optional device path for the volume. If not provided, it will be detected
         
     Returns:

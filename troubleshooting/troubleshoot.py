@@ -192,6 +192,14 @@ async def run_information_collection_phase_wrapper(pod_name: str, namespace: str
     # Update the global knowledge graph
     KNOWLEDGE_GRAPH = collected_info.get('knowledge_graph')
     
+    # Initialize the Knowledge Graph in the tools module with the one from Phase0
+    if KNOWLEDGE_GRAPH:
+        from tools.core.knowledge_graph import initialize_knowledge_graph
+        initialize_knowledge_graph(KNOWLEDGE_GRAPH)
+        logging.info("Knowledge Graph from Phase0 initialized for tools")
+    else:
+        logging.warning("No Knowledge Graph available from Phase0")
+    
     return collected_info
 
 async def run_analysis_phase_wrapper(pod_name: str, namespace: str, volume_path: str, 

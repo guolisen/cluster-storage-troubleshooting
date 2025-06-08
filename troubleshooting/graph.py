@@ -291,11 +291,19 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 
 1. **Knowledge Graph Prioritization**:
    - ALWAYS check the Knowledge Graph FIRST before using command execution tools.
-   - Use kg_get_entity_info to retrieve detailed information about specific entities.
-   - Use kg_get_related_entities to understand relationships between components.
-   - Use kg_get_all_issues to find already detected issues in the system.
-   - Use kg_find_path to trace dependencies between entities (e.g., Pod → PVC → PV → Drive).
-   - Use kg_analyze_issues to identify patterns and root causes from the Knowledge Graph.
+   - Use the entity_type:entity_id format when referring to entities in the Knowledge Graph:
+     * Format: "entity_type:entity_id" (e.g., "Pod:default/nginx-pod", "PV:pv-00001", "Drive:drive-sda")
+     * Common entity types: Pod, PVC, PV, Drive, Node, StorageClass, CSIDriver, etc.
+   - Start with discovery tools to understand what's in the Knowledge Graph:
+     * Use kg_list_entity_types() to discover available entity types and their counts
+     * Use kg_list_entities(entity_type) to find specific entities of a given type
+     * Use kg_list_relationship_types() to understand how entities are related
+   - Then use detailed query tools:
+     * Use kg_get_entity_info(entity_type, id) to retrieve detailed information about specific entities
+     * Use kg_get_related_entities(entity_type, id) to understand relationships between components
+     * Use kg_get_all_issues() to find already detected issues in the system
+     * Use kg_find_path(source_entity_type, source_id, target_entity_type, target_id) to trace dependencies between entities (e.g., Pod → PVC → PV → Drive)
+     * Use kg_analyze_issues() to identify patterns and root causes from the Knowledge Graph
    - Only execute commands like kubectl or SSH when Knowledge Graph lacks needed information.
 
 2. **Troubleshooting Process**:
@@ -335,10 +343,18 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
    - If unresolved, provide a detailed report of findings (e.g., logs, drive status, SMART data, test results) and suggest manual intervention.
 
 4. **Knowledge Graph Usage**:
+   - Follow this effective Knowledge Graph navigation strategy:
+     1. Start with discovery: Use kg_list_entity_types() to understand what entity types exist
+     2. Find relevant entities: Use kg_list_entities(entity_type) to find specific entities of interest
+     3. Get detailed information: Use kg_get_entity_info(entity_type, id) for specific entities
+     4. Explore relationships: Use kg_get_related_entities(entity_type, id) to see connections
+     5. Analyze issues: Use kg_get_all_issues() to find existing issues
+     6. Trace dependencies: Use kg_find_path() to find connections between entities
    - Use kg_print_graph to get a human-readable overview of the entire system state.
-   - First check issues with kg_get_all_issues before running diagnostic commands. this issue is critical inforamtion to find root cause
+   - First check issues with kg_get_all_issues before running diagnostic commands. These issues are critical information to find root cause.
    - Use kg_get_summary to get high-level statistics about the cluster state.
    - For root cause analysis, use kg_analyze_issues to identify patterns across the system.
+   - Remember that entity IDs use the format "entity_type:entity_id" (e.g., "Pod:default/nginx-pod")
 
 7. **Constraints**:
    - Restrict operations to the Kubernetes cluster and configured worker nodes; do not access external networks or resources.

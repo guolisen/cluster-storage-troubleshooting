@@ -84,13 +84,13 @@ class RuleBasedPlanGenerator:
             List[str]: Ordered list of investigation priorities
         """
         priorities = []
-        
-        # Add priorities from historical experience
-        priorities.extend(self._get_priorities_from_historical_experience(historical_experience))
-        
+
         # Add priorities from critical issues on target entities
         priorities.extend(self._get_priorities_from_critical_issues(issues_analysis, target_entities))
-        
+
+        # Add priorities from historical experience
+        priorities.extend(self._get_priorities_from_historical_experience(historical_experience))
+
         # Add priorities from high severity issues
         priorities.extend(self._get_priorities_from_high_issues(issues_analysis, target_entities))
         
@@ -235,8 +235,9 @@ class RuleBasedPlanGenerator:
         # Add steps for each priority category
         self._add_critical_issue_steps(all_potential_steps, priorities, target_entities)
         self._add_hardware_verification_steps(all_potential_steps, priorities, target_entities)
-        self._add_pod_investigation_steps(all_potential_steps, target_entities)
         self._add_drive_investigation_steps(all_potential_steps, target_entities)
+        self._add_volume_investigation_steps(all_potential_steps, target_entities, volume_path)
+        self._add_pod_investigation_steps(all_potential_steps, target_entities)
         self._add_network_verification_steps(all_potential_steps, priorities)
         
         # Sort steps by priority score and limit to max_steps
@@ -276,15 +277,29 @@ class RuleBasedPlanGenerator:
         """
         if "hardware_verification" in priorities:
             node = target_entities.get("node", "").split(":")[-1] if "node" in target_entities else "all"
+            
+            # Add comprehensive disk health check
             steps_list.append({
                 "step": None,
-                "description": "Check disk health on the affected node",
+                "description": "Check disk health status using SMART data on the affected node",
                 "tool": "check_disk_health",
-                "arguments": {"node": node},
-                "expected": "Disk status and hardware errors",
+                "arguments": {"node_name": node, "device_path": "/dev/sda"},
+                "expected": "Disk health assessment with key metrics and status",
                 "priority": "high",
                 "category": "hardware_investigation",
-                "priority_score": 90
+                "priority_score": 95
+            })
+            
+            # Add disk error log scanning
+            steps_list.append({
+                "step": None,
+                "description": "Scan system logs for disk-related errors on the affected node",
+                "tool": "scan_disk_error_logs",
+                "arguments": {"node_name": node, "hours_back": 24},
+                "expected": "Summary of disk-related errors with actionable insights",
+                "priority": "high",
+                "category": "hardware_investigation",
+                "priority_score": 85
             })
     
     def _add_pod_investigation_steps(self, steps_list: List[Dict[str, Any]], 
@@ -320,6 +335,9 @@ class RuleBasedPlanGenerator:
         """
         if "drive" in target_entities:
             drive_id = target_entities["drive"].split(":")[-1]
+            node = target_entities.get("node", "").split(":")[-1] if "node" in target_entities else None
+            
+            # Get drive entity information from knowledge graph
             steps_list.append({
                 "step": None,
                 "description": "Get detailed Drive information including health status and metrics",
@@ -328,9 +346,156 @@ class RuleBasedPlanGenerator:
                 "expected": "Drive health status, SMART data, and any hardware issues",
                 "priority": "high",
                 "category": "hardware_investigation",
+                "priority_score": 88
+            })
+            
+            # If we have the node, add disk performance testing
+            if node:
+                # Add disk read-only test
+                steps_list.append({
+                    "step": None,
+                    "description": "Perform read-only test on the disk to verify readability",
+                    "tool": "run_disk_readonly_test",
+                    "arguments": {
+                        "node_name": node,
+                        "device_path": f"/dev/{drive_id}",
+                        "duration_minutes": 5
+                    },
+                    "expected": "Disk read performance metrics and error detection",
+                    "priority": "high",
+                    "category": "hardware_investigation",
+                    "priority_score": 85
+                })
+                
+                # Add disk IO performance test
+                steps_list.append({
+                    "step": None,
+                    "description": "Measure disk I/O performance under different workloads",
+                    "tool": "test_disk_io_performance",
+                    "arguments": {
+                        "node_name": node,
+                        "device_path": f"/dev/{drive_id}",
+                        "test_types": ["read", "randread"],
+                        "duration_seconds": 30
+                    },
+                    "expected": "Disk I/O performance metrics including IOPS and throughput",
+                    "priority": "medium",
+                    "category": "hardware_investigation",
+                    "priority_score": 75
+                })
+                
+                # Add disk jitter detection
+                steps_list.append({
+                    "step": None,
+                    "description": "Detect intermittent online/offline jitter in disk status",
+                    "tool": "detect_disk_jitter",
+                    "arguments": {
+                        "duration_minutes": 5,
+                        "node_name": node,
+                        "drive_uuid": drive_id
+                    },
+                    "expected": "Report on disk status stability and any detected jitter",
+                    "priority": "medium",
+                    "category": "hardware_investigation",
+                    "priority_score": 70
+                })
+    
+    def _add_volume_investigation_steps(self, steps_list: List[Dict[str, Any]],
+                                       target_entities: Dict[str, str],
+                                       volume_path: str) -> None:
+        """
+        Add steps for volume-specific investigation
+        
+        Args:
+            steps_list: List to add steps to
+            target_entities: Dictionary of target entity IDs
+            volume_path: Path of the volume with I/O error
+        """
+        if "pod" in target_entities:
+            pod_id = target_entities["pod"].split(":")[-1]
+            namespace = "default"  # Default namespace, could be extracted from pod_id if available
+            
+            # Add volume mount validation
+            steps_list.append({
+                "step": None,
+                "description": "Verify that the pod volume is correctly mounted and accessible",
+                "tool": "verify_volume_mount",
+                "arguments": {
+                    "pod_name": pod_id,
+                    "namespace": namespace,
+                    "mount_path": volume_path
+                },
+                "expected": "Volume mount verification with accessibility and filesystem details",
+                "priority": "critical",
+                "category": "volume_investigation",
+                "priority_score": 92
+            })
+            
+            # Add volume I/O test
+            steps_list.append({
+                "step": None,
+                "description": "Run I/O tests on the volume to check for read/write errors",
+                "tool": "run_volume_io_test",
+                "arguments": {
+                    "pod_name": pod_id,
+                    "namespace": namespace,
+                    "mount_path": volume_path
+                },
+                "expected": "Results of read/write tests on the volume",
+                "priority": "high", 
+                "category": "volume_investigation",
+                "priority_score": 86
+            })
+            
+            # Add volume performance test
+            steps_list.append({
+                "step": None,
+                "description": "Test I/O performance of the pod volume including speeds and latency",
+                "tool": "test_volume_io_performance",
+                "arguments": {
+                    "pod_name": pod_id,
+                    "namespace": namespace,
+                    "mount_path": volume_path,
+                    "test_duration": 30
+                },
+                "expected": "Volume I/O performance metrics for read/write operations",
+                "priority": "medium",
+                "category": "volume_investigation",
                 "priority_score": 80
             })
-    
+            
+            # Add filesystem check
+            steps_list.append({
+                "step": None,
+                "description": "Perform a non-destructive filesystem check on the pod volume",
+                "tool": "check_pod_volume_filesystem",
+                "arguments": {
+                    "pod_name": pod_id,
+                    "namespace": namespace,
+                    "mount_path": volume_path
+                },
+                "expected": "Filesystem health check results and any detected issues",
+                "priority": "medium",
+                "category": "volume_investigation",
+                "priority_score": 78
+            })
+            
+            # Add volume space usage analysis
+            steps_list.append({
+                "step": None,
+                "description": "Analyze volume space usage to identify potential space issues",
+                "tool": "analyze_volume_space_usage",
+                "arguments": {
+                    "pod_name": pod_id,
+                    "namespace": namespace,
+                    "mount_path": volume_path
+                },
+                "expected": "Volume space usage analysis with directories and file patterns",
+                "priority": "medium",
+                "category": "volume_investigation",
+                "priority_score": 75
+            })
+            
     def _add_network_verification_steps(self, steps_list: List[Dict[str, Any]], 
                                       priorities: List[str]) -> None:
         """

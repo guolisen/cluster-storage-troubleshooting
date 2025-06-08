@@ -3,8 +3,8 @@ llm:
   #model: "gpt-4-turbo-preview"
   #model: "gpt-4o-mini-2024-07-18"
   #model: "gpt-4.1-mini-2025-04-14"
-  #model: "gpt-4.1-nano-2025-04-14"
-  model: "grok-3-mini"
+  model: "gpt-4.1-nano-2025-04-14"
+  #model: "grok-3-mini"
   #api_endpoint: "https://api.openai.com/v1"
   #api_key: 'sk-proj--'
   api_endpoint: "https://api.zhizengzeng.com/v1"
@@ -20,12 +20,12 @@ monitor:
 
 plan_phase:
   use_llm: true  
-  timeout_seconds: 120        
+  timeout_seconds: 1800
   static_plan_step_path: "data/static_plan_step.json"
 
 # Troubleshooting Configuration
 troubleshoot:
-  timeout_seconds: 300
+  timeout_seconds: 1800
   interactive_mode: false
   auto_fix: false  
   ssh:

@@ -41,7 +41,7 @@ class RemediationPhase:
         self.console = Console()
         self.interactive_mode = config_data.get('troubleshoot', {}).get('interactive_mode', False)
     
-    async def run_remediation_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 60) -> str:
+    async def run_remediation_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 1800) -> str:
         """
         Run remediation using the provided LangGraph StateGraph
         
@@ -75,8 +75,8 @@ class RemediationPhase:
                 self.console.print("[red]Remediation timed out![/red]")
                 return "Remediation phase timed out - manual intervention may be required"
             except Exception as e:
-                self.console.print(f"[red]Remediation failed: {str(e)}[/red]")
-                return f"Remediation failed: {str(e)}"
+                self.console.print(f"[red]run_remediation_with_graph Remediation failed: {str(e)}[/red]")
+                return f"run_remediation_with_graph Remediation failed: {str(e)}"
             
             # Extract remediation results
             return self._extract_final_message(response)
@@ -191,8 +191,8 @@ HISTORICAL EXPERIENCE:
                 message_list.append({"role": "assistant", "content": remediation_result})
                 return remediation_result, message_list
             except Exception as e:
-                self.console.print(f"[red]Remediation failed: {str(e)}[/red]")
-                remediation_result = f"Remediation failed: {str(e)}"
+                self.console.print(f"[red]execute_fix_plan Remediation failed: {str(e)}[/red]")
+                remediation_result = f"execute_fix_plan Remediation failed: {str(e)}"
                 
                 # Add error message to message list
                 message_list.append({"role": "assistant", "content": remediation_result})

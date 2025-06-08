@@ -40,49 +40,6 @@ class AnalysisPhase:
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.console = Console()
     
-    async def run_analysis_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 60) -> str:
-        """
-        Run an analysis using the provided LangGraph StateGraph with enhanced progress tracking
-        
-        Args:
-            query: The initial query to send to the graph
-            graph: LangGraph StateGraph to use
-            timeout_seconds: Maximum execution time in seconds
-            
-        Returns:
-            str: Analysis result
-        """
-        try:
-            formatted_query = {"messages": [{"role": "user", "content": query}]}
-            
-            # First show the analysis panel
-            self.console.print(Panel(
-                "[yellow]Starting analysis with LangGraph...\nThis may take a few minutes to complete.", 
-                title="[bold blue]Analysis Phase",
-                border_style="blue"
-            ))
-            
-            # Run graph with timeout
-            try:
-                response = await asyncio.wait_for(
-                    graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
-                    timeout=timeout_seconds
-                )
-                self.console.print("[green]Analysis complete![/green]")
-            except asyncio.TimeoutError:
-                self.console.print("[red]Analysis timed out![/red]")
-                raise
-            except Exception as e:
-                self.console.print(f"[red]Analysis failed: {str(e)}[/red]")
-                raise
-            
-            # Extract analysis results
-            return self._extract_final_message(response)
-            
-        except Exception as e:
-            error_msg = handle_exception("run_analysis_with_graph", e, self.logger)
-            return f"Error in analysis: {str(e)}"
-    
     def _extract_final_message(self, response: Dict[str, Any]) -> str:
         """
         Extract the final message from a graph response

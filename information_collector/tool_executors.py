@@ -222,60 +222,77 @@ class ToolExecutors(InformationCollectorBase):
         )
         self.collected_data['kubernetes']['nodes'] = nodes_output
         
-        # Get disk usage
-        df_output = self._execute_tool_with_validation(
-            df_command, {
-                'options': '-h'
-            },
-            'df_command', 'Check disk space usage'
-        )
-        self.collected_data['system']['disk_usage'] = df_output
-        
-        # Get block devices
-        lsblk_output = self._execute_tool_with_validation(
-            lsblk_command, {
-                'options': ''
-            },
-            'lsblk_command', 'List block devices and mount points'
-        )
-        self.collected_data['system']['block_devices'] = lsblk_output
-        
-        # Enhanced kernel logs with comprehensive storage keywords
-        storage_keywords = "disk|drive|nvme|ssd|hdd|scsi|sata|xfs|ext4|mount|error|fail|i/o|io|sector|slot|bay|controller|csi|volume"
-        dmesg_output = self._execute_tool_with_validation(
-            dmesg_command, {
-                'options': f'| grep -iE "({storage_keywords})" | tail -50'
-            },
-            'dmesg_command', 'Check kernel logs for comprehensive storage-related issues'
-        )
-        self.collected_data['system']['kernel_logs'] = dmesg_output
-        
-        # Get systemd journal logs for storage services
-        journal_storage_output = self._execute_tool_with_validation(
-            journalctl_command, {
-                'options': f'-n 100 --no-pager | grep -iE "({storage_keywords})"'
-            },
-            'journalctl_storage', 'Collect systemd journal logs for storage-related services'
-        )
-        self.collected_data['system']['journal_storage_logs'] = journal_storage_output
-        
-        # Get kubelet service logs for volume issues
-        journal_kubelet_output = self._execute_tool_with_validation(
-            journalctl_command, {
-                'options': '-u kubelet -n 50 --no-pager'
-            },
-            'journalctl_kubelet', 'Collect kubelet service logs for volume mount issues'
-        )
-        self.collected_data['system']['journal_kubelet_logs'] = journal_kubelet_output
-        
-        # Get recent boot logs for hardware detection issues
-        journal_boot_output = self._execute_tool_with_validation(
-            journalctl_command, {
-                'options': f'-b --no-pager | grep -iE "({storage_keywords})" | tail -30'
-            },
-            'journalctl_boot', 'Collect boot-time logs for hardware and storage initialization'
-        )
-        self.collected_data['system']['journal_boot_logs'] = journal_boot_output
+        # Execute system commands on each node in the list
+        for node_name in nodes:
+            logging.info(f"Executing system tools on node: {node_name}")
+            node_key = node_name.replace('.', '_').replace('-', '_')
+            
+            # Initialize node-specific data structure if not exists
+            if 'system' not in self.collected_data:
+                self.collected_data['system'] = {}
+            if node_key not in self.collected_data['system']:
+                self.collected_data['system'][node_key] = {}
+            
+            # Get disk usage
+            df_output = self._execute_tool_with_validation(
+                df_command, {
+                    'node_name': node_name,
+                    'options': '-h'
+                },
+                f'df_command_{node_key}', f'Check disk space usage on {node_name}'
+            )
+            self.collected_data['system'][node_key]['disk_usage'] = df_output
+            
+            # Get block devices
+            lsblk_output = self._execute_tool_with_validation(
+                lsblk_command, {
+                    'node_name': node_name,
+                    'options': ''
+                },
+                f'lsblk_command_{node_key}', f'List block devices and mount points on {node_name}'
+            )
+            self.collected_data['system'][node_key]['block_devices'] = lsblk_output
+            
+            # Enhanced kernel logs with comprehensive storage keywords
+            storage_keywords = "disk|drive|nvme|ssd|hdd|scsi|sata|xfs|ext4|mount|error|fail|i/o|io|sector|slot|bay|controller|csi|volume"
+            dmesg_output = self._execute_tool_with_validation(
+                dmesg_command, {
+                    'node_name': node_name,
+                    'options': f'| grep -iE "({storage_keywords})" | tail -50'
+                },
+                f'dmesg_command_{node_key}', f'Check kernel logs for storage-related issues on {node_name}'
+            )
+            self.collected_data['system'][node_key]['kernel_logs'] = dmesg_output
+            
+            # Get systemd journal logs for storage services
+            journal_storage_output = self._execute_tool_with_validation(
+                journalctl_command, {
+                    'node_name': node_name,
+                    'options': f'-n 100 --no-pager | grep -iE "({storage_keywords})"'
+                },
+                f'journalctl_storage_{node_key}', f'Collect storage-related journal logs on {node_name}'
+            )
+            self.collected_data['system'][node_key]['journal_storage_logs'] = journal_storage_output
+            
+            # Get kubelet service logs for volume issues
+            journal_kubelet_output = self._execute_tool_with_validation(
+                journalctl_command, {
+                    'node_name': node_name,
+                    'options': '-u kubelet -n 50 --no-pager'
+                },
+                f'journalctl_kubelet_{node_key}', f'Collect kubelet logs on {node_name}'
+            )
+            self.collected_data['system'][node_key]['journal_kubelet_logs'] = journal_kubelet_output
+            
+            # Get recent boot logs for hardware detection issues
+            journal_boot_output = self._execute_tool_with_validation(
+                journalctl_command, {
+                    'node_name': node_name,
+                    'options': f'-b --no-pager | grep -iE "({storage_keywords})" | tail -30'
+                },
+                f'journalctl_boot_{node_key}', f'Collect boot-time logs on {node_name}'
+            )
+            self.collected_data['system'][node_key]['journal_boot_logs'] = journal_boot_output
     
     async def _execute_smart_data_tools(self, drives: List[str]):
         """Execute SMART data collection tools for drive health monitoring"""
@@ -283,46 +300,92 @@ class ToolExecutors(InformationCollectorBase):
         
         # Get SMART data for all drives
         for drive_uuid in drives:
-            # Get drive path from CSI Baremetal drive info
-            drive_path = self._get_drive_path_from_uuid(drive_uuid)
-            if drive_path:
+            # Get drive path and node info from CSI Baremetal drive info
+            drive_info = self._get_drive_info_from_uuid(drive_uuid)
+            if drive_info and drive_info.get('path'):
+                node_name = drive_info.get('node')
+                drive_path = drive_info.get('path')
+                
                 smart_output = self._execute_tool_with_validation(
                     self._execute_smartctl_command, {
                         'device_path': drive_path,
-                        'options': '-a'
+                        'options': '-a',
+                        'node_name': node_name
                     },
-                    f'smartctl_{drive_uuid}', f'Collect SMART data for drive {drive_uuid}'
+                    f'smartctl_{drive_uuid}', f'Collect SMART data for drive {drive_uuid} on node {node_name}'
                 )
                 if 'smart_data' not in self.collected_data:
                     self.collected_data['smart_data'] = {}
                 self.collected_data['smart_data'][drive_uuid] = smart_output
     
-    def _get_drive_path_from_uuid(self, drive_uuid: str) -> str:
-        """Extract drive path from CSI Baremetal drive information"""
+    def _get_drive_info_from_uuid(self, drive_uuid: str) -> Dict[str, str]:
+        """Extract drive information from CSI Baremetal drive information
+        
+        Args:
+            drive_uuid: Drive UUID to look up
+            
+        Returns:
+            Dict with drive info including path and node
+        """
+        drive_info = {'path': None, 'node': None, 'serial': None}
         drives_output = self.collected_data.get('csi_baremetal', {}).get('drives', '')
+        
         if drives_output and drive_uuid in drives_output:
             lines = drives_output.split('\n')
             in_drive_section = False
+            
             for line in lines:
                 if f'name: {drive_uuid}' in line:
                     in_drive_section = True
-                elif in_drive_section and 'path:' in line:
-                    return line.split('path:')[-1].strip()
-                elif in_drive_section and line.strip() and 'name:' in line and drive_uuid not in line:
-                    break
-        return None
+                elif in_drive_section:
+                    # Extract path information
+                    if 'path:' in line:
+                        drive_info['path'] = line.split('path:')[-1].strip()
+                    # Extract node information
+                    elif 'node:' in line:
+                        drive_info['node'] = line.split('node:')[-1].strip()
+                    # Extract serial information
+                    elif 'serial:' in line:
+                        drive_info['serial'] = line.split('serial:')[-1].strip()
+                    # Break if we've moved to another drive section
+                    elif line.strip() and 'name:' in line and drive_uuid not in line:
+                        break
+        
+        return drive_info
     
-    def _execute_smartctl_command(self, device_path: str, options: str = '-a') -> str:
-        """Execute smartctl command to get SMART data"""
+    def _get_drive_path_from_uuid(self, drive_uuid: str) -> str:
+        """Extract drive path from CSI Baremetal drive information (legacy support)"""
+        drive_info = self._get_drive_info_from_uuid(drive_uuid)
+        return drive_info.get('path')
+    
+    def _execute_smartctl_command(self, device_path: str, options: str = '-a', node_name: str = None) -> str:
+        """Execute smartctl command to get SMART data
+        
+        Args:
+            device_path: Path to the device
+            options: Command options
+            node_name: Node hostname or IP (if None, runs locally)
+            
+        Returns:
+            str: Command output
+        """
         try:
-            import subprocess
-            cmd = ['smartctl', options, device_path]
-            result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            return result.stdout
+            cmd_str = f"smartctl {options} {device_path}"
+            
+            # If node_name is provided, use SSH to execute on the remote node
+            if node_name:
+                from tools.diagnostics.hardware import ssh_execute
+                return ssh_execute.invoke({"node_name": node_name, "command": cmd_str})
+            else:
+                # Fall back to local execution
+                import subprocess
+                cmd = ['smartctl', options, device_path]
+                result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                return result.stdout
         except Exception as e:
             return f"Error executing smartctl: {str(e)}"
     
-    async def _execute_enhanced_log_analysis_tools(self):
+    async def _execute_enhanced_log_analysis_tools(self, nodes: List[str]):
         """Execute enhanced log analysis tools for comprehensive storage issue detection"""
         logging.info("Executing enhanced log analysis tools")
         
@@ -340,26 +403,44 @@ class ToolExecutors(InformationCollectorBase):
             "csi.*error"
         ]
         
-        for pattern in enhanced_dmesg_patterns:
-            dmesg_output = self._execute_tool_with_validation(
-                dmesg_command, {
-                    'options': f'| grep -iE "{pattern}" | tail -20'
-                },
-                f'dmesg_{pattern.replace(".*", "_")}', f'Check kernel logs for {pattern} issues'
-            )
+        # Execute enhanced log analysis on each node
+        for node_name in nodes:
+            logging.info(f"Executing enhanced log analysis on node: {node_name}")
+            node_key = node_name.replace('.', '_').replace('-', '_')
+            
+            # Initialize node-specific data structure if not exists
             if 'enhanced_logs' not in self.collected_data:
                 self.collected_data['enhanced_logs'] = {}
-            self.collected_data['enhanced_logs'][f'dmesg_{pattern}'] = dmesg_output
-        
-        # Enhanced journal analysis for CSI and storage services
-        csi_services = ['csi-baremetal-node', 'csi-baremetal-controller', 'kubelet']
-        for service in csi_services:
-            journal_output = self._execute_tool_with_validation(
-                journalctl_command, {
-                    'options': f'-u {service} -n 50 --no-pager'
-                },
-                f'journalctl_{service}', f'Collect {service} service logs for CSI issues'
-            )
+            if node_key not in self.collected_data['enhanced_logs']:
+                self.collected_data['enhanced_logs'][node_key] = {}
+            
+            # Process each dmesg pattern
+            for pattern in enhanced_dmesg_patterns:
+                pattern_key = pattern.replace(".*", "_")
+                dmesg_output = self._execute_tool_with_validation(
+                    dmesg_command, {
+                        'node_name': node_name,
+                        'options': f'| grep -iE "{pattern}" | tail -20'
+                    },
+                    f'dmesg_{pattern_key}_{node_key}', f'Check kernel logs for {pattern} issues on {node_name}'
+                )
+                self.collected_data['enhanced_logs'][node_key][f'dmesg_{pattern_key}'] = dmesg_output
+            
+            # Enhanced journal analysis for CSI and storage services
+            csi_services = ['csi-baremetal-node', 'csi-baremetal-controller', 'kubelet']
+            
+            # Initialize service_logs if not exists
             if 'service_logs' not in self.collected_data:
                 self.collected_data['service_logs'] = {}
-            self.collected_data['service_logs'][service] = journal_output
+            if node_key not in self.collected_data['service_logs']:
+                self.collected_data['service_logs'][node_key] = {}
+            
+            for service in csi_services:
+                journal_output = self._execute_tool_with_validation(
+                    journalctl_command, {
+                        'node_name': node_name,
+                        'options': f'-u {service} -n 50 --no-pager'
+                    },
+                    f'journalctl_{service}_{node_key}', f'Collect {service} service logs on {node_name}'
+                )
+                self.collected_data['service_logs'][node_key][service] = journal_output

@@ -73,7 +73,7 @@ class ComprehensiveInformationCollector(VolumeDiscovery, ToolExecutors, Knowledg
             await self._execute_smart_data_tools(volume_chain.get('drives', []))
             
             # Enhanced log analysis tools
-            await self._execute_enhanced_log_analysis_tools()
+            await self._execute_enhanced_log_analysis_tools(volume_chain.get('nodes', []))
             
             # Step 3: Build enhanced Knowledge Graph from tool outputs
             collector_logger.info("Step 3: Building Knowledge Graph from tool outputs...")

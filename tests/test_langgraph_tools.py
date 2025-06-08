@@ -65,7 +65,7 @@ def load_config():
         
         if 'troubleshoot' not in config:
             config['troubleshoot'] = {
-                'timeout_seconds': 300
+                'timeout_seconds': 1800
             }
             
         return config
@@ -87,7 +87,7 @@ def load_config():
                 'stdout': True
             },
             'troubleshoot': {
-                'timeout_seconds': 300
+                'timeout_seconds': 1800
             }
         }
 
@@ -123,7 +123,7 @@ async def test_tool(tool_func, test_args=None, config_data=None):
                     "stdout": True
                 },
                 "troubleshoot": {
-                    "timeout_seconds": 300
+                    "timeout_seconds": 1800
                 }
             }
         

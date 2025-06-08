@@ -41,7 +41,7 @@ class RemediationPhase:
         self.console = Console()
         self.interactive_mode = config_data.get('troubleshoot', {}).get('interactive_mode', False)
     
-    async def run_remediation_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 420) -> str:
+    async def run_remediation_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 1800) -> str:
         """
         Run remediation using the provided LangGraph StateGraph
         

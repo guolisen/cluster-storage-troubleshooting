@@ -194,56 +194,6 @@ async def run_information_collection_phase_wrapper(pod_name: str, namespace: str
     
     return collected_info
 
-async def run_analysis_with_graph(query: str, graph: StateGraph, timeout_seconds: int = 420) -> str:
-    """
-    Run an analysis using the provided LangGraph StateGraph with enhanced progress tracking
-    
-    Args:
-        query: The initial query to send to the graph
-        graph: LangGraph StateGraph to use
-        timeout_seconds: Maximum execution time in seconds
-        
-    Returns:
-        Tuple[str, str]: Root cause and fix plan
-    """
-    try:
-        formatted_query = {"messages": [{"role": "user", "content": query}]}
-        
-        # First show the analysis panel
-        console.print(Panel(
-            "[yellow]Starting analysis with LangGraph...\nThis may take a few minutes to complete.", 
-            title="[bold blue]Analysis Phase",
-            border_style="blue"
-        ))
-        
-        # Run graph with timeout
-        try:
-            response = await asyncio.wait_for(
-                graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
-                timeout=timeout_seconds
-            )
-            console.print("[green]Analysis complete![/green]")
-        except asyncio.TimeoutError:
-            console.print("[red]Analysis timed out![/red]")
-            raise
-        except Exception as e:
-            console.print(f"[red]Analysis failed: {str(e)}[/red]")
-            raise
-        
-        # Extract analysis results
-        if response["messages"]:
-            if isinstance(response["messages"], list):
-                final_message = response["messages"][-1].content
-            else:
-                final_message = response["messages"].content
-        else:
-            final_message = "Failed to generate analysis results"
-        
-        return final_message
-    except Exception as e:
-        logging.error(f"Error in run_analysis_with_graph: {str(e)}")
-        return "Error in analysis", str(e)
-
 async def run_analysis_phase_wrapper(pod_name: str, namespace: str, volume_path: str, 
                                   collected_info: Dict[str, Any], investigation_plan: str,
                                   message_list: List[Dict[str, str]] = None) -> Tuple[str, bool, List[Dict[str, str]]]:

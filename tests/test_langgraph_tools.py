@@ -532,7 +532,7 @@ async def main():
         if category is None or category == "all":
             console.print("[yellow]Testing all tool categories...[/yellow]")
             # Test Knowledge Graph tools
-            #all_results["knowledge_graph"] = await test_knowledge_graph_tools(kg, config_data)
+            all_results["knowledge_graph"] = await test_knowledge_graph_tools(kg, config_data)
             
             # Test Kubernetes tools
             #all_results["kubernetes"] = await test_kubernetes_tools(config_data)
@@ -541,7 +541,7 @@ async def main():
             #all_results["diagnostic"] = await test_diagnostic_tools(config_data)
             
             # Test Testing tools
-            all_results["testing"] = await test_testing_tools(config_data)
+            #all_results["testing"] = await test_testing_tools(config_data)
         elif category == "knowledge_graph":
             console.print("[yellow]Testing only Knowledge Graph tools...[/yellow]")
             all_results["knowledge_graph"] = await test_knowledge_graph_tools(kg, config_data)

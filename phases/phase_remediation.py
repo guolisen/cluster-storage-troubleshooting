@@ -127,8 +127,19 @@ TASK:
 
 KNOWLEDGE GRAPH TOOLS USAGE:
 - When using knowledge graph tools, use the parameters of entity_type and id format:
-  * e.g., "entity_type=Pod, id=default/nginx-pod", "entity_type=PV, id=pv-00001", "entity_type=Drive, id=drive-sda"
-  * Common entity types: Pod, PVC, PV, Drive, Node, StorageClass, CSIDriver, etc.
+  * Entity ID formats:
+    - Pod: "gnode:Pod:<namespace>/<name>" (example: "gnode:Pod:default/test-pod-1-0")
+    - PVC: "gnode:PVC:<namespace>/<name>" (example: "gnode:PVC:default/test-pvc-1")
+    - PV: "gnode:PV:<name>" (example: "gnode:PV:pv-test-123")
+    - Drive: "gnode:Drive:<uuid>" (example: "gnode:Drive:a1b2c3d4-e5f6")
+    - Node: "gnode:Node:<name>" (example: "gnode:Node:kind-control-plane")
+    - StorageClass: "gnode:StorageClass:<name>" (example: "gnode:StorageClass:csi-baremetal-sc")
+    - LVG: "gnode:LVG:<name>" (example: "gnode:LVG:lvg-1")
+    - AC: "gnode:AC:<name>" (example: "gnode:AC:ac-node1-ssd")
+    - Volume: "gnode:Volume:<namespace>/<name>" (example: "gnode:Volume:default/vol-1")
+    - System: "gnode:System:<entity_name>" (example: "gnode:System:kernel")
+    - ClusterNode: "gnode:ClusterNode:<name>" (example: "gnode:ClusterNode:worker-1")
+    - HistoricalExperience: "gnode:HistoricalExperience:<experience_id>" (example: "gnode:HistoricalExperience:exp-001")
 
 - Start with discovery tools to understand what's in the Knowledge Graph:
   * Use kg_list_entity_types() to discover available entity types and their counts

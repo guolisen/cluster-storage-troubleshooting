@@ -104,9 +104,6 @@ async def test_tool(tool_func, test_args=None, config_data=None):
         # Fallback
         tool_name = str(tool_func)
 
-    if tool_name == 'monitor_volume_latency':
-        console.print(f"[bold yellow]Skipping tool '{tool_name}' as it is not suitable for testing[/bold yellow]")
-
     try:
         # Ensure we have a config object for StructuredTool._run()
         if config_data is None:

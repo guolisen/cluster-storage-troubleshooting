@@ -625,3 +625,169 @@ def kg_list_relationship_types() -> str:
     }
     
     return json.dumps(result, indent=2)
+
+# Entity ID helper tools
+
+@tool
+def kg_get_entity_of_pod(namespace: str, name: str) -> str:
+    """
+    Get the entity ID for a Pod in the Knowledge Graph
+    
+    Args:
+        namespace: Namespace of the Pod
+        name: Name of the Pod
+        
+    Returns:
+        str: Entity ID in the format 'gnode:Pod:<namespace>/<name>'
+             Example: 'gnode:Pod:default/test-pod-1-0'
+    """
+    return f"gnode:Pod:{namespace}/{name}"
+
+@tool
+def kg_get_entity_of_pvc(namespace: str, name: str) -> str:
+    """
+    Get the entity ID for a PVC in the Knowledge Graph
+    
+    Args:
+        namespace: Namespace of the PVC
+        name: Name of the PVC
+        
+    Returns:
+        str: Entity ID in the format 'gnode:PVC:<namespace>/<name>'
+             Example: 'gnode:PVC:default/test-pvc-1'
+    """
+    return f"gnode:PVC:{namespace}/{name}"
+
+@tool
+def kg_get_entity_of_pv(name: str) -> str:
+    """
+    Get the entity ID for a PV in the Knowledge Graph
+    
+    Args:
+        name: Name of the PV
+        
+    Returns:
+        str: Entity ID in the format 'gnode:PV:<name>'
+             Example: 'gnode:PV:pv-test-123'
+    """
+    return f"gnode:PV:{name}"
+
+@tool
+def kg_get_entity_of_drive(uuid: str) -> str:
+    """
+    Get the entity ID for a Drive in the Knowledge Graph
+    
+    Args:
+        uuid: UUID of the Drive
+        
+    Returns:
+        str: Entity ID in the format 'gnode:Drive:<uuid>'
+             Example: 'gnode:Drive:a1b2c3d4-e5f6'
+    """
+    return f"gnode:Drive:{uuid}"
+
+@tool
+def kg_get_entity_of_node(name: str) -> str:
+    """
+    Get the entity ID for a Node in the Knowledge Graph
+    
+    Args:
+        name: Name of the Node
+        
+    Returns:
+        str: Entity ID in the format 'gnode:Node:<name>'
+             Example: 'gnode:Node:kind-control-plane'
+    """
+    return f"gnode:Node:{name}"
+
+@tool
+def kg_get_entity_of_storage_class(name: str) -> str:
+    """
+    Get the entity ID for a StorageClass in the Knowledge Graph
+    
+    Args:
+        name: Name of the StorageClass
+        
+    Returns:
+        str: Entity ID in the format 'gnode:StorageClass:name'
+    """
+    return f"gnode:StorageClass:{name}"
+
+@tool
+def kg_get_entity_of_lvg(name: str) -> str:
+    """
+    Get the entity ID for a LogicalVolumeGroup in the Knowledge Graph
+    
+    Args:
+        name: Name of the LVG
+        
+    Returns:
+        str: Entity ID in the format 'gnode:LVG:name'
+    """
+    return f"gnode:LVG:{name}"
+
+@tool
+def kg_get_entity_of_ac(name: str) -> str:
+    """
+    Get the entity ID for an AvailableCapacity in the Knowledge Graph
+    
+    Args:
+        name: Name of the AC
+        
+    Returns:
+        str: Entity ID in the format 'gnode:AC:name'
+    """
+    return f"gnode:AC:{name}"
+
+@tool
+def kg_get_entity_of_volume(namespace: str, name: str) -> str:
+    """
+    Get the entity ID for a Volume in the Knowledge Graph
+    
+    Args:
+        namespace: Namespace of the Volume
+        name: Name of the Volume
+        
+    Returns:
+        str: Entity ID in the format 'gnode:Volume:namespace/name'
+    """
+    return f"gnode:Volume:{namespace}/{name}"
+
+@tool
+def kg_get_entity_of_system(entity_name: str) -> str:
+    """
+    Get the entity ID for a System entity in the Knowledge Graph
+    
+    Args:
+        entity_name: Name of the System entity
+        
+    Returns:
+        str: Entity ID in the format 'gnode:System:entity_name'
+    """
+    return f"gnode:System:{entity_name}"
+
+@tool
+def kg_get_entity_of_cluster_node(name: str) -> str:
+    """
+    Get the entity ID for a ClusterNode in the Knowledge Graph
+    
+    Args:
+        name: Name of the ClusterNode
+        
+    Returns:
+        str: Entity ID in the format 'gnode:ClusterNode:name'
+    """
+    return f"gnode:ClusterNode:{name}"
+
+@tool
+def kg_get_entity_of_historical_experience(experience_id: str) -> str:
+    """
+    Get the entity ID for a HistoricalExperience in the Knowledge Graph
+    
+    Args:
+        experience_id: ID of the HistoricalExperience
+        
+    Returns:
+        str: Entity ID in the format 'gnode:HistoricalExperience:experience_id'
+    """
+    return f"gnode:HistoricalExperience:{experience_id}"

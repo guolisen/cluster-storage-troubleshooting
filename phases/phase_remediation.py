@@ -141,6 +141,20 @@ KNOWLEDGE GRAPH TOOLS USAGE:
     - ClusterNode: "gnode:ClusterNode:<name>" (example: "gnode:ClusterNode:worker-1")
     - HistoricalExperience: "gnode:HistoricalExperience:<experience_id>" (example: "gnode:HistoricalExperience:exp-001")
 
+  * Helper tools for generating entity IDs:
+    - Pod: kg_get_entity_of_pod(namespace, name) → returns "gnode:Pod:namespace/name"
+    - PVC: kg_get_entity_of_pvc(namespace, name) → returns "gnode:PVC:namespace/name"
+    - PV: kg_get_entity_of_pv(name) → returns "gnode:PV:name"
+    - Drive: kg_get_entity_of_drive(uuid) → returns "gnode:Drive:uuid"
+    - Node: kg_get_entity_of_node(name) → returns "gnode:Node:name"
+    - StorageClass: kg_get_entity_of_storage_class(name) → returns "gnode:StorageClass:name"
+    - LVG: kg_get_entity_of_lvg(name) → returns "gnode:LVG:name"
+    - AC: kg_get_entity_of_ac(name) → returns "gnode:AC:name"
+    - Volume: kg_get_entity_of_volume(namespace, name) → returns "gnode:Volume:namespace/name"
+    - System: kg_get_entity_of_system(entity_name) → returns "gnode:System:entity_name"
+    - ClusterNode: kg_get_entity_of_cluster_node(name) → returns "gnode:ClusterNode:name"
+    - HistoricalExperience: kg_get_entity_of_historical_experience(experience_id) → returns "gnode:HistoricalExperience:experience_id"
+
 - Start with discovery tools to understand what's in the Knowledge Graph:
   * Use kg_list_entity_types() to discover available entity types and their counts
   * Use kg_list_entities(entity_type) to find specific entities of a given type

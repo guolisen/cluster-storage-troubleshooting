@@ -72,11 +72,21 @@ def kg_get_entity_info(entity_type: str, id: str) -> str:
     Args:
         entity_type: Type of entity (Pod, PVC, PV, Drive, Node, etc.)
         id: ID or name of the entity. Can be provided in two formats:
-           1. Simple name (e.g., "nginx-pod", "pv-00001")
-           2. Full ID with namespace for Kubernetes resources (e.g., "default/nginx-pod")
+           Examples: "gnode:Pod:default/nginx-pod", "gnode:PV:pv-00001", "gnode:Drive:drive-sda"
            
-           The system will construct the full node_id as "entity_type:id"
-           Examples: "Pod:default/nginx-pod", "PV:pv-00001", "Drive:drive-sda"
+           Entity ID formats:
+           - Pod: "gnode:Pod:<namespace>/<name>" (example: "gnode:Pod:default/test-pod-1-0")
+           - PVC: "gnode:PVC:<namespace>/<name>" (example: "gnode:PVC:default/test-pvc-1")
+           - PV: "gnode:PV:<name>" (example: "gnode:PV:pv-test-123")
+           - Drive: "gnode:Drive:<uuid>" (example: "gnode:Drive:a1b2c3d4-e5f6")
+           - Node: "gnode:Node:<name>" (example: "gnode:Node:kind-control-plane")
+           - StorageClass: "gnode:StorageClass:<name>" (example: "gnode:StorageClass:csi-baremetal-sc")
+           - LVG: "gnode:LVG:<name>" (example: "gnode:LVG:lvg-1")
+           - AC: "gnode:AC:<name>" (example: "gnode:AC:ac-node1-ssd")
+           - Volume: "gnode:Volume:<namespace>/<name>" (example: "gnode:Volume:default/vol-1")
+           - System: "gnode:System:<entity_name>" (example: "gnode:System:kernel")
+           - ClusterNode: "gnode:ClusterNode:<name>" (example: "gnode:ClusterNode:worker-1")
+           - HistoricalExperience: "gnode:HistoricalExperience:<experience_id>" (example: "gnode:HistoricalExperience:exp-001")
         
     Returns:
         str: JSON serialized entity details with attributes and relationships
@@ -85,7 +95,7 @@ def kg_get_entity_info(entity_type: str, id: str) -> str:
     
     # Construct the full node_id if only name was provided
     if ':' not in id:
-        node_id = f"{entity_type}:{id}"
+        node_id = f"gnode:{entity_type}:{id}"
     else:
         node_id = id
     
@@ -101,7 +111,7 @@ def kg_get_entity_info(entity_type: str, id: str) -> str:
                 break
         
         if not found:
-            return json.dumps({"error": f"Entity not found: {entity_type}:{id}"})
+            return json.dumps({"error": f"Entity not found: gnode:{entity_type}:{id}"})
     
     # Get node attributes
     node_attrs = dict(kg.graph.nodes[node_id])
@@ -152,11 +162,21 @@ def kg_get_related_entities(entity_type: str, id: str, relationship_type: str = 
     Args:
         entity_type: Type of entity (Pod, PVC, PV, Drive, Node, etc.)
         id: ID or name of the entity. Can be provided in two formats:
-           1. Simple name (e.g., "nginx-pod", "pv-00001")
-           2. Full ID with namespace for Kubernetes resources (e.g., "default/nginx-pod")
+           Examples: "gnode:Pod:default/nginx-pod", "gnode:PV:pv-00001", "gnode:Drive:drive-sda"
            
-           The system will construct the full node_id as "entity_type:id"
-           Examples: "Pod:default/nginx-pod", "PV:pv-00001", "Drive:drive-sda"
+           Entity ID formats:
+           - Pod: "gnode:Pod:<namespace>/<name>" (example: "gnode:Pod:default/test-pod-1-0")
+           - PVC: "gnode:PVC:<namespace>/<name>" (example: "gnode:PVC:default/test-pvc-1")
+           - PV: "gnode:PV:<name>" (example: "gnode:PV:pv-test-123")
+           - Drive: "gnode:Drive:<uuid>" (example: "gnode:Drive:a1b2c3d4-e5f6")
+           - Node: "gnode:Node:<name>" (example: "gnode:Node:kind-control-plane")
+           - StorageClass: "gnode:StorageClass:<name>" (example: "gnode:StorageClass:csi-baremetal-sc")
+           - LVG: "gnode:LVG:<name>" (example: "gnode:LVG:lvg-1")
+           - AC: "gnode:AC:<name>" (example: "gnode:AC:ac-node1-ssd")
+           - Volume: "gnode:Volume:<namespace>/<name>" (example: "gnode:Volume:default/vol-1")
+           - System: "gnode:System:<entity_name>" (example: "gnode:System:kernel")
+           - ClusterNode: "gnode:ClusterNode:<name>" (example: "gnode:ClusterNode:worker-1")
+           - HistoricalExperience: "gnode:HistoricalExperience:<experience_id>" (example: "gnode:HistoricalExperience:exp-001")
         relationship_type: Optional relationship type to filter by (e.g., "uses", "bound_to", "runs_on")
         max_depth: Maximum traversal depth (1 = direct relationships only)
         
@@ -167,7 +187,7 @@ def kg_get_related_entities(entity_type: str, id: str, relationship_type: str = 
     
     # Construct the full node_id if only name was provided
     if ':' not in id:
-        node_id = f"{entity_type}:{id}"
+        node_id = f"gnode:{entity_type}:{id}"
     else:
         node_id = id
     
@@ -183,7 +203,7 @@ def kg_get_related_entities(entity_type: str, id: str, relationship_type: str = 
                 break
         
         if not found:
-            return json.dumps({"error": f"Entity not found: {entity_type}:{id}"})
+            return json.dumps({"error": f"Entity not found: gnode:{entity_type}:{id}"})
     
     # Find related entities recursively up to max_depth
     related_entities = []
@@ -329,14 +349,24 @@ def kg_find_path(source_entity_type: str, source_id: str,
     Args:
         source_entity_type: Type of source entity (Pod, PVC, PV, Drive, Node, etc.)
         source_id: ID or name of the source entity. Can be provided in two formats:
-                  1. Simple name (e.g., "nginx-pod", "pv-00001")
-                  2. Full ID with namespace for Kubernetes resources (e.g., "default/nginx-pod")
+                  Examples: "gnode:Pod:default/nginx-pod", "gnode:PV:pv-00001", "gnode:Drive:drive-sda"
                   
-                  The system will construct the full node_id as "{source_entity_type}:{source_id}"
-                  Examples: "Pod:default/nginx-pod", "PV:pv-00001", "Drive:drive-sda"
+                  Entity ID formats:
+                  - Pod: "gnode:Pod:<namespace>/<name>" (example: "gnode:Pod:default/test-pod-1-0")
+                  - PVC: "gnode:PVC:<namespace>/<name>" (example: "gnode:PVC:default/test-pvc-1")
+                  - PV: "gnode:PV:<name>" (example: "gnode:PV:pv-test-123")
+                  - Drive: "gnode:Drive:<uuid>" (example: "gnode:Drive:a1b2c3d4-e5f6")
+                  - Node: "gnode:Node:<name>" (example: "gnode:Node:kind-control-plane")
+                  - StorageClass: "gnode:StorageClass:<name>" (example: "gnode:StorageClass:csi-baremetal-sc")
+                  - LVG: "gnode:LVG:<name>" (example: "gnode:LVG:lvg-1")
+                  - AC: "gnode:AC:<name>" (example: "gnode:AC:ac-node1-ssd")
+                  - Volume: "gnode:Volume:<namespace>/<name>" (example: "gnode:Volume:default/vol-1")
+                  - System: "gnode:System:<entity_name>" (example: "gnode:System:kernel")
+                  - ClusterNode: "gnode:ClusterNode:<name>" (example: "gnode:ClusterNode:worker-1")
+                  - HistoricalExperience: "gnode:HistoricalExperience:<experience_id>" (example: "gnode:HistoricalExperience:exp-001")
         target_entity_type: Type of target entity (Pod, PVC, PV, Drive, Node, etc.)
         target_id: ID or name of the target entity. Format is the same as source_id.
-                  The system will construct the full node_id as "{target_entity_type}:{target_id}"
+                  The system will construct the full node_id as "gnode:{target_entity_type}:{target_id}"
         
     Returns:
         str: JSON serialized path between entities with relationship details
@@ -344,8 +374,8 @@ def kg_find_path(source_entity_type: str, source_id: str,
     kg = get_knowledge_graph()
     
     # Construct node IDs
-    source_node_id = f"{source_entity_type}:{source_id}"
-    target_node_id = f"{target_entity_type}:{target_id}"
+    source_node_id = f"gnode:{source_entity_type}:{source_id}"
+    target_node_id = f"gnode:{target_entity_type}:{target_id}"
     
     # Check if nodes exist
     if not kg.graph.has_node(source_node_id):
@@ -366,10 +396,10 @@ def kg_find_path(source_entity_type: str, source_id: str,
     
     # Return error if either node is not found
     if not kg.graph.has_node(source_node_id):
-        return json.dumps({"error": f"Source entity not found: {source_entity_type}:{source_id}"})
+        return json.dumps({"error": f"Source entity not found: gnode:{source_entity_type}:{source_id}"})
     
     if not kg.graph.has_node(target_node_id):
-        return json.dumps({"error": f"Target entity not found: {target_entity_type}:{target_id}"})
+        return json.dumps({"error": f"Target entity not found: gnode:{target_entity_type}:{target_id}"})
     
     # Find shortest path
     path_nodes = kg.find_path(source_node_id, target_node_id)

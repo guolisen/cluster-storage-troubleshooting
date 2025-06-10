@@ -4,10 +4,12 @@ LangGraph Graph Building Components for Kubernetes Volume I/O Error Troubleshoot
 
 This module contains functions for creating and configuring LangGraph state graphs
 used in the analysis and remediation phases of Kubernetes volume troubleshooting.
+Enhanced with specific end conditions for better control over graph termination.
 """
 
 import json
 import logging
+import re
 
 # Configure logging (file only, no console output)
 logger = logging.getLogger('langgraph')
@@ -15,17 +17,30 @@ logger.setLevel(logging.INFO)
 # Don't propagate to root logger to avoid console output
 logger.propagate = False
 
-from typing import Dict, List, Any
+from typing import Dict, List, Any, TypedDict, Optional, Union, Callable
 
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import tools_condition
+from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 from troubleshooting.serial_tool_node import SerialToolNode
+
+
+# Enhanced state class to track additional information
+class EnhancedMessagesState(TypedDict):
+    """Enhanced state class that extends MessagesState with additional tracking"""
+    messages: List[BaseMessage]
+    iteration_count: int
+    tool_call_count: int
+    goals_achieved: List[str]
+    root_cause_identified: bool
+    fix_plan_provided: bool
 
 
 def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "phase1", config_data: Dict[str, Any] = None):
     """
     Create a LangGraph ReAct graph for troubleshooting with pre-collected context
+    and enhanced end conditions
     
     Args:
         collected_info: Pre-collected diagnostic information from Phase 0
@@ -56,13 +71,6 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
         if phase == "phase1":
             phase_specific_guidance = """
 You are currently in Phase 1 (Investigation). Your primary task is to perform comprehensive root cause analysis and evidence collection using investigation tools only.
-
-PHASE 1 TOOLS AVAILABLE (24 investigation tools):
-- Knowledge Graph Analysis (7 tools): kg_get_entity_info, kg_get_related_entities, kg_get_all_issues, kg_find_path, kg_get_summary, kg_analyze_issues, kg_print_graph
-- Read-only Kubernetes (4 tools): kubectl_get, kubectl_describe, kubectl_logs, kubectl_exec (read-only)
-- CSI Baremetal Info (6 tools): kubectl_get_drive, kubectl_get_csibmnode, kubectl_get_availablecapacity, kubectl_get_logicalvolumegroup, kubectl_get_storageclass, kubectl_get_csidrivers
-- System Information (5 tools): df_command, lsblk_command, mount_command, dmesg_command, journalctl_command
-- Hardware Information (2 tools): smartctl_check, ssh_execute (read-only)
 
 PHASE 1 RESTRICTIONS:
 - NO destructive operations (no kubectl_apply, kubectl_delete, fsck_check)
@@ -121,14 +129,6 @@ Provide a detailed investigation report that includes:
         elif phase == "phase2":
             phase_specific_guidance = """
 You are currently in Phase 2 (Action/Remediation). You have access to all Phase 1 investigation tools PLUS action tools for implementing fixes.
-
-PHASE 2 TOOLS AVAILABLE (34+ tools):
-All Phase 1 tools (24 investigation tools) PLUS:
-- Kubernetes Action Tools (2): kubectl_apply, kubectl_delete
-- Hardware Action Tools (2): fio_performance_test, fsck_check
-- Test Pod Creation (3): create_test_pod, create_test_pvc, create_test_storage_class
-- Volume Testing (4): run_volume_io_test, validate_volume_mount, test_volume_permissions, run_volume_stress_test
-- Resource Cleanup (5): cleanup_test_resources, list_test_resources, cleanup_specific_test_pod, cleanup_orphaned_pvs, force_cleanup_stuck_resources
 
 PHASE 2 CAPABILITIES:
 - Execute remediation actions based on Phase 1 **Fix Plan**
@@ -284,6 +284,7 @@ Fix Plan:
             "role": "system", 
             "content": f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
 
+<<< Note >>>: Please following the Investigation Plan to run tools step by step, and run 8 steps at least.
 <<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
 
 {phase_specific_guidance}
@@ -292,9 +293,6 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 
 1. **Knowledge Graph Prioritization**:
    - ALWAYS check the Knowledge Graph FIRST before using command execution tools.
-   - Use the entity_type:entity_id format when referring to entities in the Knowledge Graph:
-     * Format: "entity_type:entity_id" (e.g., "Pod:default/nginx-pod", "PV:pv-00001", "Drive:drive-sda")
-     * Common entity types: Pod, PVC, PV, Drive, Node, StorageClass, CSIDriver, etc.
    - Start with discovery tools to understand what's in the Knowledge Graph:
      * Use kg_list_entity_types() to discover available entity types and their counts
      * Use kg_list_entities(entity_type) to find specific entities of a given type
@@ -313,7 +311,7 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
    - Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
      a. **Check Knowledge Graph**: First use Knowledge Graph tools (kg_*) to understand the current state and existing issues.
      b. **Confirm Issue**: If Knowledge Graph lacks information, run `kubectl logs <pod-name> -n <namespace>` and `kubectl describe pod <pod-name> -n <namespace>` to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount").
-     c. **Verify Configurations**: Check Pod, PVC, and PV with `kubectl get pod/pvc/pv -o yaml`. Confirm PV uses local volume, valid disk path (e.g., `/dev/sda`), and correct `nodeAffinity`. Verify mount points with `kubectl exec <pod-name> -n <namespace> -- df -h` and `ls -ld <mount-path>`.
+     c. **Verify Configurations**: Check Pod, PVC, and PV with `kubectl get pod/pvc/pv <resource_name> -o yaml`. Confirm PV uses local volume, valid disk path (e.g., `/dev/sda`), and correct `nodeAffinity`. Verify mount points with `kubectl exec <pod-name> -n <namespace> -- df -h` and `ls -ld <mount-path>`.
      d. **Check CSI Baremetal Driver and Resources**:
         - Identify driver: `kubectl get storageclass <storageclass-name> -o yaml` (e.g., `csi-baremetal-sc-ssd`).
         - Verify driver pod: `kubectl get pods -n kube-system -l app=csi-baremetal` and `kubectl logs <driver-pod-name> -n kube-system`. Check for errors like "failed to mount".
@@ -504,8 +502,98 @@ OUTPUT EXAMPLE:
         
         return {"messages": state["messages"] + [response]}
     
+    # Define the end condition check function
+    def check_end_conditions(state: MessagesState) -> str:
+        """
+        Check if specific end conditions are met
+        Returns "end" if the graph should end, "continue" if it should continue
+        """
+        messages = state["messages"]
+        if not messages:
+            return "continue"
+            
+        last_message = messages[-1]
+        
+        # Check if we've reached max iterations
+        max_iterations = config_data.get("max_iterations", 30)
+        ai_messages = [m for m in messages if getattr(m, "type", "") == "ai"]
+        if len(ai_messages) > max_iterations:
+            logging.info(f"Ending graph: reached max iterations ({max_iterations})")
+            return "end"
+            
+        # Skip content checks if the last message isn't from the AI
+        if getattr(last_message, "type", "") != "ai":
+            return "continue"
+            
+        content = getattr(last_message, "content", "")
+        if not content:
+            return "continue"
+        
+        # Check for explicit end marker
+        if "[END_GRAPH]" in content:
+            logging.info("Ending graph: explicit end marker found")
+            return "end"
+            
+        # Check for required sections in the output for Phase 1
+        if phase == "phase1":
+            required_sections = [
+                "Summary of Findings:",
+                "Special Case Detected",
+                "Detailed Analysis:",
+                "Relationship Analysis:",
+                "Investigation Process:",
+                "Potential Root Causes:",
+                "Root Cause:",
+                "Fix Plan:"
+            ]
+            
+            # Count how many required sections are present
+            sections_found = sum(1 for section in required_sections if section in content)
+            
+            # If most required sections are present, consider it complete
+            if sections_found >= 3:  # At least 5 of the 7 required sections
+                logging.info(f"Ending graph: found {sections_found}/{len(required_sections)} required sections")
+                return "end"
+                
+        # Check for required sections in the output for Phase 2
+        elif phase == "phase2":
+            required_sections = [
+                "Actions Taken:",
+                "Test Results:",
+                "Resolution Status:",
+                "Remaining Issues:",
+                "Recommendations:"
+            ]
+            
+            # Count how many required sections are present
+            sections_found = sum(1 for section in required_sections if section in content)
+            
+            # If most required sections are present, consider it complete
+            if sections_found >= 2:  # At least 3 of the 5 required sections
+                logging.info(f"Ending graph: found {sections_found}/{len(required_sections)} required sections")
+                return "end"
+        
+        # Check for convergence (model repeating itself)
+        if len(ai_messages) > 3:
+            # Compare the last message with the third-to-last message (skipping the tool response in between)
+            last_content = content
+            third_to_last_content = getattr(ai_messages[-3], "content", "")
+            
+            # Simple similarity check - if they start with the same paragraph
+            if last_content and third_to_last_content:
+                # Get first 100 chars of each message
+                last_start = last_content[:100] if len(last_content) > 100 else last_content
+                third_start = third_to_last_content[:100] if len(third_to_last_content) > 100 else third_to_last_content
+                
+                if last_start == third_start:
+                    logging.info("Ending graph: detected convergence (model repeating itself)")
+                    return "end"
+        
+        # Default: continue execution
+        return "continue"
+
     # Build state graph
-    logging.info("Building state graph")
+    logging.info("Building state graph with enhanced end conditions")
     builder = StateGraph(MessagesState)
     
     logging.info("Adding node: call_model")
@@ -519,14 +607,28 @@ OUTPUT EXAMPLE:
     logging.info("Adding node: tools (SerialToolNode for sequential execution)")
     builder.add_node("tools", SerialToolNode(tools))
     
+    logging.info("Adding node: check_end")
+    builder.add_node("check_end", check_end_conditions)
+    
     logging.info("Adding conditional edges for tools")
     builder.add_conditional_edges(
         "call_model",
         tools_condition,
         {
             "tools": "tools",
-            "none": END,
-            "__end__": END  # Add explicit mapping for __end__ state
+            "none": "check_end",  # Instead of going directly to END, go to check_end
+            "__end__": "check_end"
+        }
+    )
+    
+    logging.info("Adding conditional edges from check_end node")
+    builder.add_conditional_edges(
+        "check_end",
+        lambda state: check_end_conditions(state),
+        {
+            "end": END,
+            "__end__": END,
+            "continue": "call_model"  # Loop back if conditions not met
         }
     )
     

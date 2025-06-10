@@ -68,7 +68,7 @@ class InvestigationPlanner:
         Returns:
             Tuple[str, List[Dict[str, str]]]: (Formatted Investigation Plan with step-by-step actions, Updated message list)
         """
-        self.logger.info(f"Generating investigation plan for {namespace}/{pod_name} volume {volume_path}")
+        self.logger.info(f"Generating investigation plan for {namespace} {pod_name} volume {volume_path}")
         
         try:
             # Generate the plan using the three-step process

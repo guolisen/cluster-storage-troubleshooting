@@ -16,8 +16,8 @@ def kubectl_get(resource_type: str, resource_name: str = None, namespace: str = 
     
     Args:
         resource_type: Type of resource (pod, pvc, pv, node, etc.)
-        resource_name: Name of resource (optional)
-        namespace: Namespace (optional)
+        resource_name: Name of resource (optional) (e.g. test-pod-1)
+        namespace: Namespace (optional) (e.g. default)
         output_format: Output format (yaml, json, wide, etc.)
         
     Returns:
@@ -52,7 +52,7 @@ def kubectl_describe(resource_type: str, resource_name: str, namespace: str = No
     
     Args:
         resource_type: Type of resource (pod, pvc, pv, node, etc.)
-        resource_name: Name of resource
+        resource_name: Name of resource (e.g. test-pod-1)
         namespace: Namespace (optional)
         
     Returns:
@@ -106,7 +106,7 @@ def kubectl_delete(resource_type: str, resource_name: str, namespace: str = None
     
     Args:
         resource_type: Type of resource (pod, pvc, pv, node, etc.)
-        resource_name: Name of resource
+        resource_name: Name of resource (e.g. test-pod-1)
         namespace: Namespace (optional)
         
     Returns:
@@ -132,9 +132,9 @@ def kubectl_exec(pod_name: str, command: str, namespace: str = None) -> str:
     Execute command in a pod
     
     Args:
-        pod_name: Pod name
+        pod_name: Pod name (e.g. test-pod-1)
         command: Command to execute
-        namespace: Namespace (optional)
+        namespace: Namespace (optional) (e.g. default)
         
     Returns:
         str: Command output
@@ -161,7 +161,7 @@ def kubectl_logs(pod_name: str, namespace: str = None, container: str = None, ta
     Get logs from a pod
     
     Args:
-        pod_name: Pod name
+        pod_name: Pod name (e.g. test-pod-1)
         namespace: Namespace (optional)
         container: Container name (optional)
         tail: Number of lines to show from the end (optional)

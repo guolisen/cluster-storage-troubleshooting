@@ -64,31 +64,31 @@ class KGContextBuilder:
             kg_context["nodes"].append(self.format_node_for_llm(pod_id))
             
             # Add PVC, PV, Drive chain
-            for entity_type in ["pvc", "pv", "drive", "node"]:
-                if entity_type in target_entities:
-                    entity_id = target_entities[entity_type]
+            for gnode_subtype in ["pvc", "pv", "drive", "node"]:
+                if gnode_subtype in target_entities:
+                    entity_id = target_entities[gnode_subtype]
                     kg_context["nodes"].append(self.format_node_for_llm(entity_id))
                     
                     # Add relationships
-                    if entity_type == "pvc" and "pod" in target_entities:
+                    if gnode_subtype == "pvc" and "pod" in target_entities:
                         kg_context["relationships"].append({
                             "source": target_entities["pod"],
                             "target": entity_id,
                             "type": "uses"
                         })
-                    elif entity_type == "pv" and "pvc" in target_entities:
+                    elif gnode_subtype == "pv" and "pvc" in target_entities:
                         kg_context["relationships"].append({
                             "source": target_entities["pvc"],
                             "target": entity_id,
                             "type": "bound_to"
                         })
-                    elif entity_type == "drive" and "pv" in target_entities:
+                    elif gnode_subtype == "drive" and "pv" in target_entities:
                         kg_context["relationships"].append({
                             "source": target_entities["pv"],
                             "target": entity_id,
                             "type": "maps_to"
                         })
-                    elif entity_type == "node" and "drive" in target_entities:
+                    elif gnode_subtype == "node" and "drive" in target_entities:
                         kg_context["relationships"].append({
                             "source": target_entities["drive"],
                             "target": entity_id,
@@ -147,9 +147,9 @@ class KGContextBuilder:
         node_attrs = dict(self.kg.graph.nodes[node_id])
         return {
             "id": node_id,
-            "type": node_attrs.get("entity_type", "unknown"),
+            "type": node_attrs.get("gnode_subtype", "unknown"),
             "attributes": {k: v for k, v in node_attrs.items() 
-                          if k not in ["entity_type", "issues"]},
+                          if k not in ["gnode_subtype", "issues"]},
             "issues": node_attrs.get("issues", [])
         }
     
@@ -217,7 +217,7 @@ class KGContextBuilder:
         Returns:
             Dict[str, str]: Dictionary mapping entity types to their IDs
         """
-        target_entities = {"pod": f"Pod:{namespace}/{pod_name}"}
+        target_entities = {"pod": f"gnode:Pod:{namespace}/{pod_name}"}
         
         try:
             # Find the pod node ID
@@ -244,25 +244,26 @@ class KGContextBuilder:
         Returns:
             str: Node ID for the pod
         """
-        # Try standard format
-        pod_node_id = f"Pod:{namespace}/{pod_name}"
+        # Try standard format 
+        # Pod: "gnode:Pod:<namespace>/<name>" (example: "gnode:Pod:default/test-pod-1-0")
+        pod_node_id = f"gnode:Pod:{namespace}/{pod_name}"
         if self.kg.graph.has_node(pod_node_id):
             return pod_node_id
             
         # Try alternative format
-        pod_node_id = f"Pod:{pod_name}"
+        pod_node_id = f"gnode:Pod:{pod_name}"
         if self.kg.graph.has_node(pod_node_id):
             return pod_node_id
             
         # Search by name and namespace attributes
         for node_id, attrs in self.kg.graph.nodes(data=True):
-            if (attrs.get('entity_type') == 'Pod' and 
+            if (attrs.get('gnode_subtype') == 'Pod' and 
                 attrs.get('name') == pod_name and
                 attrs.get('namespace') == namespace):
                 return node_id
                 
         # Return default if not found
-        return f"Pod:{namespace}/{pod_name}"
+        return f"gnode:Pod:{namespace}/{pod_name}"
     
     def _trace_volume_chain(self, pod_node_id: str, target_entities: Dict[str, str]) -> None:
         """
@@ -275,7 +276,7 @@ class KGContextBuilder:
         # Find connected PVCs
         for _, target, _ in self.kg.graph.out_edges(pod_node_id, data=True):
             target_attrs = self.kg.graph.nodes[target]
-            if target_attrs.get('entity_type') == 'PVC':
+            if target_attrs.get('gnode_subtype') == 'PVC':
                 target_entities["pvc"] = target
                 self._trace_pvc_to_pv(target, target_entities)
                 break
@@ -291,7 +292,7 @@ class KGContextBuilder:
         # Find connected PV
         for _, pv_target, _ in self.kg.graph.out_edges(pvc_node_id, data=True):
             pv_attrs = self.kg.graph.nodes[pv_target]
-            if pv_attrs.get('entity_type') == 'PV':
+            if pv_attrs.get('gnode_subtype') == 'PV':
                 target_entities["pv"] = pv_target
                 self._trace_pv_to_drive(pv_target, target_entities)
                 break
@@ -307,7 +308,7 @@ class KGContextBuilder:
         # Find connected Drive
         for _, drive_target, _ in self.kg.graph.out_edges(pv_node_id, data=True):
             drive_attrs = self.kg.graph.nodes[drive_target]
-            if drive_attrs.get('entity_type') == 'Drive':
+            if drive_attrs.get('gnode_subtype') == 'Drive':
                 target_entities["drive"] = drive_target
                 self._trace_drive_to_node(drive_target, target_entities)
                 break
@@ -323,6 +324,6 @@ class KGContextBuilder:
         # Find the Node hosting the drive
         for _, node_target, _ in self.kg.graph.out_edges(drive_node_id, data=True):
             node_attrs = self.kg.graph.nodes[node_target]
-            if node_attrs.get('entity_type') == 'Node':
+            if node_attrs.get('gnode_subtype') == 'Node':
                 target_entities["node"] = node_target
                 break

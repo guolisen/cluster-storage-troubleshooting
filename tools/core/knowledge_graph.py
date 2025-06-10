@@ -367,6 +367,7 @@ def kg_find_path(source_entity_type: str, source_id: str,
         target_entity_type: Type of target entity (Pod, PVC, PV, Drive, Node, etc.)
         target_id: ID or name of the target entity. Format is the same as source_id.
                   The system will construct the full node_id as "gnode:{target_entity_type}:{target_id}"
+                  Examples: "gnode:Pod:default/nginx-pod", "gnode:PV:pv-00001", "gnode:Drive:drive-sda"
         
     Returns:
         str: JSON serialized path between entities with relationship details

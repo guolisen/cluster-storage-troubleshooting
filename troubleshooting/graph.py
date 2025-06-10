@@ -18,8 +18,9 @@ logger.propagate = False
 from typing import Dict, List, Any
 
 from langgraph.graph import StateGraph, MessagesState, START, END
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import tools_condition
 from langchain_openai import ChatOpenAI
+from troubleshooting.serial_tool_node import SerialToolNode
 
 
 def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "phase1", config_data: Dict[str, Any] = None):
@@ -515,8 +516,8 @@ OUTPUT EXAMPLE:
     from tools import define_remediation_tools
     tools = define_remediation_tools()
     
-    logging.info("Adding node: tools")
-    builder.add_node("tools", ToolNode(tools))
+    logging.info("Adding node: tools (SerialToolNode for sequential execution)")
+    builder.add_node("tools", SerialToolNode(tools))
     
     logging.info("Adding conditional edges for tools")
     builder.add_conditional_edges(

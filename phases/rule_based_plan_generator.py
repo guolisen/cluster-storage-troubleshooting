@@ -276,14 +276,16 @@ class RuleBasedPlanGenerator:
             target_entities: Dictionary of target entity IDs
         """
         if "hardware_verification" in priorities:
-            node = target_entities.get("node", "") if "node" in target_entities else "all"
-            
+            node_id = target_entities.get("node", "") if "node" in target_entities else "all"
+            tag = node_id.split(':')
+            node_name = tag[-1]
+
             # Add comprehensive disk health check
             steps_list.append({
                 "step": None,
                 "description": "Check disk health status using SMART data on the affected node",
                 "tool": "check_disk_health",
-                "arguments": {"node_name": node, "device_path": "/dev/sda"},
+                "arguments": {"node_name": node_name, "device_path": "/dev/sda"},
                 "expected": "Disk health assessment with key metrics and status",
                 "priority": "high",
                 "category": "hardware_investigation",
@@ -295,7 +297,7 @@ class RuleBasedPlanGenerator:
                 "step": None,
                 "description": "Scan system logs for disk-related errors on the affected node",
                 "tool": "scan_disk_error_logs",
-                "arguments": {"node_name": node, "hours_back": 24},
+                "arguments": {"node_name": node_name, "hours_back": 24},
                 "expected": "Summary of disk-related errors with actionable insights",
                 "priority": "high",
                 "category": "hardware_investigation",

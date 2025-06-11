@@ -76,7 +76,7 @@ spec:
         app: test-nginx
         stor-operator.dell.com/need-wait: "true"
     spec:
-      accessModes: [ "ReadWriteOnce" ]
+      accessModes: [ "ReadOnlyMany" ]
       volumeMode: Filesystem
       resources:
         requests:

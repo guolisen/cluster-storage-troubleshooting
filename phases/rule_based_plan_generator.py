@@ -276,7 +276,10 @@ class RuleBasedPlanGenerator:
             target_entities: Dictionary of target entity IDs
         """
         if "hardware_verification" in priorities:
-            node_id = target_entities.get("node", "") if "node" in target_entities else "all"
+            node_id = target_entities.get("node", "") if "node" in target_entities else None
+            if node_id == None:
+                return
+
             tag = node_id.split(':')
             node_name = tag[-1]
 
@@ -336,7 +339,10 @@ class RuleBasedPlanGenerator:
             target_entities: Dictionary of target entity IDs
         """
         if "drive" in target_entities:
-            drive_id = target_entities["drive"].split(":")[-1]
+            drive_id = target_entities["drive"].split(":")[-1] if "drive" in target_entities else None
+            if drive_id == None:
+                return
+
             node = target_entities.get("node", "").split(":")[-1] if "node" in target_entities else None
             
             # Get drive entity information from knowledge graph

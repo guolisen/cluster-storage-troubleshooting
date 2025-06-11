@@ -227,7 +227,13 @@ class KGContextBuilder:
             # Trace the volume chain if pod exists
             if self.kg.graph.has_node(pod_node_id):
                 self._trace_volume_chain(pod_node_id, target_entities)
-            
+
+            for _, target, _ in self.kg.graph.out_edges(pod_node_id, data=True):
+                target_attrs = self.kg.graph.nodes[target]
+                if target_attrs.get('gnode_subtype') == 'Node':
+                    target_entities["node"] = target
+                    break
+
         except Exception as e:
             self.logger.warning(f"Error identifying target entities: {str(e)}")
         

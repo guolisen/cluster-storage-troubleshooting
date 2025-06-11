@@ -22,11 +22,11 @@ from typing import Dict, List, Any, TypedDict, Optional, Union, Callable
 
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import tools_condition
-from langchain_core.messages import BaseMessage, ToolMessage
+from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from troubleshooting.serial_tool_node import SerialToolNode, BeforeCallToolsHook, AfterCallToolsHook
 from rich.console import Console
-
+from rich.panel import Panel
 
 # Enhanced state class to track additional information
 class EnhancedMessagesState(TypedDict):
@@ -100,13 +100,13 @@ def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any) -> 
         if isinstance(result, ToolMessage):
             result_content = result.content
             result_status = result.status if hasattr(result, 'status') else 'success'
-            formatted_result = f"Status: {result_status}\nContent: {result_content}"
+            formatted_result = f"Status: {result_status}\nContent: {result_content[:1000]}"
         else:
             formatted_result = str(result)[:1000]
         
         # Print tool result to console
         tool_panel = Panel(
-            f"[bold cyan]Tool completed:[/bold cyan] [green]{tool_name}[/green]\n\n"
+            f"[bold cyan]Tool completed:[/bold cyan] [green]{tool_name}[/green]\n"
             f"[bold cyan]Result:[/bold cyan]\n[yellow]{formatted_result}[/yellow]",
             title="[bold magenta]Call tools",
             border_style="magenta",
@@ -367,9 +367,8 @@ Fix Plan:
 
 
         # Create system message with only static guiding principles
-        system_message = {
-            "role": "system", 
-            "content": f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
+        system_message = SystemMessage(
+            content = f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
 
 <<< Note >>>: Please following the Investigation Plan to run tools step by step, and run 8 steps at least.
 <<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
@@ -466,18 +465,18 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 
 You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.
 """
-        }
+        )
         
         # Add pre-collected diagnostic context and output example to user message
         user_messages = []
-        context_message = {
-            "role": "user",
-            "content": f"""Pre-collected diagnostic context:
+
+        context_message = HumanMessage(
+            content = f"""Pre-collected diagnostic context:
 {context_summary}
 
 OUTPUT EXAMPLE:
 {final_output_example}"""
-        }
+        )
         
         # Ensure system message is first, followed by context message, then any existing user messages
         if state["messages"]:
@@ -514,14 +513,8 @@ OUTPUT EXAMPLE:
         
         logging.info(f"Model response: {response.content}...")
         
-        from rich.console import Console
-        from rich.panel import Panel
-        
         # Create console for rich output
         console = Console()
-        file_console = Console(file=open('troubleshoot.log', 'a'))
-        
-        # Display thinking process
         console.print(f"[bold cyan]LangGraph thinking process:[/bold cyan]")
 
         if response.content:
@@ -531,73 +524,18 @@ OUTPUT EXAMPLE:
                 border_style="magenta",
                 safe_box=True
             ))
-        '''''
-        # Log tool usage and thinking process with rich formatting
-        if hasattr(response, 'additional_kwargs') and 'tool_calls' in response.additional_kwargs:
-            try:
-                for tool_call in response.additional_kwargs['tool_calls']:
-                    tool_name = tool_call['function']['name']
-                    
-                    # Format the tool usage in a nice way
-                    if 'arguments' in tool_call['function']:
-                        args = tool_call['function']['arguments']
-                        try:
-                            # Try to parse and format JSON arguments
-                            args_json = json.loads(args)
-                            formatted_args = json.dumps(args_json, indent=2)
-                        except:
-                            # Use the raw string if not valid JSON
-                            formatted_args = args
-                            
-                        # Print to console and log file
-                        tool_panel = Panel(
-                            f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
-                            f"[bold yellow]Arguments:[/bold yellow]\n[blue]{formatted_args}[/blue]",
-                            title="[bold magenta]Thinking Step",
-                            border_style="magenta",
-                            safe_box=True
-                        )
-                        console.print(tool_panel)
-                        file_console.print(tool_panel)
-                    else:
-                        # Simple version for tools without arguments
-                        tool_panel = Panel(
-                            f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
-                            f"[bold yellow]Arguments:[/bold yellow] None",
-                            title="[bold magenta]Thinking Step",
-                            border_style="magenta",
-                            safe_box=True
-                        )
-                        console.print(tool_panel)
-                        file_console.print(tool_panel)
-                        
-                    # Log to standard logger as well
-                    logging.info(f"Model invoking tool: {tool_name}")
-                    if 'arguments' in tool_call['function']:
-                        logging.info(f"Tool arguments: {tool_call['function']['arguments']}")
-                    else:
-                        logging.info("No arguments provided for tool call")
-            except Exception as e:
-                # Fall back to regular logging if rich formatting fails
-                logging.warning(f"Rich formatting failed for tool output: {e}")
-                for tool_call in response.additional_kwargs['tool_calls']:
-                    logging.info(f"Model invoking tool: {tool_call['function']['name']}")
-                    if 'arguments' in tool_call['function']:
-                        logging.info(f"Tool arguments: {tool_call['function']['arguments']}")
-                    else:
-                        logging.info("No arguments provided for tool call")
-        '''''
+
         return {"messages": state["messages"] + [response]}
     
     # Define the end condition check function
-    def check_end_conditions(state: MessagesState) -> str:
+    def check_end_conditions(state: MessagesState) -> Dict[str, str]:
         """
         Check if specific end conditions are met
-        Returns "end" if the graph should end, "continue" if it should continue
+        Returns {"result": "end"} if the graph should end, {"result": "continue"} if it should continue
         """
         messages = state["messages"]
         if not messages:
-            return "continue"
+            return {"result": "continue"}
             
         last_message = messages[-1]
         
@@ -606,20 +544,20 @@ OUTPUT EXAMPLE:
         ai_messages = [m for m in messages if getattr(m, "type", "") == "ai"]
         if len(ai_messages) > max_iterations:
             logging.info(f"Ending graph: reached max iterations ({max_iterations})")
-            return "end"
+            return {"result": "end"}
             
         # Skip content checks if the last message isn't from the AI
         if getattr(last_message, "type", "") != "ai":
-            return "continue"
+            return {"result": "continue"}
             
         content = getattr(last_message, "content", "")
         if not content:
-            return "continue"
+            return {"result": "continue"}
         
         # Check for explicit end marker
         if "[END_GRAPH]" in content:
             logging.info("Ending graph: explicit end marker found")
-            return "end"
+            return {"result": "end"}
             
         # Check for required sections in the output for Phase 1
         if phase == "phase1":
@@ -640,7 +578,7 @@ OUTPUT EXAMPLE:
             # If most required sections are present, consider it complete
             if sections_found >= 3:  # At least 5 of the 7 required sections
                 logging.info(f"Ending graph: found {sections_found}/{len(required_sections)} required sections")
-                return "end"
+                return {"result": "end"}
                 
         # Check for required sections in the output for Phase 2
         elif phase == "phase2":
@@ -658,7 +596,7 @@ OUTPUT EXAMPLE:
             # If most required sections are present, consider it complete
             if sections_found >= 2:  # At least 3 of the 5 required sections
                 logging.info(f"Ending graph: found {sections_found}/{len(required_sections)} required sections")
-                return "end"
+                return {"result": "end"}
         
         # Check for convergence (model repeating itself)
         if len(ai_messages) > 3:
@@ -674,10 +612,16 @@ OUTPUT EXAMPLE:
                 
                 if last_start == third_start:
                     logging.info("Ending graph: detected convergence (model repeating itself)")
-                    return "end"
+                    return {"result": "end"}
         
         # Default: continue execution
-        return "continue"
+        # add a human message to state["messages"] to let graph continue to investigate or get the final response
+        continueMsg = HumanMessage(
+            content="Execute the Investigation Plan step by step, providing detailed updates on progress. Based on the findings, either continue with the next steps or deliver the final investigation result. If applicable, propose a 'Fix Plan' derived from the investigation outcomes."
+        )
+        state["messages"].append(continueMsg)
+
+        return {"result": "continue"}
 
     # Build state graph
     logging.info("Building state graph with enhanced end conditions")
@@ -720,7 +664,7 @@ OUTPUT EXAMPLE:
     logging.info("Adding conditional edges from check_end node")
     builder.add_conditional_edges(
         "check_end",
-        lambda state: check_end_conditions(state),
+        lambda state: check_end_conditions(state)["result"],
         {
             "end": END,
             "__end__": END,

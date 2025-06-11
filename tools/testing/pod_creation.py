@@ -14,7 +14,7 @@ from tools.core.config import validate_command, execute_command
 
 @tool
 def create_test_pod(pod_name: str, namespace: str = "default", 
-                   pvc_name: str = None, mount_path: str = "/test-volume",
+                   pvc_name: str = None, mount_path: str = "Need a mount path",
                    image: str = "busybox:latest", storage_class: str = None) -> str:
     """
     Create a test pod with volume mount for testing volume functionality
@@ -23,7 +23,7 @@ def create_test_pod(pod_name: str, namespace: str = "default",
         pod_name: Name for the test pod
         namespace: Kubernetes namespace (default: default)
         pvc_name: Name of PVC to mount (if None, creates one)
-        mount_path: Path to mount the volume in the pod
+        mount_path: Path to mount the volume in the pod, must have a valid path
         image: Container image to use (default: busybox:latest)
         storage_class: Storage class for PVC creation
         

@@ -48,7 +48,7 @@ class MetadataParsers(InformationCollectorBase):
     def _parse_pvc_metadata(self, pvc_name: str, namespace: str) -> Dict[str, Any]:
         """Parse PVC metadata from tool outputs"""
         metadata = {
-            'AccessModes': [],
+            'AccessModes': '',
             'StorageSize': '',
             'VolumeMode': 'Filesystem',
             'Phase': 'Unknown'
@@ -58,10 +58,21 @@ class MetadataParsers(InformationCollectorBase):
         if pvcs_output:
             try:
                 pvc_section = self._extract_yaml_section(pvcs_output, pvc_name)
+                access_mode_start = False
                 for line in pvc_section:
-                    if 'accessModes:' in line:
-                        # Parse access modes (simplified)
-                        pass
+                    if access_mode_start:
+                        # If we are in access modes section, get the next line
+                        if '- ' in line:
+                            access_mode = line.split(' ')[-1].strip()
+                            metadata['AccessModes'] = access_mode
+                            access_mode_start = False
+                    elif 'accessModes:' in line:
+                        # example: 
+                        #  status:
+                        #     accessModes:
+                        #     - ReadWriteOnce
+                        # the access mode in the next line write code to get the access mode
+                        access_mode_start = True
                     elif 'storage:' in line and 'requests:' in pvcs_output:
                         metadata['StorageSize'] = line.split('storage:')[-1].strip()
                     elif 'phase:' in line:

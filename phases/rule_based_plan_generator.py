@@ -276,14 +276,19 @@ class RuleBasedPlanGenerator:
             target_entities: Dictionary of target entity IDs
         """
         if "hardware_verification" in priorities:
-            node = target_entities.get("node", "").split(":")[-1] if "node" in target_entities else "all"
-            
+            node_id = target_entities.get("node", "") if "node" in target_entities else None
+            if node_id == None:
+                return
+
+            tag = node_id.split(':')
+            node_name = tag[-1]
+
             # Add comprehensive disk health check
             steps_list.append({
                 "step": None,
                 "description": "Check disk health status using SMART data on the affected node",
                 "tool": "check_disk_health",
-                "arguments": {"node_name": node, "device_path": "/dev/sda"},
+                "arguments": {"node_name": node_name, "device_path": "/dev/sda"},
                 "expected": "Disk health assessment with key metrics and status",
                 "priority": "high",
                 "category": "hardware_investigation",
@@ -295,7 +300,7 @@ class RuleBasedPlanGenerator:
                 "step": None,
                 "description": "Scan system logs for disk-related errors on the affected node",
                 "tool": "scan_disk_error_logs",
-                "arguments": {"node_name": node, "hours_back": 24},
+                "arguments": {"node_name": node_name, "hours_back": 24},
                 "expected": "Summary of disk-related errors with actionable insights",
                 "priority": "high",
                 "category": "hardware_investigation",
@@ -312,7 +317,7 @@ class RuleBasedPlanGenerator:
             target_entities: Dictionary of target entity IDs
         """
         if "pod" in target_entities:
-            pod_id = target_entities["pod"].split(":")[-1]
+            pod_id = target_entities["pod"]
             steps_list.append({
                 "step": None,
                 "description": f"Get detailed information about the problem pod and its current state",
@@ -334,7 +339,10 @@ class RuleBasedPlanGenerator:
             target_entities: Dictionary of target entity IDs
         """
         if "drive" in target_entities:
-            drive_id = target_entities["drive"].split(":")[-1]
+            drive_id = target_entities["drive"].split(":")[-1] if "drive" in target_entities else None
+            if drive_id == None:
+                return
+
             node = target_entities.get("node", "").split(":")[-1] if "node" in target_entities else None
             
             # Get drive entity information from knowledge graph
@@ -412,8 +420,10 @@ class RuleBasedPlanGenerator:
             volume_path: Path of the volume with I/O error
         """
         if "pod" in target_entities:
-            pod_id = target_entities["pod"].split(":")[-1]
-            namespace = "default"  # Default namespace, could be extracted from pod_id if available
+            pod_id = target_entities["pod"]
+            tag = pod_id.split('/')
+            pod_name = tag[-1]
+            namespace = tag[0].split(':')[-1]  # Default namespace, could be extracted from pod_id if available
             
             # Add volume mount validation
             steps_list.append({
@@ -421,7 +431,7 @@ class RuleBasedPlanGenerator:
                 "description": "Verify that the pod volume is correctly mounted and accessible",
                 "tool": "verify_volume_mount",
                 "arguments": {
-                    "pod_name": pod_id,
+                    "pod_name": pod_name,
                     "namespace": namespace,
                     "mount_path": volume_path
                 },
@@ -437,7 +447,7 @@ class RuleBasedPlanGenerator:
                 "description": "Run I/O tests on the volume to check for read/write errors",
                 "tool": "run_volume_io_test",
                 "arguments": {
-                    "pod_name": pod_id,
+                    "pod_name": pod_name,
                     "namespace": namespace,
                     "mount_path": volume_path
                 },
@@ -453,7 +463,7 @@ class RuleBasedPlanGenerator:
                 "description": "Test I/O performance of the pod volume including speeds and latency",
                 "tool": "test_volume_io_performance",
                 "arguments": {
-                    "pod_name": pod_id,
+                    "pod_name": pod_name,
                     "namespace": namespace,
                     "mount_path": volume_path,
                     "test_duration": 30
@@ -470,7 +480,7 @@ class RuleBasedPlanGenerator:
                 "description": "Perform a non-destructive filesystem check on the pod volume",
                 "tool": "check_pod_volume_filesystem",
                 "arguments": {
-                    "pod_name": pod_id,
+                    "pod_name": pod_name,
                     "namespace": namespace,
                     "mount_path": volume_path
                 },
@@ -486,7 +496,7 @@ class RuleBasedPlanGenerator:
                 "description": "Analyze volume space usage to identify potential space issues",
                 "tool": "analyze_volume_space_usage",
                 "arguments": {
-                    "pod_name": pod_id,
+                    "pod_name": pod_name,
                     "namespace": namespace,
                     "mount_path": volume_path
                 },

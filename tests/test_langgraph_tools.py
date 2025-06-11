@@ -179,18 +179,21 @@ async def test_knowledge_graph_tools(kg, config_data=None):
     
     # Initialize test arguments for each KG tool
     test_args = {
-        "kg_get_entity_info": {"entity_type": "Pod", "entity_id": "gnode:Pod:default/test-pod-1-0"},
-        "kg_get_related_entities": {"entity_type": "Pod", "entity_id": "gnode:Pod:default/test-pod-1-0"},
+        "kg_get_entity_info": {"entity_type": "Pod", "id": "gnode:Pod:default/test-pod-1-0"},
+        "kg_get_related_entities": {"entity_type": "Pod", "id": "gnode:Pod:default/test-pod-1-0"},
         "kg_get_all_issues": {},
         "kg_find_path": {
             "source_entity_type": "Pod", 
-            "source_entity_id": "gnode:Pod:default/test-pod-1-0",
+            "source_id": "gnode:Pod:default/test-pod-1-0",
             "target_entity_type": "Node", 
-            "target_entity_id": "gnode:Node:kind-control-plane"
+            "target_id": "gnode:Node:kind-control-plane"
         },
         "kg_get_summary": None,
         "kg_analyze_issues": None,
-        "kg_print_graph": {"include_details": True, "include_issues": True}
+        "kg_print_graph": {"include_details": True, "include_issues": True},
+        "kg_list_entity_types": {},
+        "kg_list_entities": {"entity_type": "Pod"},
+        "kg_list_relationship_types": {}
     }
     
     results = []
@@ -497,8 +500,9 @@ async def main():
     # Load configuration
     config_data = load_config()
     
-    # Initialize knowledge graph
+    # Initialize knowledge graph - create a test instance for testing purposes
     kg = KnowledgeGraph()
+    # Pass the KG instance explicitly as required by the updated initialize_knowledge_graph function
     initialize_knowledge_graph(kg)
     
     # Add some test data to the knowledge graph
@@ -528,7 +532,7 @@ async def main():
         if category is None or category == "all":
             console.print("[yellow]Testing all tool categories...[/yellow]")
             # Test Knowledge Graph tools
-            #all_results["knowledge_graph"] = await test_knowledge_graph_tools(kg, config_data)
+            all_results["knowledge_graph"] = await test_knowledge_graph_tools(kg, config_data)
             
             # Test Kubernetes tools
             #all_results["kubernetes"] = await test_kubernetes_tools(config_data)
@@ -537,7 +541,7 @@ async def main():
             #all_results["diagnostic"] = await test_diagnostic_tools(config_data)
             
             # Test Testing tools
-            all_results["testing"] = await test_testing_tools(config_data)
+            #all_results["testing"] = await test_testing_tools(config_data)
         elif category == "knowledge_graph":
             console.print("[yellow]Testing only Knowledge Graph tools...[/yellow]")
             all_results["knowledge_graph"] = await test_knowledge_graph_tools(kg, config_data)

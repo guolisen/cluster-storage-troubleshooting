@@ -22,7 +22,7 @@ def run_volume_stress_test(pod_name: str, namespace: str = "default",
     Args:
         pod_name: Name of the pod
         namespace: Kubernetes namespace
-        mount_path: Volume mount path
+        mount_path: Volume mount path, must be specified
         duration: Test duration in seconds
         
     Returns:
@@ -79,7 +79,7 @@ def test_volume_io_performance(pod_name: str, namespace: str = "default",
     Args:
         pod_name: Name of the pod
         namespace: Kubernetes namespace
-        mount_path: Volume mount path
+        mount_path: Volume mount path, must be specified
         test_size: Size of test data (e.g., 100M)
         test_duration: Test duration in seconds
         
@@ -184,7 +184,7 @@ def monitor_volume_latency(pod_name: str, namespace: str = "default",
     Args:
         pod_name: Name of the pod
         namespace: Kubernetes namespace
-        mount_path: Volume mount path
+        mount_path: Volume mount path, must be specified
         duration: Monitoring duration in seconds
         operation_type: Operation type to monitor (read, write, all)
         

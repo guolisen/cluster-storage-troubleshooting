@@ -125,6 +125,47 @@ TASK:
 2. Validate the fixes to ensure they resolved the problem
 3. Provide a detailed report of the remediation actions taken
 
+KNOWLEDGE GRAPH TOOLS USAGE:
+- When using knowledge graph tools, use the parameters of entity_type and id format:
+  * Entity ID formats:
+    - Pod: "gnode:Pod:<namespace>/<name>" (example: "gnode:Pod:default/test-pod-1-0")
+    - PVC: "gnode:PVC:<namespace>/<name>" (example: "gnode:PVC:default/test-pvc-1")
+    - PV: "gnode:PV:<name>" (example: "gnode:PV:pv-test-123")
+    - Drive: "gnode:Drive:<uuid>" (example: "gnode:Drive:a1b2c3d4-e5f6")
+    - Node: "gnode:Node:<name>" (example: "gnode:Node:kind-control-plane")
+    - StorageClass: "gnode:StorageClass:<name>" (example: "gnode:StorageClass:csi-baremetal-sc")
+    - LVG: "gnode:LVG:<name>" (example: "gnode:LVG:lvg-1")
+    - AC: "gnode:AC:<name>" (example: "gnode:AC:ac-node1-ssd")
+    - Volume: "gnode:Volume:<namespace>/<name>" (example: "gnode:Volume:default/vol-1")
+    - System: "gnode:System:<entity_name>" (example: "gnode:System:kernel")
+    - ClusterNode: "gnode:ClusterNode:<name>" (example: "gnode:ClusterNode:worker-1")
+    - HistoricalExperience: "gnode:HistoricalExperience:<experience_id>" (example: "gnode:HistoricalExperience:exp-001")
+
+  * Helper tools for generating entity IDs:
+    - Pod: kg_get_entity_of_pod(namespace, name) → returns "gnode:Pod:namespace/name"
+    - PVC: kg_get_entity_of_pvc(namespace, name) → returns "gnode:PVC:namespace/name"
+    - PV: kg_get_entity_of_pv(name) → returns "gnode:PV:name"
+    - Drive: kg_get_entity_of_drive(uuid) → returns "gnode:Drive:uuid"
+    - Node: kg_get_entity_of_node(name) → returns "gnode:Node:name"
+    - StorageClass: kg_get_entity_of_storage_class(name) → returns "gnode:StorageClass:name"
+    - LVG: kg_get_entity_of_lvg(name) → returns "gnode:LVG:name"
+    - AC: kg_get_entity_of_ac(name) → returns "gnode:AC:name"
+    - Volume: kg_get_entity_of_volume(namespace, name) → returns "gnode:Volume:namespace/name"
+    - System: kg_get_entity_of_system(entity_name) → returns "gnode:System:entity_name"
+    - ClusterNode: kg_get_entity_of_cluster_node(name) → returns "gnode:ClusterNode:name"
+    - HistoricalExperience: kg_get_entity_of_historical_experience(experience_id) → returns "gnode:HistoricalExperience:experience_id"
+
+- Start with discovery tools to understand what's in the Knowledge Graph:
+  * Use kg_list_entity_types() to discover available entity types and their counts
+  * Use kg_list_entities(entity_type) to find specific entities of a given type
+  * Use kg_list_relationship_types() to understand how entities are related
+
+- Then use detailed query tools:
+  * Use kg_get_entity_info(entity_type, id) to retrieve detailed information about specific entities
+  * Use kg_get_related_entities(entity_type, id) to understand relationships between components
+  * Use kg_get_all_issues() to find already detected issues in the system
+  * Use kg_find_path(source_entity_type, source_id, target_entity_type, target_id) to trace dependencies
+
 CONSTRAINTS:
 - Follow the Fix Plan step by step
 - Use only the tools available in the Phase2 tool registry

@@ -14,7 +14,7 @@ from tools.core.config import validate_command, execute_command
 
 @tool
 def analyze_volume_space_usage(pod_name: str, namespace: str = "default",
-                              mount_path: str = "/test-volume",
+                              mount_path: str = "Need to specify mount path",
                               detect_large_files: bool = True) -> str:
     """
     Analyze volume space usage within a pod, identifying large files and usage patterns
@@ -22,7 +22,7 @@ def analyze_volume_space_usage(pod_name: str, namespace: str = "default",
     Args:
         pod_name: Name of the pod
         namespace: Kubernetes namespace
-        mount_path: Volume mount path
+        mount_path: Volume mount path must be specified
         detect_large_files: Whether to identify large files (may be slower for large volumes)
         
     Returns:
@@ -104,7 +104,7 @@ def check_volume_data_integrity(pod_name: str, namespace: str = "default",
     Args:
         pod_name: Name of the pod
         namespace: Kubernetes namespace
-        mount_path: Volume mount path
+        mount_path: Volume mount path, must be specified
         file_pattern: Optional file pattern to check (e.g., "*.db" or "data/*.json")
         create_baseline: Whether to create a new baseline rather than verifying
         

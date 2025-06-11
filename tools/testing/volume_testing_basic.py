@@ -23,7 +23,7 @@ def run_volume_io_test(pod_name: str, namespace: str = "default",
     Args:
         pod_name: Name of the pod with mounted volume
         namespace: Kubernetes namespace
-        mount_path: Path where volume is mounted
+        mount_path: Path where volume is mounted, must have a valid path
         test_size: Size of test file (e.g., 10M, 100M)
         
     Returns:
@@ -81,7 +81,7 @@ def validate_volume_mount(pod_name: str, namespace: str = "default",
     Args:
         pod_name: Name of the pod
         namespace: Kubernetes namespace
-        mount_path: Expected mount path
+        mount_path: Expected mount path, must be specified
         
     Returns:
         str: Volume mount validation results
@@ -130,7 +130,7 @@ def test_volume_permissions(pod_name: str, namespace: str = "default",
     Args:
         pod_name: Name of the pod
         namespace: Kubernetes namespace
-        mount_path: Volume mount path
+        mount_path: Volume mount path, must be specified
         test_user: User to test permissions for (optional)
         
     Returns:
@@ -196,7 +196,7 @@ def verify_volume_mount(pod_name: str, namespace: str = "default",
     Args:
         pod_name: Name of the pod
         namespace: Kubernetes namespace
-        mount_path: Expected mount path
+        mount_path: Expected mount path, must be specified
         
     Returns:
         str: Volume mount verification results

@@ -74,33 +74,9 @@ class AnalysisPhase:
             Tuple[str, List[Dict[str, str]]]: (Analysis result, Updated message list)
         """
         try:
-            # Initialize message list if not provided
-            if message_list is None:
-                # System prompt for Phase1
-                system_prompt = """You are an expert Kubernetes storage troubleshooter. Your task is to investigate volume I/O errors in Kubernetes pods and generate a comprehensive Fix Plan.
+            if message_list == None:
+                message_list = []
 
-TASK:
-1. Execute the Investigation Plan to identify the root cause of volume I/O errors
-2. Analyze the results of the investigation
-3. Generate a comprehensive Fix Plan to resolve the identified issues
-
-CONSTRAINTS:
-- Follow the Investigation Plan step by step
-- Use only the tools available in the Phase1 tool registry
-- Provide a detailed root cause analysis
-- Generate a clear, actionable Fix Plan
-
-OUTPUT FORMAT:
-Your response must include:
-1. Summary of Findings
-2. Detailed Analysis
-3. Root Cause
-4. Fix Plan
-"""
-                message_list = [
-                    {"role": "system", "content": system_prompt}
-                ]
-            
             # Create troubleshooting graph with pre-collected context
             graph = create_troubleshooting_graph_with_context(
                 self.collected_info, phase="phase1", config_data=self.config_data
@@ -110,8 +86,7 @@ Your response must include:
             historical_experiences_formatted = format_historical_experiences_from_collected_info(self.collected_info)
             
             # Add investigation results to message list if not already present
-            if len(message_list) == 1:  # Only system prompt exists
-                message_list.append({"role": "assistant", "content": "Investigation Results:\n" + investigation_plan})
+            message_list.append({"role": "user", "content": "Investigation Results:\n" + investigation_plan})
             
             # Updated query message with dynamic data for LangGraph workflow
             query = f"""Phase 1 - ReAct Investigation: Execute the Investigation Plan to actively investigate the volume I/O error in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
@@ -151,6 +126,7 @@ If the issue can be resolved automatically:
 - Output a comprehensive root cause analysis and fix plan
 - Do NOT include the SKIP_PHASE2 marker
 
+<<< Note >>>: Please following the Investigation Plan to run tools step by step, and run 8 steps at least.
 <<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
 """
             # Set timeout

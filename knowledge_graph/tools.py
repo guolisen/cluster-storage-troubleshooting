@@ -36,7 +36,20 @@ from tools.core.knowledge_graph import (
     kg_find_path,
     kg_get_summary,
     kg_analyze_issues,
-    kg_print_graph
+    kg_print_graph,
+    # Entity ID helper tools
+    kg_get_entity_of_pod,
+    kg_get_entity_of_pvc,
+    kg_get_entity_of_pv,
+    kg_get_entity_of_drive,
+    kg_get_entity_of_node,
+    kg_get_entity_of_storage_class,
+    kg_get_entity_of_lvg,
+    kg_get_entity_of_ac,
+    kg_get_entity_of_volume,
+    kg_get_entity_of_system,
+    kg_get_entity_of_cluster_node,
+    kg_get_entity_of_historical_experience
 )
 
 from tools.kubernetes.core import (

@@ -877,7 +877,6 @@ class KnowledgeGraph:
             output.append(f"🟡 Medium Issues: {summary['medium_issues']}")
             output.append(f"🟢 Low Issues: {summary['low_issues']}")
 
-        
         # Entity Breakdown
         output.append("\n📋 ENTITY BREAKDOWN:")
         output.append("-" * 40)
@@ -934,6 +933,32 @@ class KnowledgeGraph:
                         elif entity_type == 'Pod':
                             if 'issues' in node_attrs and node_attrs['issues']:
                                 status_indicators.append(f"⚠️ {len(node_attrs['issues'])} issues")
+                            if node_attrs.get('Phase') == 'Running':
+                                status_indicators.append('✅ Running')
+                            elif node_attrs.get('Phase') == 'Pending':
+                                status_indicators.append('⏳ Pending')
+                            elif node_attrs.get('Phase') == 'Failed':
+                                status_indicators.append('❌ Failed')
+                        elif entity_type == 'PVC':
+                            status = node_attrs.get('Phase', 'UNKNOWN')
+                            if status == 'Bound':
+                                status_indicators.append('✅ Bound')
+                            elif status == 'Pending':
+                                status_indicators.append('⏳ Pending')
+                            else:
+                                status_indicators.append(f'❓ {status}')
+                        elif entity_type == 'PV':
+                            status = node_attrs.get('Phase', 'UNKNOWN')
+                            if status == 'Available':
+                                status_indicators.append('✅ Available')
+                            elif status == 'Bound':
+                                status_indicators.append('✅ Bound')
+                            else:
+                                status_indicators.append(f'❓ {status}')
+                        elif entity_type == 'StorageClass':
+                            provisioner = node_attrs.get('provisioner', 'unknown')
+                            reclaim_policy = node_attrs.get('reclaimPolicy', 'unknown')
+                            status_indicators.append(f'📂 {provisioner} | {reclaim_policy}')
                         elif entity_type == 'Volume':
                             health = node_attrs.get('Health', 'UNKNOWN')
                             if health == 'GOOD':
@@ -1007,12 +1032,16 @@ class KnowledgeGraph:
             output.append("\n📝 Example Relationships:")
             shown_relationships = 0
             for u, v, data in self.graph.edges(data=True):
-                if shown_relationships >= 5:  # Limit examples
-                    break
+                #if shown_relationships >= 5:  # Limit examples
+                #    break
                 rel_type = data.get('relationship', 'unknown')
                 u_name = self.graph.nodes[u].get('name', u.split(':')[-1])
+                u_type = self.graph.nodes[u].get('gnode_subtype', "unknown")
+
                 v_name = self.graph.nodes[v].get('name', v.split(':')[-1])
-                output.append(f"  • {u_name} --{rel_type}--> {v_name}")
+                v_type = self.graph.nodes[v].get('gnode_subtype', "unknown")
+
+                output.append(f"  • ({u_type}){u_name} --{rel_type}--> ({v_type}){v_name}")
                 shown_relationships += 1
         
         # Issues Breakdown

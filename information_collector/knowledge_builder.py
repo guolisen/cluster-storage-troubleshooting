@@ -61,7 +61,7 @@ class KnowledgeBuilder(MetadataParsers):
                         pvc_id,
                         "pvc_access_mode",
                         f"PVC access mode issue: {pvc_metadata['AccessModes']}",
-                        "Critical" if pvc_metadata['AccessModes'] == 'ReadOnlyMany' else "high"
+                        "critical" if pvc_metadata['AccessModes'] == 'ReadOnlyMany' else "high"
                     )
 
                 # Link to target pod if it exists

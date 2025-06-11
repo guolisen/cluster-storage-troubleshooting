@@ -877,7 +877,6 @@ class KnowledgeGraph:
             output.append(f"🟡 Medium Issues: {summary['medium_issues']}")
             output.append(f"🟢 Low Issues: {summary['low_issues']}")
 
-        
         # Entity Breakdown
         output.append("\n📋 ENTITY BREAKDOWN:")
         output.append("-" * 40)

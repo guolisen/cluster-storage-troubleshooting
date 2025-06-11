@@ -179,6 +179,12 @@ class KnowledgeBuilder(MetadataParsers):
                     self.knowledge_graph.add_relationship(drive_id, node_id, "located_on")
                     self.knowledge_graph.add_relationship(node_id, drive_id, "related_to")
         
+                # Link to target pod if it exists
+                if target_pod and target_namespace:
+                    pod_id = f"gnode:Pod:{target_namespace}/{target_pod}"
+                    self.knowledge_graph.add_relationship(pod_id, node_id, "located_on")
+                    self.knowledge_graph.add_relationship(node_id, pod_id, "related_to")
+                
         # Add CSI Baremetal specific entities
         await self._add_csi_baremetal_entities()
         

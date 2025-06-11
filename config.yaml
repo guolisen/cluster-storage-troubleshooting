@@ -33,7 +33,10 @@ troubleshoot:
     user: "root"
     key_path: "~/.ssh/id_ed25519"
     nodes:
-      - "kind-control-plane"
+      - "3x2sth3.cluster.local"
+      - "5w2sth3.cluster.local"
+      - "6d9w4k3.cluster.local"
+      - "hw2sth3.cluster.local"
     retries: 3
     retry_backoff_seconds: 5
 

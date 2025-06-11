@@ -55,10 +55,28 @@ def before_call_tools_hook(tool_name: str, args: Dict[str, Any]) -> None:
         # Format arguments for better readability
         formatted_args = json.dumps(args, indent=2) if args else "None"
         
-        # Print tool information to console
-        console.print(f"[bold cyan]Executing tool:[/bold cyan] [green]{tool_name}[/green]")
-        console.print(f"[bold cyan]Parameters:[/bold cyan]\n[blue]{formatted_args}[/blue]")
-        
+        # Format the tool usage in a nice way
+        if formatted_args != "None":
+            # Print to console and log file
+            tool_panel = Panel(
+                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
+                f"[bold yellow]Arguments:[/bold yellow]\n[blue]{formatted_args}[/blue]",
+                title="[bold magenta]Thinking Step",
+                border_style="magenta",
+                safe_box=True
+            )
+            console.print(tool_panel)
+        else:
+            # Simple version for tools without arguments
+            tool_panel = Panel(
+                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
+                f"[bold yellow]Arguments:[/bold yellow] None",
+                title="[bold magenta]Thinking Step",
+                border_style="magenta",
+                safe_box=True
+            )
+            console.print(tool_panel)
+
         # Also log to file console
         file_console.print(f"Executing tool: {tool_name}")
         file_console.print(f"Parameters: {formatted_args}")
@@ -84,12 +102,18 @@ def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any) -> 
             result_status = result.status if hasattr(result, 'status') else 'success'
             formatted_result = f"Status: {result_status}\nContent: {result_content}"
         else:
-            formatted_result = str(result)
+            formatted_result = str(result)[:1000]
         
         # Print tool result to console
-        console.print(f"[bold cyan]Tool completed:[/bold cyan] [green]{tool_name}[/green]")
-        console.print(f"[bold cyan]Result:[/bold cyan]\n[yellow]{formatted_result}[/yellow]")
-        
+        tool_panel = Panel(
+            f"[bold cyan]Tool completed:[/bold cyan] [green]{tool_name}[/green]\n\n"
+            f"[bold cyan]Result:[/bold cyan]\n[yellow]{formatted_result}[/yellow]",
+            title="[bold magenta]Call tools",
+            border_style="magenta",
+            safe_box=True
+        )
+        console.print(tool_panel)
+
         # Also log to file console
         file_console.print(f"Tool completed: {tool_name}")
         file_console.print(f"Result: {formatted_result}")
@@ -507,7 +531,7 @@ OUTPUT EXAMPLE:
                 border_style="magenta",
                 safe_box=True
             ))
-
+        '''''
         # Log tool usage and thinking process with rich formatting
         if hasattr(response, 'additional_kwargs') and 'tool_calls' in response.additional_kwargs:
             try:
@@ -562,7 +586,7 @@ OUTPUT EXAMPLE:
                         logging.info(f"Tool arguments: {tool_call['function']['arguments']}")
                     else:
                         logging.info("No arguments provided for tool call")
-        
+        '''''
         return {"messages": state["messages"] + [response]}
     
     # Define the end condition check function
@@ -688,6 +712,7 @@ OUTPUT EXAMPLE:
         {
             "tools": "tools",
             "none": "check_end",  # Instead of going directly to END, go to check_end
+            "end": "check_end",
             "__end__": "check_end"
         }
     )

@@ -308,6 +308,8 @@ CONSTRAINTS:
 - You must include all static steps from the draft plan without modification
 - You must only reference tools available in the Phase1 tool registry
 - All tool references must match the exact name and parameter format shown in the tools registry
+- Include at least one disk-related check step and one volume-related check step.
+- Max Steps: 10
 
 OUTPUT FORMAT:
 Your response must be a refined Investigation Plan with steps in this format:

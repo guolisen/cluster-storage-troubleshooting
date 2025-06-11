@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import (
     Any,
     Callable,
+    Dict,
     Literal,
     Optional,
     Sequence,
@@ -46,6 +47,10 @@ from langgraph.prebuilt.tool_node import (
     INVALID_TOOL_NAME_ERROR_TEMPLATE,
     TOOL_CALL_ERROR_TEMPLATE,
 )
+
+# Hook type definitions
+BeforeCallToolsHook = Callable[[str, Dict[str, Any]], None]
+AfterCallToolsHook = Callable[[str, Dict[str, Any], Any], None]
 
 class SerialToolNode(RunnableCallable):
     """A node that runs the tools called in the last AIMessage in serial order.
@@ -122,12 +127,32 @@ class SerialToolNode(RunnableCallable):
         self.tool_to_store_arg: dict[str, Optional[str]] = {}
         self.handle_tool_errors = handle_tool_errors
         self.messages_key = messages_key
+        # Initialize hook attributes
+        self.before_call_hook: Optional[BeforeCallToolsHook] = None
+        self.after_call_hook: Optional[AfterCallToolsHook] = None
+        
         for tool_ in tools:
             if not isinstance(tool_, BaseTool):
                 tool_ = create_tool(tool_)
             self.tools_by_name[tool_.name] = tool_
             self.tool_to_state_args[tool_.name] = _get_state_args(tool_)
             self.tool_to_store_arg[tool_.name] = _get_store_arg(tool_)
+            
+    def register_before_call_hook(self, hook: BeforeCallToolsHook) -> None:
+        """Register a hook function to be called before tool execution.
+        
+        Args:
+            hook: A callable that takes tool name and arguments as parameters
+        """
+        self.before_call_hook = hook
+        
+    def register_after_call_hook(self, hook: AfterCallToolsHook) -> None:
+        """Register a hook function to be called after tool execution.
+        
+        Args:
+            hook: A callable that takes tool name, arguments, and result as parameters
+        """
+        self.after_call_hook = hook
 
     def _func(
         self,
@@ -234,9 +259,31 @@ class SerialToolNode(RunnableCallable):
         if invalid_tool_message := self._validate_tool_call(call):
             return invalid_tool_message
 
+        # Extract tool name and arguments for hooks
+        tool_name = call["name"]
+        tool_args = call["args"] if "args" in call else {}
+        
+        # Call before_call_hook if registered
+        if self.before_call_hook:
+            try:
+                self.before_call_hook(tool_name, tool_args)
+            except Exception as hook_error:
+                # Log the error but continue with tool execution
+                print(f"Error in before_call_hook: {hook_error}")
+
         try:
             input = {**call, **{"type": "tool_call"}}
-            response = self.tools_by_name[call["name"]].invoke(input, config)
+            response = self.tools_by_name[tool_name].invoke(input, config)
+
+            # Call after_call_hook if registered
+            if self.after_call_hook:
+                try:
+                    self.after_call_hook(tool_name, tool_args, response)
+                except Exception as hook_error:
+                    # Log the error but continue with normal flow
+                    print(f"Error in after_call_hook: {hook_error}")
+
+            return response
 
         # GraphInterrupt is a special exception that will always be raised.
         # It can be triggered in the following scenarios:
@@ -261,12 +308,23 @@ class SerialToolNode(RunnableCallable):
             # Handled
             else:
                 content = _handle_tool_error(e, flag=self.handle_tool_errors)
-            return ToolMessage(
+            
+            error_message = ToolMessage(
                 content=content,
                 name=call["name"],
                 tool_call_id=call["id"],
                 status="error",
             )
+            
+            # Call after_call_hook with error result if registered
+            if self.after_call_hook:
+                try:
+                    self.after_call_hook(tool_name, tool_args, error_message)
+                except Exception as hook_error:
+                    # Log the error but continue with normal flow
+                    print(f"Error in after_call_hook: {hook_error}")
+                    
+            return error_message
 
         if isinstance(response, Command):
             return self._validate_tool_command(response, call, input_type)
@@ -289,9 +347,31 @@ class SerialToolNode(RunnableCallable):
         if invalid_tool_message := self._validate_tool_call(call):
             return invalid_tool_message
 
+        # Extract tool name and arguments for hooks
+        tool_name = call["name"]
+        tool_args = call["args"] if "args" in call else {}
+        
+        # Call before_call_hook if registered
+        if self.before_call_hook:
+            try:
+                self.before_call_hook(tool_name, tool_args)
+            except Exception as hook_error:
+                # Log the error but continue with tool execution
+                print(f"Error in before_call_hook: {hook_error}")
+
         try:
             input = {**call, **{"type": "tool_call"}}
-            response = await self.tools_by_name[call["name"]].ainvoke(input, config)
+            response = await self.tools_by_name[tool_name].ainvoke(input, config)
+
+            # Call after_call_hook if registered
+            if self.after_call_hook:
+                try:
+                    self.after_call_hook(tool_name, tool_args, response)
+                except Exception as hook_error:
+                    # Log the error but continue with normal flow
+                    print(f"Error in after_call_hook: {hook_error}")
+
+            return response
 
         # GraphInterrupt is a special exception that will always be raised.
         # It can be triggered in the following scenarios:
@@ -317,12 +397,22 @@ class SerialToolNode(RunnableCallable):
             else:
                 content = _handle_tool_error(e, flag=self.handle_tool_errors)
 
-            return ToolMessage(
+            error_message = ToolMessage(
                 content=content,
                 name=call["name"],
                 tool_call_id=call["id"],
                 status="error",
             )
+            
+            # Call after_call_hook with error result if registered
+            if self.after_call_hook:
+                try:
+                    self.after_call_hook(tool_name, tool_args, error_message)
+                except Exception as hook_error:
+                    # Log the error but continue with normal flow
+                    print(f"Error in after_call_hook: {hook_error}")
+                    
+            return error_message
 
         if isinstance(response, Command):
             return self._validate_tool_command(response, call, input_type)

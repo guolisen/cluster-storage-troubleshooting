@@ -10,6 +10,7 @@ Enhanced with specific end conditions for better control over graph termination.
 import json
 import logging
 import re
+from typing import Dict, Any
 
 # Configure logging (file only, no console output)
 logger = logging.getLogger('langgraph')
@@ -21,9 +22,10 @@ from typing import Dict, List, Any, TypedDict, Optional, Union, Callable
 
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import tools_condition
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, ToolMessage
 from langchain_openai import ChatOpenAI
-from troubleshooting.serial_tool_node import SerialToolNode
+from troubleshooting.serial_tool_node import SerialToolNode, BeforeCallToolsHook, AfterCallToolsHook
+from rich.console import Console
 
 
 # Enhanced state class to track additional information
@@ -36,6 +38,67 @@ class EnhancedMessagesState(TypedDict):
     root_cause_identified: bool
     fix_plan_provided: bool
 
+
+# Create console for rich output
+console = Console()
+file_console = Console(file=open('troubleshoot.log', 'a'))
+
+# Define hook functions for SerialToolNode
+def before_call_tools_hook(tool_name: str, args: Dict[str, Any]) -> None:
+    """Hook function called before a tool is executed.
+    
+    Args:
+        tool_name: Name of the tool being called
+        args: Arguments passed to the tool
+    """
+    try:
+        # Format arguments for better readability
+        formatted_args = json.dumps(args, indent=2) if args else "None"
+        
+        # Print tool information to console
+        console.print(f"[bold cyan]Executing tool:[/bold cyan] [green]{tool_name}[/green]")
+        console.print(f"[bold cyan]Parameters:[/bold cyan]\n[blue]{formatted_args}[/blue]")
+        
+        # Also log to file console
+        file_console.print(f"Executing tool: {tool_name}")
+        file_console.print(f"Parameters: {formatted_args}")
+        
+        # Log to standard logger
+        logger.info(f"Executing tool: {tool_name}")
+        logger.info(f"Parameters: {formatted_args}")
+    except Exception as e:
+        logger.error(f"Error in before_call_tools_hook: {e}")
+
+def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any) -> None:
+    """Hook function called after a tool is executed.
+    
+    Args:
+        tool_name: Name of the tool that was called
+        args: Arguments that were passed to the tool
+        result: Result returned by the tool
+    """
+    try:
+        # Format result for better readability
+        if isinstance(result, ToolMessage):
+            result_content = result.content
+            result_status = result.status if hasattr(result, 'status') else 'success'
+            formatted_result = f"Status: {result_status}\nContent: {result_content}"
+        else:
+            formatted_result = str(result)
+        
+        # Print tool result to console
+        console.print(f"[bold cyan]Tool completed:[/bold cyan] [green]{tool_name}[/green]")
+        console.print(f"[bold cyan]Result:[/bold cyan]\n[yellow]{formatted_result}[/yellow]")
+        
+        # Also log to file console
+        file_console.print(f"Tool completed: {tool_name}")
+        file_console.print(f"Result: {formatted_result}")
+        
+        # Log to standard logger
+        logger.info(f"Tool completed: {tool_name}")
+        logger.info(f"Result: {formatted_result}")
+    except Exception as e:
+        logger.error(f"Error in after_call_tools_hook: {e}")
 
 def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "phase1", config_data: Dict[str, Any] = None):
     """
@@ -605,7 +668,15 @@ OUTPUT EXAMPLE:
     tools = define_remediation_tools()
     
     logging.info("Adding node: tools (SerialToolNode for sequential execution)")
-    builder.add_node("tools", SerialToolNode(tools))
+    # Create SerialToolNode instance
+    serial_tool_node = SerialToolNode(tools)
+    
+    # Register hook functions
+    serial_tool_node.register_before_call_hook(before_call_tools_hook)
+    serial_tool_node.register_after_call_hook(after_call_tools_hook)
+    
+    # Add node to the graph
+    builder.add_node("tools", serial_tool_node)
     
     logging.info("Adding node: check_end")
     builder.add_node("check_end", check_end_conditions)

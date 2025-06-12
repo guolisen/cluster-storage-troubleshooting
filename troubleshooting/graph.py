@@ -312,7 +312,6 @@ Fix Plan:
 === GRAPH END OUTPUT EXAMPLE ===
 """
 
-
         # Create system message with only static guiding principles
         system_message = SystemMessage(
             content = f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
@@ -474,10 +473,159 @@ OUTPUT EXAMPLE:
 
         return {"messages": state["messages"] + [response]}
     
-    # Define the end condition check function
+    def check_explicit_end_markers_with_llm(content: str, model) -> bool:
+        """
+        Use LLM to check if content contains explicit or implicit end markers.
+        
+        Args:
+            content: The content to check for end markers
+            model: The LLM model to use for checking
+            
+        Returns:
+            bool: True if end markers detected, False otherwise
+        """
+        # Create a focused prompt for the LLM
+        system_prompt = """
+        You are an AI assistant tasked with determining if a text contains explicit or implicit markers 
+        indicating the end of a process or conversation. Your task is to analyze the given text and 
+        determine if it contains phrases or markers that suggest completion or termination.
+        
+        Examples of explicit end markers include:
+        - "[END_GRAPH]", "[END]", "End of graph", "GRAPH END"
+        - "This concludes the analysis"
+        - "Final report"
+        - "Investigation complete"
+        
+        Examples of implicit end markers include:
+        - A summary followed by recommendations with no further questions
+        - A conclusion paragraph that wraps up all findings
+        - A complete analysis with all required sections present
+        
+        Respond with "YES" if you detect end markers, or "NO" if you don't.
+        """
+        
+        user_prompt = f"""
+        Analyze the following text and determine if it contains explicit or implicit end markers:
+        
+        {content}  # Limit content length to avoid token limits
+        
+        Does this text contain markers indicating it's the end of the process? Respond with only YES or NO.
+        """
+        
+        try:
+            # Create messages for the LLM
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt)
+            ]
+            
+            # Call the LLM
+            response = model.invoke(messages)
+            
+            # Check if the response indicates end markers
+            response_text = response.content.strip().upper()
+            
+            # Log the LLM's response
+            logging.info(f"LLM end marker detection response: {response_text}")
+            
+            # Return True if the LLM detected end markers
+            return "YES" in response_text
+        except Exception as e:
+            # Log any errors and fall back to the original behavior
+            logging.error(f"Error in LLM end marker detection: {e}")
+            
+            # Fall back to simple string matching
+            return any(marker in content for marker in ["[END_GRAPH]", "[END]", "End of graph", "GRAPH END"])
+
+    def check_completion_indicators_with_llm(content: str, phase: str, model) -> bool:
+        """
+        Use LLM to check if content indicates task completion based on phase requirements.
+        
+        Args:
+            content: The content to check for completion indicators
+            phase: The current phase (phase1 or phase2)
+            model: The LLM model to use for checking
+            
+        Returns:
+            bool: True if completion indicators detected, False otherwise
+        """
+        # Define phase-specific required sections
+        phase1_sections = [
+            "Summary of Findings:",
+            "Special Case Detected",
+            "Detailed Analysis:",
+            "Relationship Analysis:",
+            "Investigation Process:",
+            "Potential Root Causes:",
+            "Root Cause:",
+            "Fix Plan:"
+        ]
+        
+        phase2_sections = [
+            "Actions Taken:",
+            "Test Results:",
+            "Resolution Status:",
+            "Remaining Issues:",
+            "Recommendations:"
+        ]
+        
+        # Select the appropriate sections based on the phase
+        required_sections = phase1_sections if phase == "phase1" else phase2_sections
+        
+        # Create a focused prompt for the LLM
+        system_prompt = f"""
+        You are an AI assistant tasked with determining if a text contains sufficient information 
+        to indicate that a troubleshooting process is complete. Your task is to analyze the given text 
+        and determine if it contains the required sections and information for a {phase} report.
+        
+        For {phase}, the following sections are expected in a complete report:
+        {', '.join(required_sections)}
+        
+        A complete report should have most of these sections and provide comprehensive information 
+        in each section. The report should feel complete and not leave major questions unanswered.
+        
+        Respond with "YES" if you believe the text represents a complete report, or "NO" if it seems incomplete.
+        """
+        
+        user_prompt = f"""
+        Analyze the following text and determine if it represents a complete {phase} report:
+        
+        {content}  # Limit content length to avoid token limits
+        
+        Does this text contain sufficient information to be considered a complete report? Respond with only YES or NO.
+        """
+        
+        try:
+            # Create messages for the LLM
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt)
+            ]
+            
+            # Call the LLM
+            response = model.invoke(messages)
+            
+            # Check if the response indicates completion
+            response_text = response.content.strip().upper()
+            
+            # Log the LLM's response
+            logging.info(f"LLM completion detection response for {phase}: {response_text}")
+            
+            # Return True if the LLM detected completion
+            return "YES" in response_text
+        except Exception as e:
+            # Log any errors and fall back to the original behavior
+            logging.error(f"Error in LLM completion detection: {e}")
+            
+            # Fall back to counting sections
+            sections_found = sum(1 for section in required_sections if section in content)
+            threshold = 3 if phase == "phase1" else 2
+            return sections_found >= threshold
+
+# Define the end condition check function
     def check_end_conditions(state: MessagesState) -> Dict[str, str]:
         """
-        Check if specific end conditions are met
+        Check if specific end conditions are met using LLM assistance when available
         Returns {"result": "end"} if the graph should end, {"result": "continue"} if it should continue
         """
         messages = state["messages"]
@@ -502,54 +650,70 @@ OUTPUT EXAMPLE:
         if not content:
             return {"result": "continue"}
         
-        # Situation 2: Check if has explicit end markers in the content
-        # Check for explicit end marker
-        if "[END_GRAPH]" in content or "[END]" in content or "End of graph" in content or "GRAPH END" in content:
-            logging.info("Ending graph: explicit end marker found")
-            return {"result": "end"}
+        if model == None:
+            logging.info("No LLM model available, falling back to simple checks")
+        else:
+            logging.info("Using LLM model: {model.model_name} for end condition checks")
+
+        # Situation 2: Check if has explicit end markers in the content using LLM
+        if model:
+            # Use LLM to check for explicit end markers
+            if check_explicit_end_markers_with_llm(content, model):
+                logging.info("Ending graph: LLM detected explicit end markers")
+                return {"result": "end"}
+        else:
+            # Fall back to simple string matching if LLM is not available
+            if "[END_GRAPH]" in content or "[END]" in content or "End of graph" in content or "GRAPH END" in content:
+                logging.info("Ending graph: explicit end marker found")
+                return {"result": "end"}
         
-        # Situation 3: Check for specific phrases indicating completion
-        # Check for required sections in the output for Phase 1
-        if phase == "phase1":
-            required_sections = [
-                "Summary of Findings:",
-                "Special Case Detected",
-                "Detailed Analysis:",
-                "Relationship Analysis:",
-                "Investigation Process:",
-                "Potential Root Causes:",
-                "Root Cause:",
-                "Fix Plan:"
-            ]
-            
-            # Count how many required sections are present
-            sections_found = sum(1 for section in required_sections if section in content)
-            
-            # If most required sections are present, consider it complete
-            if sections_found >= 3:  # At least 5 of the 7 required sections
-                logging.info(f"Ending graph: found {sections_found}/{len(required_sections)} required sections")
+        # Situation 3: Check for specific phrases indicating completion using LLM
+        if model:
+            # Use LLM to check for completion indicators
+            if check_completion_indicators_with_llm(content, phase, model):
+                logging.info("Ending graph: LLM detected completion indicators")
                 return {"result": "end"}
+        else:
+            # Fall back to counting sections if LLM is not available
+            if phase == "phase1":
+                required_sections = [
+                    "Summary of Findings:",
+                    "Special Case Detected",
+                    "Detailed Analysis:",
+                    "Relationship Analysis:",
+                    "Investigation Process:",
+                    "Potential Root Causes:",
+                    "Root Cause:",
+                    "Fix Plan:"
+                ]
                 
-        # Check for required sections in the output for Phase 2
-        elif phase == "phase2":
-            required_sections = [
-                "Actions Taken:",
-                "Test Results:",
-                "Resolution Status:",
-                "Remaining Issues:",
-                "Recommendations:"
-            ]
-            
-            # Count how many required sections are present
-            sections_found = sum(1 for section in required_sections if section in content)
-            
-            # If most required sections are present, consider it complete
-            if sections_found >= 2:  # At least 3 of the 5 required sections
-                logging.info(f"Ending graph: found {sections_found}/{len(required_sections)} required sections")
-                return {"result": "end"}
+                # Count how many required sections are present
+                sections_found = sum(1 for section in required_sections if section in content)
+                
+                # If most required sections are present, consider it complete
+                if sections_found >= 3:  # At least 3 of the 8 required sections
+                    logging.info(f"Ending graph: found {sections_found}/{len(required_sections)} required sections")
+                    return {"result": "end"}
+                    
+            # Check for required sections in the output for Phase 2
+            elif phase == "phase2":
+                required_sections = [
+                    "Actions Taken:",
+                    "Test Results:",
+                    "Resolution Status:",
+                    "Remaining Issues:",
+                    "Recommendations:"
+                ]
+                
+                # Count how many required sections are present
+                sections_found = sum(1 for section in required_sections if section in content)
+                
+                # If most required sections are present, consider it complete
+                if sections_found >= 2:  # At least 2 of the 5 required sections
+                    logging.info(f"Ending graph: found {sections_found}/{len(required_sections)} required sections")
+                    return {"result": "end"}
         
         # Situation 4: Check for convergence (model repeating itself)
-        # Check for convergence (model repeating itself)
         if len(ai_messages) > 3:
             # Compare the last message with the third-to-last message (skipping the tool response in between)
             last_content = content

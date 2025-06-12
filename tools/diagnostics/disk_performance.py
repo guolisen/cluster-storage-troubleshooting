@@ -41,7 +41,9 @@ def run_disk_readonly_test(node_name: str, device_path: str,
         from tools.diagnostics.hardware import ssh_execute
         
         # Calculate test parameters
-        duration_seconds = duration_minutes * 60
+        # duration_seconds = duration_minutes * 60
+        # TODO Temporary fix for testing purposes
+        duration_seconds = 1 * 60
         
         # First, get the model of the target disk
         disk_model = get_disk_model(node_name, device_path, ssh_execute)

@@ -486,6 +486,7 @@ OUTPUT EXAMPLE:
             
         last_message = messages[-1]
         
+        # Situation 1: Check if the last message is a tool response
         # Check if we've reached max iterations
         max_iterations = config_data.get("max_iterations", 30)
         ai_messages = [m for m in messages if getattr(m, "type", "") == "ai"]
@@ -501,11 +502,13 @@ OUTPUT EXAMPLE:
         if not content:
             return {"result": "continue"}
         
+        # Situation 2: Check if has explicit end markers in the content
         # Check for explicit end marker
-        if "[END_GRAPH]" in content:
+        if "[END_GRAPH]" in content or "[END]" in content or "End of graph" in content or "GRAPH END" in content:
             logging.info("Ending graph: explicit end marker found")
             return {"result": "end"}
-            
+        
+        # Situation 3: Check for specific phrases indicating completion
         # Check for required sections in the output for Phase 1
         if phase == "phase1":
             required_sections = [
@@ -545,6 +548,7 @@ OUTPUT EXAMPLE:
                 logging.info(f"Ending graph: found {sections_found}/{len(required_sections)} required sections")
                 return {"result": "end"}
         
+        # Situation 4: Check for convergence (model repeating itself)
         # Check for convergence (model repeating itself)
         if len(ai_messages) > 3:
             # Compare the last message with the third-to-last message (skipping the tool response in between)

@@ -495,11 +495,13 @@ OUTPUT EXAMPLE:
         - "This concludes the analysis"
         - "Final report"
         - "Investigation complete"
+        - A question from AI that indicates the end of the process, such as "Is there anything else I can help you with?" or "Do you have any further questions?"
         
         Examples of implicit end markers include:
         - A summary followed by recommendations with no further questions
         - A conclusion paragraph that wraps up all findings
         - A complete analysis with all required sections present
+        - A question from AI that indicates the end of the process, such as "Is there anything else I can help you with?" or "Do you have any further questions?"
         
         Respond with "YES" if you detect end markers, or "NO" if you don't.
         """
@@ -653,7 +655,7 @@ OUTPUT EXAMPLE:
         if model == None:
             logging.info("No LLM model available, falling back to simple checks")
         else:
-            logging.info("Using LLM model: {model.model_name} for end condition checks")
+            logging.info("Using LLM model: %s", model.model_name)
 
         # Situation 2: Check if has explicit end markers in the content using LLM
         if model:

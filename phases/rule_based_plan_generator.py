@@ -60,7 +60,7 @@ class RuleBasedPlanGenerator:
             # Step 2: Generate a limited set of preliminary steps (1-3) based on priorities
             preliminary_steps = self._generate_priority_steps(
                 target_entities, investigation_priority, issues_analysis, volume_path, 
-                max_steps=3  # Limit to 3 preliminary steps
+                max_steps=10  # Limit to 3 preliminary steps
             )
             
             return preliminary_steps
@@ -262,7 +262,7 @@ class RuleBasedPlanGenerator:
                 "expected": "List of critical issues affecting the system",
                 "priority": "critical",
                 "category": "issue_analysis",
-                "priority_score": 100  # Highest priority
+                "priority_score": 150  # Highest priority
             })
     
     def _add_hardware_verification_steps(self, steps_list: List[Dict[str, Any]], 
@@ -549,7 +549,6 @@ class RuleBasedPlanGenerator:
         formatted_steps = []
         for i, step in enumerate(selected_steps, 1):
             step["step"] = i
-            step.pop("priority_score", None)  # Remove the priority score used for sorting
             formatted_steps.append(step)
         
         return formatted_steps

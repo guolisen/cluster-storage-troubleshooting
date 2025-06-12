@@ -71,7 +71,7 @@ def check_disk_health(node_name: str, device_path: str) -> str:
             f"Reallocated Sectors: {attributes.get('Reallocated_Sector_Ct', 'N/A')}",
             f"Current Pending Sectors: {attributes.get('Current_Pending_Sector', 'N/A')}",
             f"Offline Uncorrectable Sectors: {attributes.get('Offline_Uncorrectable', 'N/A')}",
-            f"Wear Leveling Count: {attributes.get('Wear_Leveling_Count', 'N/A')}"
+            f"Wear Leveling Count: {attributes.get('Wear_Leveling_Count', 'N/A')}\n"
             f"Original SMART Output:\n{smart_output}"
         ]
         

@@ -64,10 +64,14 @@ class StaticPlanStepReader:
                     self.logger.error(f"Missing required fields in step at index {i}: {step}")
                     continue
                 
-                # Check for priority, set default if not present
+                # Check for priority and priority_score, set defaults if not present
                 if 'priority' not in step:
-                    self.logger.warning(f"Priority not found for step at index {i}, setting default priority 999")
-                    step['priority'] = 999
+                    self.logger.warning(f"Priority not found for step at index {i}, setting default priority 'medium'")
+                    step['priority'] = 'medium'
+                
+                if 'priority_score' not in step:
+                    self.logger.warning(f"Priority score not found for step at index {i}, setting default priority score 50")
+                    step['priority_score'] = 50
                 
                 valid_steps.append(step)
             
@@ -123,9 +127,9 @@ class StaticPlanStepReader:
             self.logger.warning("No unique static steps found after filtering, returning only preliminary steps")
             return preliminary_steps
         
-        # Sort static steps by priority (lower numbers have higher priority)
-        filtered_static_steps.sort(key=lambda x: x.get('priority', 999))
-        self.logger.info(f"Sorted {len(filtered_static_steps)} static steps by priority")
+        # Sort static steps by priority_score (higher numbers have higher priority)
+        filtered_static_steps.sort(key=lambda x: x.get('priority_score', 0), reverse=True)
+        self.logger.info(f"Sorted {len(filtered_static_steps)} static steps by priority_score")
         
         # Add step numbers to static steps
         step_number = len(preliminary_steps) + 1

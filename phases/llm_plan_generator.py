@@ -11,6 +11,7 @@ import inspect
 from typing import Dict, List, Any, Optional, Tuple
 from langchain_openai import ChatOpenAI
 from phases.utils import handle_exception, format_json_safely
+from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
 
@@ -152,9 +153,14 @@ AVAILABLE TOOLS FOR PHASE1(this tools will be used in next phases, please do not
 
 Your task is to refine the draft plan by:
 1. Respecting the existing steps from the draft plan (both rule-based and static steps)
-2. Adding additional steps as needed using the available Phase1 tools
-3. Reordering steps if necessary for logical flow
-4. Ensuring all steps reference only tools from the Phase1 tool registry
+2. Based on the Knowledge Graph context and historical experience data, infer the potential volume read/write error phenomena and their root causes. Formulate detailed investigation steps, prioritizing the verification steps most likely to identify the issue.
+    Refinement Notes:
+        a. Streamlined language for clarity and conciseness.
+        b. Emphasized "detailed investigation steps" and "prioritized verification" to ensure actionable and focused output.
+        c. Preserved core intent for accurate translation. 
+3. Adding additional steps as needed using the available Phase1 tools
+4. Reordering steps if necessary for logical flow
+5. Ensuring all steps reference only tools from the Phase1 tool registry
 
 IMPORTANT CONSTRAINTS:
 1. Do NOT invoke any tools - only reference them in your plan
@@ -186,20 +192,20 @@ Step 2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
         if message_list is None:
             # Create new message list
             return [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_message)
             ]
         
         # Use existing message list
         # If the last message is from the user, we need to regenerate the plan
-        if message_list[-1]["role"] == "user":
+        if isinstance(message_list[-1], HumanMessage):
             # Keep the system prompt and add the new user message
             return message_list
         else:
             # This is the first call, initialize with system prompt and user message
             return [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_message)
             ]
     
     def _call_llm_and_process_response(self, messages: List[Dict[str, str]], 
@@ -323,7 +329,7 @@ CONSTRAINTS:
 - You must only reference tools available in the Phase1 tool registry
 - All tool references must match the exact name and parameter format shown in the tools registry
 - Include at least one disk-related check step and one volume-related check step.
-- Max Steps: 10
+- Max Steps: 8
 - IMPORTANT: Each tool should be used at most once in the entire plan. Do not include duplicate tool calls. If a tool is already used in a step, do not use it again in another step.
 
 OUTPUT FORMAT:

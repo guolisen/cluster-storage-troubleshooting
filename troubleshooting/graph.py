@@ -274,95 +274,42 @@ Issues Summary:
         final_output_example = """ 
 === GRAPH END OUTPUT EXAMPLE ===
 1. Summary of Findings:
-- The pod "test-pod-1-0" in namespace "default" is running and ready, with the volume mounted at /usr/share/storop-nginx/html-1.
-- The PVC "www-1-test-pod-1-0" and PV "pvc-8005fc35-9987-4874-a1a0-929c439d3cf7" are bound and use local path provisioner storage class "standard".
-- The PV uses a hostPath volume at /var/local-path-provisioner/pvc-8005fc35-9987-4874-a1a0-929c439d3cf7_default_www-1-test-pod-1-0 on node "kind-control-plane".
-- The node "kind-control-plane" is Ready with no disk pressure or memory pressure.
-- The volume is mounted on /dev/sda2 partition on the node, which has 72% usage.
-- The Knowledge Graph shows no issues related to drives, CSI Baremetal resources, or volumes.
-- However, enhanced log analysis detected multiple medium severity kernel log patterns on the node related to nvme errors, ssd failures, disk timeouts, scsi errors, ata errors, bad sectors, I/O errors, filesystem errors, mount failures, and CSI errors.
-- The CSI Baremetal driver resources (drives, csibmnode, available capacity, lvg, volumes) are not present in the cluster, indicating the CSI Baremetal driver may not be installed or active.
-- The storage class used is "rancher.io/local-path", which is a local path provisioner, not CSI Baremetal.
+- Issues detected with volume mounts and storage
+- Node kernel logs show disk-related errors
+- CSI Baremetal driver resources missing
 
 2. Detailed Analysis:
 Primary Issues:
-- The volume is provisioned using rancher.io/local-path provisioner, not CSI Baremetal. This means the volume is a hostPath directory on the node's filesystem (/var/local-path-provisioner/...), backed by the node's local disk partition /dev/sda2.
-- The node's kernel logs show multiple medium severity disk-related errors (nvme, ssd, disk timeout, scsi, ata, bad sectors, I/O, filesystem, mount, CSI errors). These indicate underlying hardware or driver issues on the node's local disk subsystem.
-- The CSI Baremetal driver resources are missing, so the CSI Baremetal driver is not managing any drives or volumes in this cluster.
-- The pod's volume mount permissions are wide open (drwxrwxrwx), so permission issues are unlikely.
-- The node is healthy from Kubernetes perspective (Ready, no disk pressure), but kernel logs indicate disk subsystem problems.
-
-Secondary Issues:
-- The absence of CSI Baremetal driver resources suggests the cluster is not using CSI Baremetal for local volumes, which may be a misconfiguration if CSI Baremetal is expected.
-- The local path provisioner may not handle disk errors or recovery as robustly as CSI Baremetal.
-
-System Metrics:
-- Disk usage on /dev/sda2 is 72%, which is moderate.
-- No other abnormal system metrics reported.
-
-Environmental Factors:
-- The node is a single node cluster (kind-control-plane).
-- The storage class is rancher.io/local-path, not CSI Baremetal.
+- Volume uses local path provisioner instead of CSI Baremetal
+- Kernel logs show disk errors (I/O, filesystem, mount issues)
 
 3. Relationship Analysis:
-- The pod uses a PVC bound to a PV that uses local path provisioner storage class.
-- The PV maps to a hostPath directory on the node's local disk partition.
-- Kernel logs on the node show disk errors that could cause volume I/O errors in the pod.
-- The absence of CSI Baremetal driver resources means no CSI Baremetal management or monitoring of drives.
+- Pod → PVC → PV → Local disk with errors
 
 4. Investigation Process:
-- Checked pod status and volume mounts.
-- Retrieved PVC and PV details to confirm volume provisioning method.
-- Checked node status and disk usage.
-- Reviewed kernel log pattern issues from pre-collected data.
-- Checked CSI Baremetal driver resources presence.
-- Verified storage class used by PVC/PV.
+- Checked pod, PVC, PV configurations
+- Analyzed kernel logs and disk status
 
-5. Potential Root Causes:                                                                                                                              
-- **Hardware Failure on Node Disk**: Likely bad sectors or I/O errors on /dev/sda2, as indicated by kernel log patterns. Evidence: Pre-collected issues; dmesg shows boot logs but no new errors. Likelihood: High.                                                                                                 │
-- **Incomplete Knowledge Graph**: Missing entity data in KG, preventing full analysis. Evidence: Tool errors. Likelihood: Medium.                          
-- **Configuration Mismatch**: Use of local path provisioner instead of CSI Baremetal, leading to poor error handling. Evidence: PVC/PV details. Likelihood: High.                                                                                                                                          
-- **Connectivity or Access Issues**: SSH failures for smartctl, possibly due to network problems. Evidence: Tool errors. Likelihood: Medium.   
-
-Likelihood:
-- High confidence in disk hardware/driver issues due to kernel log patterns.
-- High confidence in misconfiguration or absence of CSI Baremetal driver.
+5. Potential Root Causes:
+- Hardware disk failure (High likelihood)
+- Configuration mismatch (High likelihood)
 
 6. Open Questions:
-- Is CSI Baremetal driver intended to be used in this cluster?
-- Are there any recent hardware changes or failures on the node?
-- Are there any pod logs showing specific I/O errors?
+- Is CSI Baremetal driver intended for this cluster?
 
 7. Next Steps:
-- Verify if CSI Baremetal driver is installed and configured properly in the cluster.
-- If CSI Baremetal is intended, install and configure it to manage local volumes.
-- Check node kernel logs in detail for disk errors (dmesg, journalctl).
-- Run smartctl on /dev/sda to check disk health.
-- Run fio performance test on /dev/sda to check disk I/O performance.
-- Consider migrating volumes to CSI Baremetal managed volumes for better reliability.
-- Backup data before any disk repair or fsck operations.
+- Verify CSI driver installation
+- Check disk health with smartctl
 
 Root Cause:
-- The volume I/O errors are likely caused by underlying disk hardware or driver issues on the node's local disk (/dev/sda2), as indicated by multiple kernel log error patterns.
-- Additionally, the cluster is not using the CSI Baremetal driver for local volume management, instead using rancher.io/local-path provisioner, which may lack advanced error handling and monitoring.
+- Disk hardware issues on node's local disk
+- Missing proper CSI driver configuration
 
 Fix Plan:
-1. Verify CSI Baremetal driver installation:
-   - Command: kubectl get pods -n kube-system -l app=csi-baremetal
-   - Expected: CSI Baremetal driver pods running
-2. If not installed, install CSI Baremetal driver according to documentation.
-3. Check node kernel logs for disk errors:
-   - Command: journalctl -k -b | grep -iE "nvme|ssd|disk|scsi|ata|error|fail|timeout|sector|i/o|filesystem|mount|csi"
-4. Check disk health with smartctl:
-   - Command: smartctl -a /dev/sda (run via SSH on node)
-5. Run fio performance test:
-   - Command: fio --name=read_test --filename=/dev/sda --rw=read --bs=4k --size=100M --numjobs=1 --iodepth=1 --runtime=60 --time_based --group_reporting
-6. Consider migrating PVCs to CSI Baremetal managed volumes.
-7. Backup data before any disk repair.
-8. If disk health is bad, plan disk replacement.
-9. Monitor pod logs for I/O errors after remediation.
+1. Verify CSI Baremetal driver installation
+2. Check disk health with diagnostic tools
+3. Consider hardware replacement if needed
 === GRAPH END OUTPUT EXAMPLE ===
-
 """
 
 
@@ -539,6 +486,7 @@ OUTPUT EXAMPLE:
             
         last_message = messages[-1]
         
+        # Situation 1: Check if the last message is a tool response
         # Check if we've reached max iterations
         max_iterations = config_data.get("max_iterations", 30)
         ai_messages = [m for m in messages if getattr(m, "type", "") == "ai"]
@@ -554,11 +502,13 @@ OUTPUT EXAMPLE:
         if not content:
             return {"result": "continue"}
         
+        # Situation 2: Check if has explicit end markers in the content
         # Check for explicit end marker
-        if "[END_GRAPH]" in content:
+        if "[END_GRAPH]" in content or "[END]" in content or "End of graph" in content or "GRAPH END" in content:
             logging.info("Ending graph: explicit end marker found")
             return {"result": "end"}
-            
+        
+        # Situation 3: Check for specific phrases indicating completion
         # Check for required sections in the output for Phase 1
         if phase == "phase1":
             required_sections = [
@@ -598,6 +548,7 @@ OUTPUT EXAMPLE:
                 logging.info(f"Ending graph: found {sections_found}/{len(required_sections)} required sections")
                 return {"result": "end"}
         
+        # Situation 4: Check for convergence (model repeating itself)
         # Check for convergence (model repeating itself)
         if len(ai_messages) > 3:
             # Compare the last message with the third-to-last message (skipping the tool response in between)
@@ -615,12 +566,6 @@ OUTPUT EXAMPLE:
                     return {"result": "end"}
         
         # Default: continue execution
-        # add a human message to state["messages"] to let graph continue to investigate or get the final response
-        continueMsg = HumanMessage(
-            content="Execute the Investigation Plan step by step, providing detailed updates on progress. Based on the findings, either continue with the next steps or deliver the final investigation result. If applicable, propose a 'Fix Plan' derived from the investigation outcomes."
-        )
-        state["messages"].append(continueMsg)
-
         return {"result": "continue"}
 
     # Build state graph

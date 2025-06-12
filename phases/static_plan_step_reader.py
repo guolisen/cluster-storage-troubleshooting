@@ -64,6 +64,11 @@ class StaticPlanStepReader:
                     self.logger.error(f"Missing required fields in step at index {i}: {step}")
                     continue
                 
+                # Check for priority, set default if not present
+                if 'priority' not in step:
+                    self.logger.warning(f"Priority not found for step at index {i}, setting default priority 999")
+                    step['priority'] = 999
+                
                 valid_steps.append(step)
             
             self.logger.info(f"Successfully read {len(valid_steps)} static plan steps")
@@ -89,15 +94,48 @@ class StaticPlanStepReader:
             self.logger.warning("No static plan steps found, returning only preliminary steps")
             return preliminary_steps
         
+        # Create a set of tool names already used in preliminary steps
+        used_tools = set()
+        for step in preliminary_steps:
+            # Extract the base tool name (without arguments)
+            tool = step.get('tool', '')
+            if '(' in tool:
+                tool = tool.split('(')[0]
+            used_tools.add(tool)
+        
+        self.logger.info(f"Found {len(used_tools)} unique tools in preliminary steps: {used_tools}")
+        
+        # Filter out static steps that use tools already present in preliminary steps
+        filtered_static_steps = []
+        for step in static_steps:
+            tool = step.get('tool', '')
+            if '(' in tool:
+                tool = tool.split('(')[0]
+            
+            if tool not in used_tools:
+                filtered_static_steps.append(step)
+            else:
+                self.logger.info(f"Skipping static step with duplicate tool: {tool}")
+        
+        self.logger.info(f"Filtered out {len(static_steps) - len(filtered_static_steps)} static steps with duplicate tools")
+        
+        if not filtered_static_steps:
+            self.logger.warning("No unique static steps found after filtering, returning only preliminary steps")
+            return preliminary_steps
+        
+        # Sort static steps by priority (lower numbers have higher priority)
+        filtered_static_steps.sort(key=lambda x: x.get('priority', 999))
+        self.logger.info(f"Sorted {len(filtered_static_steps)} static steps by priority")
+        
         # Add step numbers to static steps
         step_number = len(preliminary_steps) + 1
-        for step in static_steps:
+        for step in filtered_static_steps:
             step['step'] = step_number
             step['source'] = 'static'  # Mark the source for later reference
             step_number += 1
         
         # Combine preliminary and static steps
-        combined_steps = preliminary_steps + static_steps
-        self.logger.info(f"Combined {len(preliminary_steps)} preliminary steps with {len(static_steps)} static steps")
+        combined_steps = preliminary_steps + filtered_static_steps
+        self.logger.info(f"Combined {len(preliminary_steps)} preliminary steps with {len(filtered_static_steps)} static steps")
         
         return combined_steps

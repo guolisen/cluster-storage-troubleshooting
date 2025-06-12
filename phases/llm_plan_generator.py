@@ -121,6 +121,16 @@ class LLMPlanGenerator:
         # Extract and format historical experience data from kg_context
         historical_experiences_formatted = self._format_historical_experiences(kg_context)
         
+        # Extract tools already used in draft plan
+        used_tools = set()
+        for step in draft_plan:
+            tool = step.get('tool', '')
+            if '(' in tool:
+                tool = tool.split('(')[0]
+            used_tools.add(tool)
+        
+        used_tools_str = ", ".join(used_tools)
+        
         # Prepare user message for refinement task
         return f"""Refine the draft Investigation Plan for volume read/write errors in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
 this plan will be used to troubleshoot the issue in next phases. The next phase will execute or run tool according to the steps in this plan.
@@ -130,6 +140,9 @@ KNOWLEDGE GRAPH CONTEXT(current base knowledge and some hardware information):
 
 DRAFT PLAN(static plan steps and preliminary steps from rule-based generator, please do not modify static steps as much as possible):
 {draft_plan_str}
+
+TOOLS ALREADY USED IN DRAFT PLAN:
+{used_tools_str}
 
 HISTORICAL EXPERIENCE(the historical experience data, you can learn from this data to improve the plan):
 {historical_experiences_formatted}
@@ -148,7 +161,8 @@ IMPORTANT CONSTRAINTS:
 2. Include static steps from the draft plan without modification
 3. Use historical experience data to inform additional steps and refinements
 4. Ensure all tool references follow the format shown in the AVAILABLE TOOLS
-5. Output the plan in the required format:
+5. IMPORTANT: Do not add steps that use tools already present in the draft plan. Each tool should be used at most once in the entire plan.
+6. Output the plan in the required format:
 
 Investigation Plan:
 Step 1: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
@@ -308,6 +322,9 @@ CONSTRAINTS:
 - You must include all static steps from the draft plan without modification
 - You must only reference tools available in the Phase1 tool registry
 - All tool references must match the exact name and parameter format shown in the tools registry
+- Include at least one disk-related check step and one volume-related check step.
+- Max Steps: 10
+- IMPORTANT: Each tool should be used at most once in the entire plan. Do not include duplicate tool calls. If a tool is already used in a step, do not use it again in another step.
 
 OUTPUT FORMAT:
 Your response must be a refined Investigation Plan with steps in this format:

@@ -3,8 +3,8 @@ llm:
   #model: "gpt-4-turbo-preview"
   #model: "gpt-4o-mini-2024-07-18"
   #model: "gpt-4.1-mini-2025-04-14"
-  #model: "gpt-4.1-nano-2025-04-14"
-  model: "grok-3-mini"
+  model: "gpt-4.1-nano-2025-04-14"
+  #model: "grok-3-mini"
   #api_endpoint: "https://api.openai.com/v1"
   #api_key: 'sk-proj--'
   api_endpoint: "https://api.zhizengzeng.com/v1"
@@ -73,7 +73,7 @@ historical_experience:
 
 # Chat Mode Configuration
 chat_mode:
-  enabled: false  # Enable or disable chat mode
+  enabled: true  # Enable or disable chat mode
   entry_points:
-    - "plan_phase"  # After Plan Phase
-    #- "phase1"      # After Phase1
+    #- "plan_phase"  # After Plan Phase
+    - "phase1"      # After Phase1

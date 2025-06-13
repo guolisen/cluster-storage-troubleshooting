@@ -33,7 +33,8 @@ troubleshoot:
     user: "root"
     key_path: "~/.ssh/id_ed25519"
     nodes:
-      - "kind-control-plane"
+      - "my-cluster-control-plane"
+      - "my-cluster-worker"
     retries: 3
     retry_backoff_seconds: 5
 
@@ -73,7 +74,7 @@ historical_experience:
 
 # Chat Mode Configuration
 chat_mode:
-  enabled: false  # Enable or disable chat mode
+  enabled: true  # Enable or disable chat mode
   entry_points:
     #- "plan_phase"  # After Plan Phase
     - "phase1"      # After Phase1

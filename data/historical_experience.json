@@ -82,5 +82,11 @@
     "root_cause": "PVC access mode set to 'ReadOnlyMany', restricting the pod to read-only access and preventing write operations.",
     "localization_method": "Check PVC access mode with `kg_get_node_metadata(node_type='pvc', filters={'name': 'data-pvc'})` to confirm 'ReadOnlyMany' setting. Verify pod logs for write permission errors with `kg_query_nodes(type='log', time_range='24h', filters={'message': 'Permission denied'})`",
     "resolution_method": "Update the PVC access mode to 'ReadWriteOnce' or 'ReadWriteMany' with `kubectl edit pvc <pvc-name>` if supported by the storage class. Restart the pod with `kubectl delete pod <pod-name>` to apply changes."
+  },
+  {
+    "phenomenon": "SMART information get error or no information",
+    "root_cause": "The related disk is a Virtural Disk on Virtural Machine",
+    "localization_method": "Check Disk serial number, vendor, model...etc, whether this information has string like 'Virtual'",
+    "resolution_method": "Report this finding to user."
   }
 ]

@@ -7,7 +7,7 @@ name = "cluster-storage-troubleshooting"
 version = "0.1.0"
 description = "A Python-based system for monitoring and resolving volume I/O errors in Kubernetes pods backed by local disks managed by the CSI Baremetal driver"
 readme = "README.md"
-requires-python = ">=3.13.3"
+requires-python = ">=3.13.2"
 license = {file = "LICENSE"}
 authors = [
     {name = "Kubernetes Volume Troubleshooting System", email = "example@example.com"},

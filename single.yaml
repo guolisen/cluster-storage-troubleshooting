@@ -30,15 +30,6 @@ spec:
         stor-operator.dell.com/need-wait: all
         app: test-nginx
     spec:
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-            - matchExpressions:
-              - key: kubernetes.io/hostname
-                operator: In
-                values:
-                - "3x2sth3.cluster.local"
       containers:
       - name: test-nginx
         #image: dockerrepo:30500/storage-operator-image:0.402.0.605-1000000
@@ -76,10 +67,10 @@ spec:
         app: test-nginx
         stor-operator.dell.com/need-wait: "true"
     spec:
-      accessModes: [ "ReadOnlyMany" ]
+      accessModes: [ "ReadWriteOnce" ]
       volumeMode: Filesystem
       resources:
         requests:
           storage: 30M
-      storageClassName: csi-baremetal-sc-hdd
+      storageClassName: standard
 

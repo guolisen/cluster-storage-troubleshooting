@@ -1096,6 +1096,9 @@ class KnowledgeBuilder(MetadataParsers):
                     description="SMART drive health monitoring",
                     monitored_drives=list(self.collected_data['smart_data'].keys())
                 )
+            
+            # Add hardware system entity with comprehensive information
+            await self._add_hardware_system_entity()
                 
         except Exception as e:
             error_msg = f"Error adding System entities: {str(e)}"
@@ -1237,6 +1240,165 @@ class KnowledgeBuilder(MetadataParsers):
             error_msg = f"Error adding enhanced log analysis: {str(e)}"
             logging.error(error_msg)
             self.collected_data['errors'].append(error_msg)
+            
+    async def _add_hardware_system_entity(self):
+        """Add hardware system entity with comprehensive information from system diagnostic tools"""
+        try:
+            import json
+            from tools.diagnostics.system import get_system_hardware_info, df_command, lsblk_command, mount_command, dmesg_command
+            
+            logging.info("Adding hardware system entity with comprehensive information...")
+            
+            # Initialize hardware info dictionary
+            hardware_info = {}
+            
+            # Get node names from collected data or use a default list
+            node_names = self.collected_data.get('node_names', [])
+            if not node_names and 'nodes' in self.collected_data.get('kubernetes', {}):
+                # Extract node names from kubernetes data if available
+                node_names = self._parse_cluster_node_names(self.collected_data['kubernetes']['nodes'])
+            
+            # If still no nodes found, use a default node name
+            if not node_names:
+                node_names = ['localhost']
+                logging.warning("No node names found in collected data, using 'localhost' as default")
+            
+            # Collect hardware information for each node
+            for node_name in node_names:
+                node_hardware_info = {}
+                
+                # Get system hardware info (manufacturer, product name)
+                try:
+                    hw_info_str = get_system_hardware_info(node_name)
+                    hw_info = json.loads(hw_info_str)
+                    node_hardware_info['system_info'] = hw_info
+                except Exception as e:
+                    logging.warning(f"Error getting hardware info for {node_name}: {e}")
+                    node_hardware_info['system_info'] = {"error": str(e)}
+                
+                # Get disk space information
+                try:
+                    df_output = df_command(node_name)
+                    node_hardware_info['disk_space'] = df_output
+                except Exception as e:
+                    logging.warning(f"Error getting disk space for {node_name}: {e}")
+                    node_hardware_info['disk_space'] = f"Error: {str(e)}"
+                
+                # Get block device information
+                try:
+                    lsblk_output = lsblk_command(node_name, "-o NAME,SIZE,TYPE,MOUNTPOINT")
+                    node_hardware_info['block_devices'] = lsblk_output
+                except Exception as e:
+                    logging.warning(f"Error getting block devices for {node_name}: {e}")
+                    node_hardware_info['block_devices'] = f"Error: {str(e)}"
+                
+                # Get mount information
+                try:
+                    mount_output = mount_command(node_name)
+                    node_hardware_info['mounts'] = mount_output
+                except Exception as e:
+                    logging.warning(f"Error getting mount info for {node_name}: {e}")
+                    node_hardware_info['mounts'] = f"Error: {str(e)}"
+                
+                # Get recent kernel messages related to storage
+                try:
+                    dmesg_output = dmesg_command(node_name, "--since='5 minutes ago' -T | grep -i -E 'storage|disk|drive|volume|mount'")
+                    node_hardware_info['storage_messages'] = dmesg_output
+                except Exception as e:
+                    logging.warning(f"Error getting storage messages for {node_name}: {e}")
+                    node_hardware_info['storage_messages'] = f"Error: {str(e)}"
+                
+                # Add to overall hardware info
+                hardware_info[node_name] = node_hardware_info
+            
+            # Add hardware system entity to knowledge graph
+            hardware_id = self.knowledge_graph.add_gnode_system_entity(
+                "hardware", "system_info",
+                description="System hardware information",
+                hardware_info=hardware_info
+            )
+            
+            # Analyze hardware info for issues
+            hardware_issues = self._analyze_hardware_info(hardware_info, hardware_id)
+            
+            # Add issues to knowledge graph
+            for issue in hardware_issues:
+                self.knowledge_graph.add_issue(
+                    hardware_id,
+                    issue['type'],
+                    issue['description'],
+                    issue['severity']
+                )
+            
+            # Link hardware entity to nodes
+            for node_name in hardware_info.keys():
+                node_id = f"gnode:Node:{node_name}"
+                if self.knowledge_graph.graph.has_node(node_id):
+                    self.knowledge_graph.add_relationship(hardware_id, node_id, "describes")
+                    self.knowledge_graph.add_relationship(node_id, hardware_id, "described_by")
+            
+            logging.info(f"Added hardware system entity with information for {len(hardware_info)} nodes")
+            
+        except Exception as e:
+            error_msg = f"Error adding hardware system entity: {str(e)}"
+            logging.error(error_msg)
+            self.collected_data['errors'].append(error_msg)
+    
+    def _analyze_hardware_info(self, hardware_info, hardware_id):
+        """Analyze hardware information for potential issues"""
+        issues = []
+        
+        for node_name, info in hardware_info.items():
+            # Check disk space
+            if 'disk_space' in info and isinstance(info['disk_space'], str):
+                df_output = info['disk_space']
+                # Look for filesystems with high usage (>90%)
+                for line in df_output.split('\n'):
+                    if '%' in line:
+                        parts = line.split()
+                        if len(parts) >= 5:
+                            try:
+                                # Extract usage percentage, typically in format like "94%"
+                                usage_str = next((p for p in parts if p.endswith('%')), None)
+                                if usage_str:
+                                    usage = int(usage_str.strip('%'))
+                                    if usage > 90:
+                                        filesystem = parts[0] if len(parts) > 0 else "unknown"
+                                        mount_point = parts[-1] if len(parts) > 5 else "unknown"
+                                        issues.append({
+                                            'type': 'disk_space',
+                                            'description': f"High disk usage ({usage}%) on {filesystem} mounted at {mount_point} on node {node_name}",
+                                            'severity': 'high' if usage > 95 else 'medium'
+                                        })
+                            except (ValueError, IndexError) as e:
+                                logging.debug(f"Error parsing disk usage: {e} for line: {line}")
+            
+            # Check for storage-related error messages
+            if 'storage_messages' in info and isinstance(info['storage_messages'], str):
+                storage_msgs = info['storage_messages']
+                error_keywords = ['error', 'fail', 'ioerr', 'i/o error', 'read-only', 'timeout']
+                
+                for line in storage_msgs.split('\n'):
+                    if any(keyword in line.lower() for keyword in error_keywords):
+                        issues.append({
+                            'type': 'storage_error',
+                            'description': f"Storage-related error on node {node_name}: {line.strip()}",
+                            'severity': 'high'
+                        })
+            
+            # Check system hardware info
+            if 'system_info' in info and isinstance(info['system_info'], dict):
+                system_info = info['system_info']
+                
+                # Check for error in system info collection
+                if 'error' in system_info:
+                    issues.append({
+                        'type': 'hardware_info',
+                        'description': f"Error collecting hardware info on node {node_name}: {system_info['error']}",
+                        'severity': 'medium'
+                    })
+        
+        return issues
     
     async def _load_historical_experience(self):
         """

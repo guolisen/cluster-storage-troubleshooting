@@ -4,6 +4,7 @@ Knowledge Graph Builder
 Contains methods for building enhanced Knowledge Graph from tool outputs.
 """
 
+import yaml
 import logging
 from typing import Dict, List, Any
 from .base import InformationCollectorBase
@@ -612,7 +613,7 @@ class KnowledgeBuilder(MetadataParsers):
     
     def _parse_node_info_from_output(self, node_name: str, nodes_output: str) -> Dict[str, Any]:
         """
-        Parse node information for a specific node from the output
+        Parse node information for a specific node from the output using YAML parser
         
         This function parses the complex YAML structure of node status, including:
         - Node addresses (InternalIP, Hostname)
@@ -630,112 +631,27 @@ class KnowledgeBuilder(MetadataParsers):
         node_info = {}
         
         try:
-            lines = nodes_output.split('\n')
-            in_node_section = False
-            in_status_section = False
-            current_section = None
-            current_list_item = None
-            current_indent = 0
-            conditions = []
-            addresses = []
-            allocatable = {}
-            capacity = {}
+            # Parse the YAML output
+            nodes_data = yaml.safe_load(nodes_output)
             
-            for line in lines:
-                if not line.strip():
-                    continue
-                    
-                # Calculate the indentation level
-                indent = len(line) - len(line.lstrip())
-                
-                # Check if we're in the target node's section
-                if 'kind: Node' in line:
-                    in_node_section = False
-                    in_status_section = False
-                    current_section = None
-                    continue
-                    
-                if f'name: {node_name}' in line:
-                    in_node_section = True
-                    in_status_section = False
-                    current_section = None
-                    continue
-                    
-                # Exit if we've reached the next node
-                if in_node_section and indent == 0 and 'name:' in line and node_name not in line:
-                    break
-                    
-                # Skip lines until we find our node
-                if not in_node_section:
-                    continue
-                    
-                # Check if we're entering the status section
-                if in_node_section and line.strip() == 'status:':
-                    in_status_section = True
-                    current_indent = indent
-                    continue
-                    
-                # Skip lines that are not in the status section
-                if not in_status_section:
-                    continue
-                    
-                # Exit status section if indentation decreases below status level
-                if in_status_section and indent <= current_indent:
-                    in_status_section = False
-                    continue
-                
-                # Process status subsections
-                stripped_line = line.strip()
-                
-                # Check for main sections under status
-                if indent == current_indent + 2:
-                    if stripped_line == 'addresses:':
-                        current_section = 'addresses'
-                        continue
-                    elif stripped_line == 'allocatable:':
-                        current_section = 'allocatable'
-                        continue
-                    elif stripped_line == 'capacity:':
-                        current_section = 'capacity'
-                        continue
-                    elif stripped_line == 'conditions:':
-                        current_section = 'conditions'
-                        continue
-                
-                # Process each section based on its structure
-                if current_section == 'addresses':
-                    # Handle list items in addresses
-                    if stripped_line.startswith('- '):
-                        current_list_item = {}
-                        addresses.append(current_list_item)
-                    elif current_list_item is not None and ':' in stripped_line:
-                        key, value = stripped_line.split(':', 1)
-                        current_list_item[key.strip()] = value.strip()
-                
-                elif current_section == 'allocatable':
-                    # Handle key-value pairs in allocatable
-                    if ':' in stripped_line:
-                        key, value = stripped_line.split(':', 1)
-                        allocatable[key.strip()] = value.strip()
-                
-                elif current_section == 'capacity':
-                    # Handle key-value pairs in capacity
-                    if ':' in stripped_line:
-                        key, value = stripped_line.split(':', 1)
-                        capacity[key.strip()] = value.strip()
-                
-                elif current_section == 'conditions':
-                    # Handle list items in conditions
-                    if stripped_line.startswith('- '):
-                        current_list_item = {}
-                        conditions.append(current_list_item)
-                    elif current_list_item is not None and ':' in stripped_line:
-                        key, value = stripped_line.split(':', 1)
-                        current_list_item[key.strip()] = value.strip()
+            # Find the node with matching name
+            target_node = None
+            if nodes_data['items'] != None and isinstance(nodes_data.get('items'), list):
+                # List of nodes case
+                for node in nodes_data.get('items'):
+                    if node.get('kind') == 'Node' and node.get('metadata', {}).get('name') == node_name:
+                        target_node = node
+                        break
             
-            # Process the collected data
+            if not target_node:
+                logging.warning(f"Node {node_name} not found in the provided YAML output")
+                return node_info
             
-            # Add addresses to node_info
+            # Extract status information
+            status = target_node.get('status', {})
+            
+            # Extract addresses
+            addresses = status.get('addresses', [])
             if addresses:
                 node_info['Addresses'] = addresses
                 # Extract specific address types for convenience
@@ -745,7 +661,8 @@ class KnowledgeBuilder(MetadataParsers):
                     elif addr.get('type') == 'Hostname':
                         node_info['Hostname'] = addr.get('address', '')
             
-            # Add allocatable resources
+            # Extract allocatable resources
+            allocatable = status.get('allocatable', {})
             if allocatable:
                 node_info['Allocatable'] = allocatable
                 # Extract specific allocatable resources for convenience
@@ -754,7 +671,8 @@ class KnowledgeBuilder(MetadataParsers):
                 node_info['AllocatableStorage'] = allocatable.get('ephemeral-storage', '')
                 node_info['AllocatablePods'] = allocatable.get('pods', '')
             
-            # Add capacity information
+            # Extract capacity information
+            capacity = status.get('capacity', {})
             if capacity:
                 node_info['Capacity'] = capacity
                 # Extract specific capacity information for convenience
@@ -764,6 +682,7 @@ class KnowledgeBuilder(MetadataParsers):
                 node_info['CapacityPods'] = capacity.get('pods', '')
             
             # Process conditions
+            conditions = status.get('conditions', [])
             if conditions:
                 node_info['Conditions'] = conditions
                 # Extract specific condition statuses for convenience
@@ -783,7 +702,7 @@ class KnowledgeBuilder(MetadataParsers):
                         node_info['NetworkUnavailable'] = condition_status
                     elif condition_type == 'EtcdIsVoter':
                         node_info['EtcdIsVoter'] = condition_status
-            
+        
         except Exception as e:
             logging.warning(f"Error parsing node info for {node_name}: {e}")
         

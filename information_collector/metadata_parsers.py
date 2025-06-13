@@ -4,6 +4,7 @@ Metadata Parsers
 Contains methods for parsing metadata from tool outputs.
 """
 
+import yaml
 import logging
 from typing import Dict, List, Any
 from .base import InformationCollectorBase
@@ -13,7 +14,7 @@ class MetadataParsers(InformationCollectorBase):
     """Metadata parsing methods for different entity types"""
     
     def _parse_pod_metadata(self, pod_name: str, namespace: str) -> Dict[str, Any]:
-        """Parse pod metadata from tool outputs"""
+        """Parse pod metadata from tool outputs using yaml package"""
         metadata = {
             'RestartCount': 0,
             'Phase': 'Unknown',
@@ -24,29 +25,50 @@ class MetadataParsers(InformationCollectorBase):
         pod_output = self.collected_data.get('kubernetes', {}).get('target_pod', '')
         if pod_output:
             try:
-                lines = pod_output.split('\n')
-                for line in lines:
-                    if 'restartCount:' in line:
-                        try:
-                            count = int(line.split('restartCount:')[-1].strip())
-                            metadata['RestartCount'] = count
-                        except (ValueError, TypeError):
-                            pass
-                    elif 'phase:' in line:
-                        metadata['Phase'] = line.split('phase:')[-1].strip()
-                    elif 'fsGroup:' in line:
-                        try:
-                            group = int(line.split('fsGroup:')[-1].strip())
-                            metadata['fsGroup'] = group
-                        except (ValueError, TypeError):
-                            pass
+                # Parse the YAML output
+                pod_data = yaml.safe_load(pod_output)
+                
+                if pod_data:
+                    # Extract pod phase
+                    metadata['Phase'] = pod_data.get('status', {}).get('phase', 'Unknown')
+                    
+                    # Extract restart count from the first container status
+                    container_statuses = pod_data.get('status', {}).get('containerStatuses', [])
+                    if container_statuses and len(container_statuses) > 0:
+                        metadata['RestartCount'] = container_statuses[0].get('restartCount', 0)
+                    
+                    # Extract security context and fsGroup
+                    security_context = pod_data.get('spec', {}).get('securityContext', {})
+                    metadata['SecurityContext'] = security_context
+                    metadata['fsGroup'] = security_context.get('fsGroup')
+                    
             except Exception as e:
-                logging.warning(f"Error parsing pod metadata: {e}")
+                logging.warning(f"Error parsing pod metadata with yaml package: {e}")
+                # Fallback to the old method in case of parsing errors
+                try:
+                    lines = pod_output.split('\n')
+                    for line in lines:
+                        if 'restartCount:' in line:
+                            try:
+                                count = int(line.split('restartCount:')[-1].strip())
+                                metadata['RestartCount'] = count
+                            except (ValueError, TypeError):
+                                pass
+                        elif 'phase:' in line:
+                            metadata['Phase'] = line.split('phase:')[-1].strip()
+                        elif 'fsGroup:' in line:
+                            try:
+                                group = int(line.split('fsGroup:')[-1].strip())
+                                metadata['fsGroup'] = group
+                            except (ValueError, TypeError):
+                                pass
+                except Exception as fallback_error:
+                    logging.warning(f"Fallback parsing also failed for pod metadata: {fallback_error}")
         
         return metadata
     
     def _parse_pvc_metadata(self, pvc_name: str, namespace: str) -> Dict[str, Any]:
-        """Parse PVC metadata from tool outputs"""
+        """Parse PVC metadata from tool outputs using yaml package"""
         metadata = {
             'AccessModes': '',
             'StorageSize': '',
@@ -57,33 +79,74 @@ class MetadataParsers(InformationCollectorBase):
         pvcs_output = self.collected_data.get('kubernetes', {}).get('pvcs', '')
         if pvcs_output:
             try:
-                pvc_section = self._extract_yaml_section(pvcs_output, pvc_name)
-                access_mode_start = False
-                for line in pvc_section:
-                    if access_mode_start:
-                        # If we are in access modes section, get the next line
-                        if '- ' in line:
-                            access_mode = line.split(' ')[-1].strip()
-                            metadata['AccessModes'] = access_mode
-                            access_mode_start = False
-                    elif 'accessModes:' in line:
-                        # example: 
-                        #  status:
-                        #     accessModes:
-                        #     - ReadWriteOnce
-                        # the access mode in the next line write code to get the access mode
-                        access_mode_start = True
-                    elif 'storage:' in line and 'requests:' in pvcs_output:
-                        metadata['StorageSize'] = line.split('storage:')[-1].strip()
-                    elif 'phase:' in line:
-                        metadata['Phase'] = line.split('phase:')[-1].strip()
+                # Parse the YAML output
+                pvc_data = yaml.safe_load(pvcs_output)
+                
+                # Find the PVC with matching name
+                target_pvc = None
+                if isinstance(pvc_data, dict) and 'items' in pvc_data and isinstance(pvc_data['items'], list):
+                    # List of PVCs case
+                    for pvc in pvc_data['items']:
+                        if pvc.get('metadata', {}).get('name') == pvc_name:
+                            target_pvc = pvc
+                            break
+                elif isinstance(pvc_data, dict) and pvc_data.get('metadata', {}).get('name') == pvc_name:
+                    # Single PVC case
+                    target_pvc = pvc_data
+                elif isinstance(pvc_data, list):
+                    # Direct list of PVCs
+                    for pvc in pvc_data:
+                        if pvc.get('metadata', {}).get('name') == pvc_name:
+                            target_pvc = pvc
+                            break
+                
+                if target_pvc:
+                    # Extract PVC phase
+                    metadata['Phase'] = target_pvc.get('status', {}).get('phase', 'Unknown')
+                    
+                    # Extract access modes
+                    access_modes = target_pvc.get('status', {}).get('accessModes', [])
+                    if access_modes and isinstance(access_modes, list) and len(access_modes) > 0:
+                        metadata['AccessModes'] = access_modes[0]
+                    
+                    # Extract volume mode
+                    metadata['VolumeMode'] = target_pvc.get('spec', {}).get('volumeMode', 'Filesystem')
+                    
+                    # Extract storage size
+                    resources = target_pvc.get('spec', {}).get('resources', {})
+                    metadata['StorageSize'] = resources.get('requests', {}).get('storage', '')
+                    
             except Exception as e:
-                logging.warning(f"Error parsing PVC metadata: {e}")
+                logging.warning(f"Error parsing PVC metadata with yaml package: {e}")
+                # Fallback to the old method in case of parsing errors
+                try:
+                    pvc_section = self._extract_yaml_section(pvcs_output, pvc_name)
+                    access_mode_start = False
+                    for line in pvc_section:
+                        if access_mode_start:
+                            # If we are in access modes section, get the next line
+                            if '- ' in line:
+                                access_mode = line.split(' ')[-1].strip()
+                                metadata['AccessModes'] = access_mode
+                                access_mode_start = False
+                        elif 'accessModes:' in line:
+                            # example: 
+                            #  status:
+                            #     accessModes:
+                            #     - ReadWriteOnce
+                            # the access mode in the next line write code to get the access mode
+                            access_mode_start = True
+                        elif 'storage:' in line and 'requests:' in pvcs_output:
+                            metadata['StorageSize'] = line.split('storage:')[-1].strip()
+                        elif 'phase:' in line:
+                            metadata['Phase'] = line.split('phase:')[-1].strip()
+                except Exception as fallback_error:
+                    logging.warning(f"Fallback parsing also failed for PVC metadata: {fallback_error}")
         
         return metadata
     
     def _parse_pv_metadata(self, pv_name: str) -> Dict[str, Any]:
-        """Parse PV metadata from tool outputs"""
+        """Parse PV metadata from tool outputs using yaml package"""
         metadata = {
             'Phase': 'Unknown',
             'ReclaimPolicy': 'Unknown',
@@ -96,58 +159,79 @@ class MetadataParsers(InformationCollectorBase):
         pvs_output = self.collected_data.get('kubernetes', {}).get('pvs', '')
         if pvs_output:
             try:
-                pv_section = self._extract_yaml_section(pvs_output, pv_name)
-                for line in pv_section:
-                    if 'phase:' in line:
-                        metadata['Phase'] = line.split('phase:')[-1].strip()
-                    elif 'persistentVolumeReclaimPolicy:' in line:
-                        metadata['ReclaimPolicy'] = line.split('persistentVolumeReclaimPolicy:')[-1].strip()
-                    elif 'storage:' in line and 'capacity:' in pvs_output:
-                        metadata['Capacity'] = line.split('storage:')[-1].strip()
-                    elif 'path:' in line:
-                        metadata['diskPath'] = line.split('path:')[-1].strip()
-                    elif 'kubernetes.io/hostname:' in line:
-                        metadata['nodeAffinity'] = line.split('kubernetes.io/hostname:')[-1].strip()
+                # Parse the YAML output
+                pv_data = yaml.safe_load(pvs_output)
+                
+                # Find the PV with matching name
+                target_pv = None
+                if isinstance(pv_data, dict) and 'items' in pv_data and isinstance(pv_data['items'], list):
+                    # List of PVs case
+                    for pv in pv_data['items']:
+                        if pv.get('metadata', {}).get('name') == pv_name:
+                            target_pv = pv
+                            break
+                elif isinstance(pv_data, dict) and pv_data.get('metadata', {}).get('name') == pv_name:
+                    # Single PV case
+                    target_pv = pv_data
+                elif isinstance(pv_data, list):
+                    # Direct list of PVs
+                    for pv in pv_data:
+                        if pv.get('metadata', {}).get('name') == pv_name:
+                            target_pv = pv
+                            break
+                
+                if target_pv:
+                    # Extract PV phase
+                    metadata['Phase'] = target_pv.get('status', {}).get('phase', 'Unknown')
+                    
+                    # Extract reclaim policy
+                    metadata['ReclaimPolicy'] = target_pv.get('spec', {}).get('persistentVolumeReclaimPolicy', 'Unknown')
+                    
+                    # Extract access modes
+                    metadata['AccessModes'] = target_pv.get('spec', {}).get('accessModes', [])
+                    
+                    # Extract capacity
+                    metadata['Capacity'] = target_pv.get('spec', {}).get('capacity', {}).get('storage', '')
+                    
+                    # Extract disk path (if available)
+                    if 'local' in target_pv.get('spec', {}):
+                        metadata['diskPath'] = target_pv.get('spec', {}).get('local', {}).get('path', '')
+                    elif 'hostPath' in target_pv.get('spec', {}):
+                        metadata['diskPath'] = target_pv.get('spec', {}).get('hostPath', {}).get('path', '')
+                    
+                    # Extract node affinity
+                    node_selector = target_pv.get('spec', {}).get('nodeAffinity', {}).get('required', {}).get('nodeSelectorTerms', [])
+                    if node_selector and len(node_selector) > 0:
+                        expressions = node_selector[0].get('matchExpressions', [])
+                        for expr in expressions:
+                            if expr.get('key') == 'kubernetes.io/hostname' and expr.get('operator') == 'In':
+                                values = expr.get('values', [])
+                                if values and len(values) > 0:
+                                    metadata['nodeAffinity'] = values[0]
+                                    break
             except Exception as e:
-                logging.warning(f"Error parsing PV metadata: {e}")
+                logging.warning(f"Error parsing PV metadata with yaml package: {e}")
+                # Fallback to the old method in case of parsing errors
+                try:
+                    pv_section = self._extract_yaml_section(pvs_output, pv_name)
+                    for line in pv_section:
+                        if 'phase:' in line:
+                            metadata['Phase'] = line.split('phase:')[-1].strip()
+                        elif 'persistentVolumeReclaimPolicy:' in line:
+                            metadata['ReclaimPolicy'] = line.split('persistentVolumeReclaimPolicy:')[-1].strip()
+                        elif 'storage:' in line and 'capacity:' in pvs_output:
+                            metadata['Capacity'] = line.split('storage:')[-1].strip()
+                        elif 'path:' in line:
+                            metadata['diskPath'] = line.split('path:')[-1].strip()
+                        elif 'kubernetes.io/hostname:' in line:
+                            metadata['nodeAffinity'] = line.split('kubernetes.io/hostname:')[-1].strip()
+                except Exception as fallback_error:
+                    logging.warning(f"Fallback parsing also failed for PV metadata: {fallback_error}")
         
         return metadata
     
     def _parse_vol_metadata(self, vol_name: str) -> Dict[str, Any]:
-        """Parse volume metadata from tool outputs"""
-        ''' volume example:
-        apiVersion: v1
-        items:
-        - apiVersion: csi-baremetal.dell.com/v1
-        kind: Volume
-        metadata:
-            creationTimestamp: "2025-05-25T07:10:00Z"
-            finalizers:
-            - dell.emc.csi/volume-cleanup
-            generation: 6
-            name: pvc-1466401c-4595-4ae5-add7-4f6273369f9e
-            namespace: default
-            resourceVersion: "4964995"
-            uid: b956f1b6-effa-4709-8901-9f861269d9af
-        spec:
-            CSIStatus: PUBLISHED
-            Health: UNKNOWN
-            Id: pvc-1466401c-4595-4ae5-add7-4f6273369f9e
-            Location: 4924f8a4-6920-4b3f-9c4b-68141ad258dd
-            LocationType: DRIVE
-            Mode: FS
-            NodeId: 45b1ba07-213f-4979-aa0d-5bfc66d8aeda
-            OperationalStatus: MISSING
-            Owners:
-            - test-pod-1-0
-            Size: 3839999606784
-            StorageClass: NVME
-            Type: xfs
-            Usage: IN_USE
-        kind: List
-        metadata:
-        resourceVersion: ""
-        '''
+        """Parse volume metadata from tool outputs using yaml package"""
         metadata = {
             'CSIStatus': 'UNKNOWN',
             'Health': 'UNKNOWN',
@@ -167,74 +251,177 @@ class MetadataParsers(InformationCollectorBase):
         volumes_output = self.collected_data.get('csi_baremetal', {}).get('volumes', '')
         if volumes_output and vol_name in volumes_output:
             try:
-                vol_section = self._extract_yaml_section(volumes_output, vol_name)
-                for line in vol_section:
-                    if 'CSIStatus:' in line:
-                        metadata['CSIStatus'] = line.split('CSIStatus:')[-1].strip()
-                    elif 'Health:' in line:
-                        metadata['Health'] = line.split('Health:')[-1].strip()
-                    elif 'Id:' in line:
-                        metadata['Id'] = line.split('Id:')[-1].strip()
-                    elif 'Location:' in line:
-                        metadata['Location'] = line.split('Location:')[-1].strip()
-                    elif 'LocationType:' in line:
-                        metadata['LocationType'] = line.split('LocationType:')[-1].strip()
-                    elif 'Mode:' in line:
-                        metadata['Mode'] = line.split('Mode:')[-1].strip()
-                    elif 'NodeId:' in line:
-                        metadata['NodeId'] = line.split('NodeId:')[-1].strip()
-                    elif 'OperationalStatus:' in line:
-                        metadata['OperationalStatus'] = line.split('OperationalStatus:')[-1].strip()
-                    elif 'Owners:' in line:
-                        owners = line.split('Owners:')[-1].strip()
-                        if owners.startswith('- '):
-                            metadata['Owners'] = [owner.strip() for owner in owners.split('\n') if owner.strip()]
-                        else:   
-                            metadata['Owners'] = [owners.strip()]
-                    elif 'Size:' in line:
-                        try:
-                            size_str = line.split('Size:')[-1].strip()
-                            metadata['Size'] = int(size_str) if size_str.isdigit() else size_str
-                        except (ValueError, TypeError):
-                            pass
-                    elif 'StorageClass:' in line:
-                        metadata['StorageClass'] = line.split('StorageClass:')[-1].strip()
-                    elif 'Type:' in line:
-                        metadata['Type'] = line.split('Type:')[-1].strip()
-                    elif 'Usage:' in line:
-                        metadata['Usage'] = line.split('Usage:')[-1].strip()
+                # Parse the YAML output
+                volumes_data = yaml.safe_load(volumes_output)
+                
+                # Find the volume with matching name
+                target_volume = None
+                if isinstance(volumes_data, dict) and 'items' in volumes_data and isinstance(volumes_data['items'], list):
+                    # List of volumes case
+                    for volume in volumes_data['items']:
+                        if volume.get('metadata', {}).get('name') == vol_name:
+                            target_volume = volume
+                            break
+                elif isinstance(volumes_data, dict) and volumes_data.get('metadata', {}).get('name') == vol_name:
+                    # Single volume case
+                    target_volume = volumes_data
+                elif isinstance(volumes_data, list):
+                    # Direct list of volumes
+                    for volume in volumes_data:
+                        if volume.get('metadata', {}).get('name') == vol_name:
+                            target_volume = volume
+                            break
+                
+                if target_volume:
+                    # Extract volume spec properties
+                    spec = target_volume.get('spec', {})
+                    metadata['CSIStatus'] = spec.get('CSIStatus', 'UNKNOWN')
+                    metadata['Health'] = spec.get('Health', 'UNKNOWN')
+                    metadata['Id'] = spec.get('Id', '')
+                    metadata['Location'] = spec.get('Location', '')
+                    metadata['LocationType'] = spec.get('LocationType', 'UNKNOWN')
+                    metadata['Mode'] = spec.get('Mode', 'UNKNOWN')
+                    metadata['NodeId'] = spec.get('NodeId', '')
+                    metadata['OperationalStatus'] = spec.get('OperationalStatus', 'UNKNOWN')
+                    metadata['Owners'] = spec.get('Owners', [])
+                    metadata['Size'] = spec.get('Size', 0)
+                    metadata['StorageClass'] = spec.get('StorageClass', '')
+                    metadata['Type'] = spec.get('Type', '')
+                    metadata['Usage'] = spec.get('Usage', 'UNKNOWN')
+                else:
+                    logging.warning(f"Volume {vol_name} not found in parsed YAML data")
+                    
             except Exception as e:
-                logging.warning(f"Error parsing volume metadata for {vol_name}: {e}")
-                return metadata
+                logging.warning(f"Error parsing volume metadata for {vol_name} with yaml package: {e}")
+                # Fallback to the old method in case of parsing errors
+                try:
+                    vol_section = self._extract_yaml_section(volumes_output, vol_name)
+                    for line in vol_section:
+                        if 'CSIStatus:' in line:
+                            metadata['CSIStatus'] = line.split('CSIStatus:')[-1].strip()
+                        elif 'Health:' in line:
+                            metadata['Health'] = line.split('Health:')[-1].strip()
+                        elif 'Id:' in line:
+                            metadata['Id'] = line.split('Id:')[-1].strip()
+                        elif 'Location:' in line:
+                            metadata['Location'] = line.split('Location:')[-1].strip()
+                        elif 'LocationType:' in line:
+                            metadata['LocationType'] = line.split('LocationType:')[-1].strip()
+                        elif 'Mode:' in line:
+                            metadata['Mode'] = line.split('Mode:')[-1].strip()
+                        elif 'NodeId:' in line:
+                            metadata['NodeId'] = line.split('NodeId:')[-1].strip()
+                        elif 'OperationalStatus:' in line:
+                            metadata['OperationalStatus'] = line.split('OperationalStatus:')[-1].strip()
+                        elif 'Owners:' in line:
+                            owners = line.split('Owners:')[-1].strip()
+                            if owners.startswith('- '):
+                                metadata['Owners'] = [owner.strip() for owner in owners.split('\n') if owner.strip()]
+                            else:   
+                                metadata['Owners'] = [owners.strip()]
+                        elif 'Size:' in line:
+                            try:
+                                size_str = line.split('Size:')[-1].strip()
+                                metadata['Size'] = int(size_str) if size_str.isdigit() else size_str
+                            except (ValueError, TypeError):
+                                pass
+                        elif 'StorageClass:' in line:
+                            metadata['StorageClass'] = line.split('StorageClass:')[-1].strip()
+                        elif 'Type:' in line:
+                            metadata['Type'] = line.split('Type:')[-1].strip()
+                        elif 'Usage:' in line:
+                            metadata['Usage'] = line.split('Usage:')[-1].strip()
+                except Exception as fallback_error:
+                    logging.warning(f"Fallback parsing also failed for volume metadata: {fallback_error}")
         else:
             logging.warning(f"Volume {vol_name} not found in CSI Baremetal volumes output")
 
         return metadata
 
     def _extract_yaml_section(self, yaml_output: str, entity_name: str) -> List[str]:
-        """Extract YAML section for a specific entity"""
-        lines = yaml_output.split('\n')
-
-        section_lines = []
-        in_section = False
-        indent_level = 0
+        """
+        Extract YAML section for a specific entity using yaml package
         
-        for line in lines:
-            if f'name: {entity_name}' in line:
-                in_section = True
-                indent_level = len(line) - len(line.lstrip())
-                section_lines.append(line)
-            elif in_section:
-                current_indent = len(line) - len(line.lstrip())
-                if line.strip() and current_indent <= indent_level and 'name:' in line:
-                    # New entity started
-                    break
-                section_lines.append(line)
-        
-        return section_lines
+        Args:
+            yaml_output: YAML string to parse
+            entity_name: Name of the entity to extract
+            
+        Returns:
+            List of lines from the extracted section (for backward compatibility)
+        """
+        try:
+            # Parse the YAML output
+            yaml_data = yaml.safe_load(yaml_output)
+            
+            # Handle different YAML structures
+            if yaml_data is None:
+                return []
+                
+            # Case 1: List of items (most common Kubernetes output format)
+            if isinstance(yaml_data, dict) and 'items' in yaml_data and isinstance(yaml_data['items'], list):
+                for item in yaml_data['items']:
+                    if item.get('metadata', {}).get('name') == entity_name:
+                        # Convert back to YAML string for backward compatibility
+                        entity_yaml = yaml.dump(item, default_flow_style=False)
+                        return entity_yaml.split('\n')
+            
+            # Case 2: Single item
+            elif isinstance(yaml_data, dict) and yaml_data.get('metadata', {}).get('name') == entity_name:
+                entity_yaml = yaml.dump(yaml_data, default_flow_style=False)
+                return entity_yaml.split('\n')
+            
+            # Case 3: Direct list of items
+            elif isinstance(yaml_data, list):
+                for item in yaml_data:
+                    if isinstance(item, dict) and item.get('metadata', {}).get('name') == entity_name:
+                        entity_yaml = yaml.dump(item, default_flow_style=False)
+                        return entity_yaml.split('\n')
+            
+            # Fallback to the old method if we couldn't find the entity
+            logging.warning(f"Entity {entity_name} not found in YAML using structured parsing, falling back to line-by-line method")
+            lines = yaml_output.split('\n')
+            section_lines = []
+            in_section = False
+            indent_level = 0
+            
+            for line in lines:
+                if f'name: {entity_name}' in line:
+                    in_section = True
+                    indent_level = len(line) - len(line.lstrip())
+                    section_lines.append(line)
+                elif in_section:
+                    current_indent = len(line) - len(line.lstrip())
+                    if line.strip() and current_indent <= indent_level and 'name:' in line:
+                        # New entity started
+                        break
+                    section_lines.append(line)
+            
+            return section_lines
+            
+        except Exception as e:
+            logging.warning(f"Error parsing YAML for entity {entity_name}: {e}")
+            # Fallback to the old method in case of parsing errors
+            lines = yaml_output.split('\n')
+            section_lines = []
+            in_section = False
+            indent_level = 0
+            
+            for line in lines:
+                if f'name: {entity_name}' in line:
+                    in_section = True
+                    indent_level = len(line) - len(line.lstrip())
+                    section_lines.append(line)
+                elif in_section:
+                    current_indent = len(line) - len(line.lstrip())
+                    if line.strip() and current_indent <= indent_level and 'name:' in line:
+                        # New entity started
+                        break
+                    section_lines.append(line)
+            
+            return section_lines
     
     def _parse_comprehensive_drive_info(self, drive_uuid: str) -> Dict[str, Any]:
-        """Parse comprehensive drive information from CSI Baremetal tool outputs"""
+        """Parse comprehensive drive information from CSI Baremetal tool outputs using yaml package"""
         drive_info = {
             'Health': 'UNKNOWN',
             'Status': 'UNKNOWN',
@@ -253,46 +440,89 @@ class MetadataParsers(InformationCollectorBase):
         drives_output = self.collected_data.get('csi_baremetal', {}).get('drives', '')
         if drives_output and drive_uuid in drives_output:
             try:
-                drive_section = self._extract_yaml_section(drives_output, drive_uuid)
-                if drive_section:
-                    for line in drive_section:
-                        line = line.strip()
-                        if 'Health:' in line:
-                            drive_info['Health'] = line.split('Health:')[-1].strip()
-                        elif 'Status:' in line:
-                            drive_info['Status'] = line.split('Status:')[-1].strip()
-                        elif 'Type:' in line:
-                            drive_info['Type'] = line.split('Type:')[-1].strip()
-                        elif 'Size:' in line:
-                            try:
-                                size_str = line.split('Size:')[-1].strip()
-                                drive_info['Size'] = int(size_str) if size_str.isdigit() else size_str
-                            except (ValueError, TypeError):
-                                pass
-                        elif 'Usage:' in line:
-                            drive_info['Usage'] = line.split('Usage:')[-1].strip()
-                        elif 'IsSystem:' in line:
-                            system_str = line.split('IsSystem:')[-1].strip().lower()
-                            drive_info['IsSystem'] = system_str in ['true', 'yes', '1']
-                        elif 'Path:' in line:
-                            drive_info['Path'] = line.split('Path:')[-1].strip()
-                        elif 'SerialNumber:' in line:
-                            drive_info['SerialNumber'] = line.split('SerialNumber:')[-1].strip()
-                        elif 'Firmware:' in line:
-                            drive_info['Firmware'] = line.split('Firmware:')[-1].strip()
-                        elif 'VID:' in line:
-                            drive_info['VID'] = line.split('VID:')[-1].strip()
-                        elif 'PID:' in line:
-                            drive_info['PID'] = line.split('PID:')[-1].strip()
-                        elif 'NodeId:' in line:
-                            drive_info['NodeId'] = line.split('NodeId:')[-1].strip()
+                # Parse the YAML output
+                drives_data = yaml.safe_load(drives_output)
+                
+                # Find the drive with matching UUID
+                target_drive = None
+                if isinstance(drives_data, dict) and 'items' in drives_data and isinstance(drives_data['items'], list):
+                    # List of drives case
+                    for drive in drives_data['items']:
+                        if drive.get('metadata', {}).get('name') == drive_uuid:
+                            target_drive = drive
+                            break
+                elif isinstance(drives_data, dict) and drives_data.get('metadata', {}).get('name') == drive_uuid:
+                    # Single drive case
+                    target_drive = drives_data
+                elif isinstance(drives_data, list):
+                    # Direct list of drives
+                    for drive in drives_data:
+                        if drive.get('metadata', {}).get('name') == drive_uuid:
+                            target_drive = drive
+                            break
+                
+                if target_drive:
+                    # Extract drive spec properties
+                    spec = target_drive.get('spec', {})
+                    drive_info['Health'] = spec.get('Health', 'UNKNOWN')
+                    drive_info['Status'] = spec.get('Status', 'UNKNOWN')
+                    drive_info['Type'] = spec.get('Type', 'UNKNOWN')
+                    drive_info['Size'] = spec.get('Size', 0)
+                    drive_info['Usage'] = spec.get('Usage', 'UNKNOWN')
+                    drive_info['IsSystem'] = spec.get('IsSystem', False)
+                    drive_info['Path'] = spec.get('Path', '')
+                    drive_info['SerialNumber'] = spec.get('SerialNumber', '')
+                    drive_info['Firmware'] = spec.get('Firmware', '')
+                    drive_info['VID'] = spec.get('VID', '')
+                    drive_info['PID'] = spec.get('PID', '')
+                    drive_info['NodeId'] = spec.get('NodeId', '')
+                else:
+                    logging.warning(f"Drive {drive_uuid} not found in parsed YAML data")
+                    
             except Exception as e:
-                logging.warning(f"Error parsing drive metadata for {drive_uuid}: {e}")
+                logging.warning(f"Error parsing drive metadata for {drive_uuid} with yaml package: {e}")
+                # Fallback to the old method in case of parsing errors
+                try:
+                    drive_section = self._extract_yaml_section(drives_output, drive_uuid)
+                    if drive_section:
+                        for line in drive_section:
+                            line = line.strip()
+                            if 'Health:' in line:
+                                drive_info['Health'] = line.split('Health:')[-1].strip()
+                            elif 'Status:' in line:
+                                drive_info['Status'] = line.split('Status:')[-1].strip()
+                            elif 'Type:' in line:
+                                drive_info['Type'] = line.split('Type:')[-1].strip()
+                            elif 'Size:' in line:
+                                try:
+                                    size_str = line.split('Size:')[-1].strip()
+                                    drive_info['Size'] = int(size_str) if size_str.isdigit() else size_str
+                                except (ValueError, TypeError):
+                                    pass
+                            elif 'Usage:' in line:
+                                drive_info['Usage'] = line.split('Usage:')[-1].strip()
+                            elif 'IsSystem:' in line:
+                                system_str = line.split('IsSystem:')[-1].strip().lower()
+                                drive_info['IsSystem'] = system_str in ['true', 'yes', '1']
+                            elif 'Path:' in line:
+                                drive_info['Path'] = line.split('Path:')[-1].strip()
+                            elif 'SerialNumber:' in line:
+                                drive_info['SerialNumber'] = line.split('SerialNumber:')[-1].strip()
+                            elif 'Firmware:' in line:
+                                drive_info['Firmware'] = line.split('Firmware:')[-1].strip()
+                            elif 'VID:' in line:
+                                drive_info['VID'] = line.split('VID:')[-1].strip()
+                            elif 'PID:' in line:
+                                drive_info['PID'] = line.split('PID:')[-1].strip()
+                            elif 'NodeId:' in line:
+                                drive_info['NodeId'] = line.split('NodeId:')[-1].strip()
+                except Exception as fallback_error:
+                    logging.warning(f"Fallback parsing also failed for drive metadata: {fallback_error}")
         
         return drive_info
     
     def _parse_volume_metadata(self, volume_name: str, namespace: str = None) -> Dict[str, Any]:
-        """Parse CSI Baremetal Volume metadata from tool outputs"""
+        """Parse CSI Baremetal Volume metadata from tool outputs using yaml package"""
         volume_info = {
             'Health': 'UNKNOWN',
             'LocationType': 'UNKNOWN',
@@ -308,39 +538,79 @@ class MetadataParsers(InformationCollectorBase):
         volumes_output = self.collected_data.get('csi_baremetal', {}).get('volumes', '')
         if volumes_output and volume_name in volumes_output:
             try:
-                volume_section = self._extract_yaml_section(volumes_output, volume_name)
-                if volume_section:
-                    for line in volume_section:
-                        line = line.strip()
-                        if 'health:' in line:
-                            volume_info['Health'] = line.split('health:')[-1].strip()
-                        elif 'locationType:' in line:
-                            volume_info['LocationType'] = line.split('locationType:')[-1].strip()
-                        elif 'size:' in line:
-                            try:
-                                size_str = line.split('size:')[-1].strip()
-                                volume_info['Size'] = int(size_str) if size_str.isdigit() else size_str
-                            except (ValueError, TypeError):
-                                pass
-                        elif 'storageClass:' in line:
-                            volume_info['StorageClass'] = line.split('storageClass:')[-1].strip()
-                        elif 'location:' in line:
-                            volume_info['Location'] = line.split('location:')[-1].strip()
-                        elif 'usage:' in line:
-                            volume_info['Usage'] = line.split('usage:')[-1].strip()
-                        elif 'mode:' in line:
-                            volume_info['Mode'] = line.split('mode:')[-1].strip()
-                        elif 'type:' in line:
-                            volume_info['Type'] = line.split('type:')[-1].strip()
-                        elif 'nodeId:' in line:
-                            volume_info['NodeId'] = line.split('nodeId:')[-1].strip()
+                # Parse the YAML output
+                volumes_data = yaml.safe_load(volumes_output)
+                
+                # Find the volume with matching name
+                target_volume = None
+                if isinstance(volumes_data, dict) and 'items' in volumes_data and isinstance(volumes_data['items'], list):
+                    # List of volumes case
+                    for volume in volumes_data['items']:
+                        if volume.get('metadata', {}).get('name') == volume_name:
+                            target_volume = volume
+                            break
+                elif isinstance(volumes_data, dict) and volumes_data.get('metadata', {}).get('name') == volume_name:
+                    # Single volume case
+                    target_volume = volumes_data
+                elif isinstance(volumes_data, list):
+                    # Direct list of volumes
+                    for volume in volumes_data:
+                        if volume.get('metadata', {}).get('name') == volume_name:
+                            target_volume = volume
+                            break
+                
+                if target_volume:
+                    # Extract volume spec properties
+                    spec = target_volume.get('spec', {})
+                    volume_info['Health'] = spec.get('health', 'UNKNOWN')
+                    volume_info['LocationType'] = spec.get('locationType', 'UNKNOWN')
+                    volume_info['Size'] = spec.get('size', 0)
+                    volume_info['StorageClass'] = spec.get('storageClass', '')
+                    volume_info['Location'] = spec.get('location', '')
+                    volume_info['Usage'] = spec.get('usage', 'UNKNOWN')
+                    volume_info['Mode'] = spec.get('mode', 'UNKNOWN')
+                    volume_info['Type'] = spec.get('type', 'UNKNOWN')
+                    volume_info['NodeId'] = spec.get('nodeId', '')
+                else:
+                    logging.warning(f"Volume {volume_name} not found in parsed YAML data")
+                    
             except Exception as e:
-                logging.warning(f"Error parsing volume metadata for {volume_name}: {e}")
+                logging.warning(f"Error parsing volume metadata for {volume_name} with yaml package: {e}")
+                # Fallback to the old method in case of parsing errors
+                try:
+                    volume_section = self._extract_yaml_section(volumes_output, volume_name)
+                    if volume_section:
+                        for line in volume_section:
+                            line = line.strip()
+                            if 'health:' in line:
+                                volume_info['Health'] = line.split('health:')[-1].strip()
+                            elif 'locationType:' in line:
+                                volume_info['LocationType'] = line.split('locationType:')[-1].strip()
+                            elif 'size:' in line:
+                                try:
+                                    size_str = line.split('size:')[-1].strip()
+                                    volume_info['Size'] = int(size_str) if size_str.isdigit() else size_str
+                                except (ValueError, TypeError):
+                                    pass
+                            elif 'storageClass:' in line:
+                                volume_info['StorageClass'] = line.split('storageClass:')[-1].strip()
+                            elif 'location:' in line:
+                                volume_info['Location'] = line.split('location:')[-1].strip()
+                            elif 'usage:' in line:
+                                volume_info['Usage'] = line.split('usage:')[-1].strip()
+                            elif 'mode:' in line:
+                                volume_info['Mode'] = line.split('mode:')[-1].strip()
+                            elif 'type:' in line:
+                                volume_info['Type'] = line.split('type:')[-1].strip()
+                            elif 'nodeId:' in line:
+                                volume_info['NodeId'] = line.split('nodeId:')[-1].strip()
+                except Exception as fallback_error:
+                    logging.warning(f"Fallback parsing also failed for volume metadata: {fallback_error}")
         
         return volume_info
     
     def _parse_lvg_metadata(self, lvg_name: str) -> Dict[str, Any]:
-        """Parse LVG metadata from CSI Baremetal tool outputs"""
+        """Parse LVG metadata from CSI Baremetal tool outputs using yaml package"""
         lvg_info = {
             'Health': 'UNKNOWN',
             'Size': 0,
@@ -352,40 +622,76 @@ class MetadataParsers(InformationCollectorBase):
         lvgs_output = self.collected_data.get('csi_baremetal', {}).get('lvgs', '')
         if lvgs_output and lvg_name in lvgs_output:
             try:
-                lvg_section = self._extract_yaml_section(lvgs_output, lvg_name)
-                if lvg_section:
-                    in_locations_array = False
-                    for line in lvg_section:
-                        line = line.strip()
-                        if 'health:' in line:
-                            lvg_info['Health'] = line.split('health:')[-1].strip()
-                        elif 'size:' in line:
-                            try:
-                                size_str = line.split('size:')[-1].strip()
-                                lvg_info['Size'] = int(size_str) if size_str.isdigit() else size_str
-                            except (ValueError, TypeError):
-                                pass
-                        elif 'volumeGroup:' in line:
-                            lvg_info['VolumeGroup'] = line.split('volumeGroup:')[-1].strip()
-                        elif 'node:' in line:
-                            lvg_info['Node'] = line.split('node:')[-1].strip()
-                        elif 'locations:' in line:
-                            in_locations_array = True
-                        elif in_locations_array and line.startswith('- '):
-                            # Extract drive UUID from array item
-                            drive_uuid = line[2:].strip()
-                            if drive_uuid:
-                                lvg_info['Locations'].append(drive_uuid)
-                        elif in_locations_array and not line.startswith('- ') and not line.startswith(' '):
-                            # End of locations array
-                            in_locations_array = False
+                # Parse the YAML output
+                lvgs_data = yaml.safe_load(lvgs_output)
+                
+                # Find the LVG with matching name
+                target_lvg = None
+                if isinstance(lvgs_data, dict) and 'items' in lvgs_data and isinstance(lvgs_data['items'], list):
+                    # List of LVGs case
+                    for lvg in lvgs_data['items']:
+                        if lvg.get('metadata', {}).get('name') == lvg_name:
+                            target_lvg = lvg
+                            break
+                elif isinstance(lvgs_data, dict) and lvgs_data.get('metadata', {}).get('name') == lvg_name:
+                    # Single LVG case
+                    target_lvg = lvgs_data
+                elif isinstance(lvgs_data, list):
+                    # Direct list of LVGs
+                    for lvg in lvgs_data:
+                        if lvg.get('metadata', {}).get('name') == lvg_name:
+                            target_lvg = lvg
+                            break
+                
+                if target_lvg:
+                    # Extract LVG spec properties
+                    spec = target_lvg.get('spec', {})
+                    lvg_info['Health'] = spec.get('health', 'UNKNOWN')
+                    lvg_info['Size'] = spec.get('size', 0)
+                    lvg_info['VolumeGroup'] = spec.get('volumeGroup', '')
+                    lvg_info['Node'] = spec.get('node', '')
+                    lvg_info['Locations'] = spec.get('locations', [])
+                else:
+                    logging.warning(f"LVG {lvg_name} not found in parsed YAML data")
+                    
             except Exception as e:
-                logging.warning(f"Error parsing LVG metadata for {lvg_name}: {e}")
+                logging.warning(f"Error parsing LVG metadata for {lvg_name} with yaml package: {e}")
+                # Fallback to the old method in case of parsing errors
+                try:
+                    lvg_section = self._extract_yaml_section(lvgs_output, lvg_name)
+                    if lvg_section:
+                        in_locations_array = False
+                        for line in lvg_section:
+                            line = line.strip()
+                            if 'health:' in line:
+                                lvg_info['Health'] = line.split('health:')[-1].strip()
+                            elif 'size:' in line:
+                                try:
+                                    size_str = line.split('size:')[-1].strip()
+                                    lvg_info['Size'] = int(size_str) if size_str.isdigit() else size_str
+                                except (ValueError, TypeError):
+                                    pass
+                            elif 'volumeGroup:' in line:
+                                lvg_info['VolumeGroup'] = line.split('volumeGroup:')[-1].strip()
+                            elif 'node:' in line:
+                                lvg_info['Node'] = line.split('node:')[-1].strip()
+                            elif 'locations:' in line:
+                                in_locations_array = True
+                            elif in_locations_array and line.startswith('- '):
+                                # Extract drive UUID from array item
+                                drive_uuid = line[2:].strip()
+                                if drive_uuid:
+                                    lvg_info['Locations'].append(drive_uuid)
+                            elif in_locations_array and not line.startswith('- ') and not line.startswith(' '):
+                                # End of locations array
+                                in_locations_array = False
+                except Exception as fallback_error:
+                    logging.warning(f"Fallback parsing also failed for LVG metadata: {fallback_error}")
         
         return lvg_info
     
     def _parse_ac_metadata(self, ac_name: str) -> Dict[str, Any]:
-        """Parse Available Capacity metadata from CSI Baremetal tool outputs"""
+        """Parse Available Capacity metadata from CSI Baremetal tool outputs using yaml package"""
         ac_info = {
             'Size': 0,
             'StorageClass': '',
@@ -397,52 +703,116 @@ class MetadataParsers(InformationCollectorBase):
         ac_output = self.collected_data.get('csi_baremetal', {}).get('available_capacity', '')
         if ac_output and ac_name in ac_output:
             try:
-                ac_section = self._extract_yaml_section(ac_output, ac_name)
-                if ac_section:
-                    for line in ac_section:
-                        line = line.strip()
-                        if 'size:' in line:
-                            try:
-                                size_str = line.split('size:')[-1].strip()
-                                ac_info['Size'] = int(size_str) if size_str.isdigit() else size_str
-                            except (ValueError, TypeError):
-                                pass
-                        elif 'storageClass:' in line:
-                            ac_info['StorageClass'] = line.split('storageClass:')[-1].strip()
-                        elif 'location:' in line:
-                            ac_info['Location'] = line.split('location:')[-1].strip()
-                        elif 'node:' in line:
-                            ac_info['Node'] = line.split('node:')[-1].strip()
-                        elif 'nodeId:' in line:
-                            ac_info['NodeId'] = line.split('nodeId:')[-1].strip()
+                # Parse the YAML output
+                ac_data = yaml.safe_load(ac_output)
+                
+                # Find the AC with matching name
+                target_ac = None
+                if isinstance(ac_data, dict) and 'items' in ac_data and isinstance(ac_data['items'], list):
+                    # List of ACs case
+                    for ac in ac_data['items']:
+                        if ac.get('metadata', {}).get('name') == ac_name:
+                            target_ac = ac
+                            break
+                elif isinstance(ac_data, dict) and ac_data.get('metadata', {}).get('name') == ac_name:
+                    # Single AC case
+                    target_ac = ac_data
+                elif isinstance(ac_data, list):
+                    # Direct list of ACs
+                    for ac in ac_data:
+                        if ac.get('metadata', {}).get('name') == ac_name:
+                            target_ac = ac
+                            break
+                
+                if target_ac:
+                    # Extract AC spec properties
+                    spec = target_ac.get('spec', {})
+                    ac_info['Size'] = spec.get('size', 0)
+                    ac_info['StorageClass'] = spec.get('storageClass', '')
+                    ac_info['Location'] = spec.get('location', '')
+                    ac_info['Node'] = spec.get('node', '')
+                    ac_info['NodeId'] = spec.get('nodeId', '')
+                else:
+                    logging.warning(f"AC {ac_name} not found in parsed YAML data")
+                    
             except Exception as e:
-                logging.warning(f"Error parsing AC metadata for {ac_name}: {e}")
+                logging.warning(f"Error parsing AC metadata for {ac_name} with yaml package: {e}")
+                # Fallback to the old method in case of parsing errors
+                try:
+                    ac_section = self._extract_yaml_section(ac_output, ac_name)
+                    if ac_section:
+                        for line in ac_section:
+                            line = line.strip()
+                            if 'size:' in line:
+                                try:
+                                    size_str = line.split('size:')[-1].strip()
+                                    ac_info['Size'] = int(size_str) if size_str.isdigit() else size_str
+                                except (ValueError, TypeError):
+                                    pass
+                            elif 'storageClass:' in line:
+                                ac_info['StorageClass'] = line.split('storageClass:')[-1].strip()
+                            elif 'location:' in line:
+                                ac_info['Location'] = line.split('location:')[-1].strip()
+                            elif 'node:' in line:
+                                ac_info['Node'] = line.split('node:')[-1].strip()
+                            elif 'nodeId:' in line:
+                                ac_info['NodeId'] = line.split('nodeId:')[-1].strip()
+                except Exception as fallback_error:
+                    logging.warning(f"Fallback parsing also failed for AC metadata: {fallback_error}")
         
         return ac_info
     
     def _parse_csibmnode_mapping(self) -> Dict[str, str]:
-        """Parse CSI Baremetal node mapping to get UUID to hostname mapping"""
+        """Parse CSI Baremetal node mapping to get UUID to hostname mapping using yaml package"""
         node_mapping = {}  # UUID -> hostname
         
         csibm_nodes_output = self.collected_data.get('csi_baremetal', {}).get('nodes', '')
         if csibm_nodes_output:
             try:
-                lines = csibm_nodes_output.split('\n')
-                current_uuid = None
-                current_hostname = None
+                # Parse the YAML output
+                nodes_data = yaml.safe_load(csibm_nodes_output)
                 
-                for line in lines:
-                    line = line.strip()
-                    if 'name:' in line and len(line.split('name:')[-1].strip()) > 30:  # UUID format
-                        current_uuid = line.split('name:')[-1].strip()
-                    elif 'hostname:' in line:
-                        current_hostname = line.split('hostname:')[-1].strip()
-                        if current_uuid and current_hostname:
-                            node_mapping[current_uuid] = current_hostname
-                            current_uuid = None
-                            current_hostname = None
+                # Process CSI Baremetal node data
+                if nodes_data:
+                    # Handle different YAML structures
+                    node_items = []
+                    if isinstance(nodes_data, dict) and 'items' in nodes_data and isinstance(nodes_data['items'], list):
+                        # List of nodes case
+                        node_items = nodes_data['items']
+                    elif isinstance(nodes_data, list):
+                        # Direct list of nodes
+                        node_items = nodes_data
+                    
+                    # Extract UUID to hostname mapping
+                    for node in node_items:
+                        if isinstance(node, dict):
+                            node_uuid = node.get('metadata', {}).get('name', '')
+                            # Check if it's a UUID format (typically long string with hyphens)
+                            if len(node_uuid) > 30:
+                                hostname = node.get('spec', {}).get('hostname', '')
+                                if hostname:
+                                    node_mapping[node_uuid] = hostname
+                    
             except Exception as e:
-                logging.warning(f"Error parsing CSI Baremetal node mapping: {e}")
+                logging.warning(f"Error parsing CSI Baremetal node mapping with yaml package: {e}")
+                # Fallback to the old method in case of parsing errors
+                try:
+                    lines = csibm_nodes_output.split('\n')
+                    current_uuid = None
+                    current_hostname = None
+                    
+                    for line in lines:
+                        line = line.strip()
+                        if 'name:' in line and len(line.split('name:')[-1].strip()) > 30:  # UUID format
+                            current_uuid = line.split('name:')[-1].strip()
+                        elif 'hostname:' in line:
+                            current_hostname = line.split('hostname:')[-1].strip()
+                            if current_uuid and current_hostname:
+                                node_mapping[current_uuid] = current_hostname
+                                current_uuid = None
+                                current_hostname = None
+                except Exception as fallback_error:
+                    logging.warning(f"Fallback parsing also failed for CSI Baremetal node mapping: {fallback_error}")
         
         return node_mapping
     
@@ -531,7 +901,15 @@ class MetadataParsers(InformationCollectorBase):
         return smart_info
     
     def _parse_comprehensive_node_info(self, node_name: str) -> Dict[str, Any]:
-        """Parse comprehensive node information from tool outputs"""
+        """
+        Parse comprehensive node information from tool outputs using YAML parser
+        
+        Args:
+            node_name: Name of the node to parse information for
+            
+        Returns:
+            Dictionary containing parsed node information
+        """
         node_info = {
             'Ready': False,
             'DiskPressure': False,
@@ -550,12 +928,67 @@ class MetadataParsers(InformationCollectorBase):
         nodes_output = self.collected_data.get('kubernetes', {}).get('nodes', '')
         if nodes_output and node_name in nodes_output:
             try:
-                #node_section = self._extract_yaml_section(nodes_output, node_name)
-                node_section = lines = nodes_output.split('\n')
-                if node_section:
+                # Parse the YAML output
+                nodes_data = yaml.safe_load(nodes_output)
+                
+                # Find the node with matching name
+                target_node = None
+                if isinstance(nodes_data, dict) and 'items' in nodes_data and isinstance(nodes_data['items'], list):
+                    # List of nodes case
+                    for node in nodes_data['items']:
+                        if node.get('metadata', {}).get('name') == node_name:
+                            target_node = node
+                            break
+                elif isinstance(nodes_data, list):
+                    # Direct list of nodes
+                    for node in nodes_data:
+                        if node.get('metadata', {}).get('name') == node_name:
+                            target_node = node
+                            break
+                
+                if not target_node:
+                    logging.warning(f"Node {node_name} not found in the provided YAML output")
+                    return node_info
+                
+                # Extract status information
+                status = target_node.get('status', {})
+                
+                # Extract conditions
+                conditions = status.get('conditions', [])
+                for condition in conditions:
+                    condition_type = condition.get('type', '')
+                    condition_status = condition.get('status', '').lower() == 'true'
+                    
+                    if condition_type == 'Ready':
+                        node_info['Ready'] = condition_status
+                    elif condition_type == 'DiskPressure':
+                        node_info['DiskPressure'] = condition_status
+                    elif condition_type == 'MemoryPressure':
+                        node_info['MemoryPressure'] = condition_status
+                    elif condition_type == 'PIDPressure':
+                        node_info['PIDPressure'] = condition_status
+                    elif condition_type == 'NetworkUnavailable':
+                        node_info['NetworkUnavailable'] = condition_status
+                
+                # Extract node info
+                node_info_data = target_node.get('status', {}).get('nodeInfo', {})
+                node_info['KubeletVersion'] = node_info_data.get('kubeletVersion', '')
+                node_info['ContainerRuntimeVersion'] = node_info_data.get('containerRuntimeVersion', '')
+                node_info['KernelVersion'] = node_info_data.get('kernelVersion', '')
+                node_info['OSImage'] = node_info_data.get('osImage', '')
+                node_info['Architecture'] = node_info_data.get('architecture', '')
+                
+                # Extract capacity and allocatable resources
+                node_info['Capacity'] = status.get('capacity', {})
+                node_info['Allocatable'] = status.get('allocatable', {})
+                
+            except Exception as e:
+                logging.warning(f"Error parsing node metadata for {node_name} using YAML parser: {e}")
+                # Fallback to the old method in case of parsing errors
+                try:
+                    node_section = nodes_output.split('\n')
                     for line in node_section:
                         line = line.strip()
-                        node_info['Ready'] = 'True'
                         if 'ready' in line and 'status:' in line:
                             node_info['Ready'] = 'True' in line
                         elif 'diskPressure' in line and 'status:' in line:
@@ -576,8 +1009,8 @@ class MetadataParsers(InformationCollectorBase):
                             node_info['OSImage'] = line.split('osImage:')[-1].strip()
                         elif 'architecture:' in line:
                             node_info['Architecture'] = line.split('architecture:')[-1].strip()
-            except Exception as e:
-                logging.warning(f"Error parsing node metadata for {node_name}: {e}")
+                except Exception as fallback_error:
+                    logging.warning(f"Fallback parsing also failed for node {node_name}: {fallback_error}")
         
         return node_info
     

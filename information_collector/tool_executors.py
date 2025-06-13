@@ -4,6 +4,7 @@ Tool Executors
 Contains methods for executing different categories of diagnostic tools.
 """
 
+import yaml
 import string
 import logging
 from typing import Dict, List, Any
@@ -333,25 +334,55 @@ class ToolExecutors(InformationCollectorBase):
         drives_output = self.collected_data.get('csi_baremetal', {}).get('drives', '')
         
         if drives_output and drive_uuid in drives_output:
-            lines = drives_output.split('\n')
-            in_drive_section = False
-            
-            for line in lines:
-                if f'name: {drive_uuid}' in line:
-                    in_drive_section = True
-                elif in_drive_section:
-                    # Extract path information
-                    if 'path:' in line:
-                        drive_info['path'] = line.split('path:')[-1].strip()
-                    # Extract node information
-                    elif 'node:' in line:
-                        drive_info['node'] = line.split('node:')[-1].strip()
-                    # Extract serial information
-                    elif 'serial:' in line:
-                        drive_info['serial'] = line.split('serial:')[-1].strip()
-                    # Break if we've moved to another drive section
-                    elif line.strip() and 'name:' in line and drive_uuid not in line:
-                        break
+            try:
+                # Parse the YAML output
+                drives_data = yaml.safe_load(drives_output)
+                
+                # Find the drive with matching UUID
+                target_drive = None
+                if isinstance(drives_data, dict) and 'items' in drives_data and isinstance(drives_data['items'], list):
+                    # List of drives case
+                    for drive in drives_data['items']:
+                        if drive.get('metadata', {}).get('name') == drive_uuid:
+                            target_drive = drive
+                            break
+                elif isinstance(drives_data, list):
+                    # Direct list of drives
+                    for drive in drives_data:
+                        if drive.get('metadata', {}).get('name') == drive_uuid:
+                            target_drive = drive
+                            break
+                
+                if target_drive:
+                    # Extract drive information from the spec
+                    spec = target_drive.get('spec', {})
+                    drive_info['path'] = spec.get('path')
+                    drive_info['node'] = spec.get('node')
+                    drive_info['serial'] = spec.get('serialNumber')
+                    return drive_info
+                
+            except Exception as e:
+                logging.warning(f"Error parsing drive YAML with yaml package: {e}")
+                # Fallback to the old method in case of parsing errors
+                lines = drives_output.split('\n')
+                in_drive_section = False
+                
+                for line in lines:
+                    if f'name: {drive_uuid}' in line:
+                        in_drive_section = True
+                    elif in_drive_section:
+                        # Extract path information
+                        if 'path:' in line:
+                            drive_info['path'] = line.split('path:')[-1].strip()
+                        # Extract node information
+                        elif 'node:' in line:
+                            drive_info['node'] = line.split('node:')[-1].strip()
+                        # Extract serial information
+                        elif 'serial:' in line:
+                            drive_info['serial'] = line.split('serial:')[-1].strip()
+                        # Break if we've moved to another drive section
+                        elif line.strip() and 'name:' in line and drive_uuid not in line:
+                            break
         
         return drive_info
     

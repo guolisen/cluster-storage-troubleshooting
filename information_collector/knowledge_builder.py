@@ -243,44 +243,89 @@ class KnowledgeBuilder(MetadataParsers):
     def _process_lvg_entities(self, lvg_output: str):
         """Process logical volume group entities"""
         try:
-            lines = lvg_output.split('\n')
-            current_lvg = None
-            current_drives = []
+            # Parse the YAML output
+            lvg_data = yaml.safe_load(lvg_output)
             
-            for line in lines:
-                if 'name:' in line and 'metadata:' not in line:
-                    # Process previous LVG if exists
-                    if current_lvg:
-                        self._finalize_lvg_entity(current_lvg, current_drives)
-                    
-                    current_lvg = line.split('name:')[-1].strip()
-                    current_drives = []
-                elif current_lvg and 'health:' in line:
-                    health = line.split('health:')[-1].strip()
-                    
-                    # Add LVG to knowledge graph
-                    lvg_id = self.knowledge_graph.add_gnode_lvg(current_lvg, Health=health, drive_uuids=current_drives)
-                    
-                    # Add issues for unhealthy LVGs
-                    if health not in ['GOOD', 'HEALTHY']:
-                        self.knowledge_graph.add_issue(
-                            lvg_id,
-                            "lvg_health",
-                            f"LVG health issue: {health}",
-                            "high"
-                        )
-                elif current_lvg and 'drive:' in line:
-                    # Extract drive UUID from LVG
-                    drive_uuid = line.split('drive:')[-1].strip()
-                    if drive_uuid:
-                        current_drives.append(drive_uuid)
-            
-            # Process last LVG
-            if current_lvg:
-                self._finalize_lvg_entity(current_lvg, current_drives)
+            # Process LVGs from the parsed YAML
+            if lvg_data:
+                # Handle different YAML structures
+                lvg_items = []
+                if isinstance(lvg_data, dict) and 'items' in lvg_data and isinstance(lvg_data['items'], list):
+                    lvg_items = lvg_data['items']
+                elif isinstance(lvg_data, list):
+                    lvg_items = lvg_data
                 
+                for lvg in lvg_items:
+                    if lvg.get('kind') == 'LogicalVolumeGroup' or 'LogicalVolumeGroup' in lvg.get('kind', ''):
+                        # Extract LVG name
+                        lvg_name = lvg.get('metadata', {}).get('name')
+                        if not lvg_name:
+                            continue
+                        
+                        # Extract LVG health
+                        health = lvg.get('spec', {}).get('health', 'UNKNOWN')
+                        
+                        # Extract drive UUIDs
+                        current_drives = lvg.get('spec', {}).get('Locations', [])
+                        if not isinstance(current_drives, list):
+                            current_drives = []
+                        
+                        # Add LVG to knowledge graph
+                        lvg_id = self.knowledge_graph.add_gnode_lvg(lvg_name, Health=health, drive_uuids=current_drives)
+                        
+                        # Add issues for unhealthy LVGs
+                        if health not in ['GOOD', 'HEALTHY']:
+                            self.knowledge_graph.add_issue(
+                                lvg_id,
+                                "lvg_health",
+                                f"LVG health issue: {health}",
+                                "high"
+                            )
+                        
+                        # Process LVG relationships
+                        self._finalize_lvg_entity(lvg_name, current_drives)
+            
         except Exception as e:
-            logging.warning(f"Error processing LVG entities: {e}")
+            logging.warning(f"Error processing LVG entities with yaml package: {e}")
+            # Fallback to the old method in case of parsing errors
+            try:
+                lines = lvg_output.split('\n')
+                current_lvg = None
+                current_drives = []
+                
+                for line in lines:
+                    if 'name:' in line and 'metadata:' not in line:
+                        # Process previous LVG if exists
+                        if current_lvg:
+                            self._finalize_lvg_entity(current_lvg, current_drives)
+                        
+                        current_lvg = line.split('name:')[-1].strip()
+                        current_drives = []
+                    elif current_lvg and 'health:' in line:
+                        health = line.split('health:')[-1].strip()
+                        
+                        # Add LVG to knowledge graph
+                        lvg_id = self.knowledge_graph.add_gnode_lvg(current_lvg, Health=health, drive_uuids=current_drives)
+                        
+                        # Add issues for unhealthy LVGs
+                        if health not in ['GOOD', 'HEALTHY']:
+                            self.knowledge_graph.add_issue(
+                                lvg_id,
+                                "lvg_health",
+                                f"LVG health issue: {health}",
+                                "high"
+                            )
+                    elif current_lvg and 'drive:' in line:
+                        # Extract drive UUID from LVG
+                        drive_uuid = line.split('drive:')[-1].strip()
+                        if drive_uuid:
+                            current_drives.append(drive_uuid)
+                
+                # Process last LVG
+                if current_lvg:
+                    self._finalize_lvg_entity(current_lvg, current_drives)
+            except Exception as fallback_error:
+                logging.warning(f"Fallback processing of LVG entities also failed: {fallback_error}")
     
     def _finalize_lvg_entity(self, lvg_name: str, drive_uuids: List[str]):
         """Finalize LVG entity with drive relationships"""
@@ -303,33 +348,66 @@ class KnowledgeBuilder(MetadataParsers):
             # Get relevant drive UUIDs to filter ACs
             relevant_drives = self._get_relevant_drive_uuids()
             
-            lines = ac_output.split('\n')
-            current_ac = None
-            ac_info = {}
+            # Parse the YAML output
+            ac_data = yaml.safe_load(ac_output)
             
-            for line in lines:
-                if 'name:' in line and 'metadata:' not in line:
-                    # Process previous AC if exists and relevant
-                    if current_ac and self._is_ac_relevant(current_ac, ac_info, relevant_drives):
-                        self._finalize_ac_entity(current_ac, ac_info)
-                    
-                    current_ac = line.split('name:')[-1].strip()
-                    ac_info = {}
-                elif current_ac:
-                    # Extract AC properties
-                    if 'size:' in line:
-                        ac_info['size'] = line.split('size:')[-1].strip()
-                    elif 'storageClass:' in line:
-                        ac_info['storage_class'] = line.split('storageClass:')[-1].strip()
-                    elif 'location:' in line:
-                        ac_info['location'] = line.split('location:')[-1].strip()
-            
-            # Process last AC if relevant
-            if current_ac and self._is_ac_relevant(current_ac, ac_info, relevant_drives):
-                self._finalize_ac_entity(current_ac, ac_info)
+            # Process ACs from the parsed YAML
+            if ac_data:
+                # Handle different YAML structures
+                ac_items = []
+                if isinstance(ac_data, dict) and 'items' in ac_data and isinstance(ac_data['items'], list):
+                    ac_items = ac_data['items']
+                elif isinstance(ac_data, list):
+                    ac_items = ac_data
                 
+                for ac in ac_items:
+                    if ac.get('kind') == 'AvailableCapacity' or 'AvailableCapacity' in ac.get('kind', ''):
+                        # Extract AC name
+                        ac_name = ac.get('metadata', {}).get('name')
+                        if not ac_name:
+                            continue
+                        
+                        # Extract AC properties
+                        ac_info = {
+                            'size': str(ac.get('spec', {}).get('size', '')),
+                            'storage_class': ac.get('spec', {}).get('storageClass', ''),
+                            'location': ac.get('spec', {}).get('location', '')
+                        }
+                        
+                        # Process AC if relevant
+                        if self._is_ac_relevant(ac_name, ac_info, relevant_drives):
+                            self._finalize_ac_entity(ac_name, ac_info)
+            
         except Exception as e:
-            logging.warning(f"Error processing Available Capacity entities: {e}")
+            logging.warning(f"Error processing Available Capacity entities with yaml package: {e}")
+            # Fallback to the old method in case of parsing errors
+            try:
+                lines = ac_output.split('\n')
+                current_ac = None
+                ac_info = {}
+                
+                for line in lines:
+                    if 'name:' in line and 'metadata:' not in line:
+                        # Process previous AC if exists and relevant
+                        if current_ac and self._is_ac_relevant(current_ac, ac_info, relevant_drives):
+                            self._finalize_ac_entity(current_ac, ac_info)
+                        
+                        current_ac = line.split('name:')[-1].strip()
+                        ac_info = {}
+                    elif current_ac:
+                        # Extract AC properties
+                        if 'size:' in line:
+                            ac_info['size'] = line.split('size:')[-1].strip()
+                        elif 'storageClass:' in line:
+                            ac_info['storage_class'] = line.split('storageClass:')[-1].strip()
+                        elif 'location:' in line:
+                            ac_info['location'] = line.split('location:')[-1].strip()
+                
+                # Process last AC if relevant
+                if current_ac and self._is_ac_relevant(current_ac, ac_info, relevant_drives):
+                    self._finalize_ac_entity(current_ac, ac_info)
+            except Exception as fallback_error:
+                logging.warning(f"Fallback processing of Available Capacity entities also failed: {fallback_error}")
     
     def _is_ac_relevant(self, ac_name: str, ac_info: Dict[str, str], relevant_drives: set) -> bool:
         """Check if AC is relevant to the current volume troubleshooting"""

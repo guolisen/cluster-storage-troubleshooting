@@ -88,5 +88,11 @@
     "root_cause": "The related disk is a Virtural Disk on Virtural Machine",
     "localization_method": "Check Disk serial number, vendor, model...etc, whether this information has string like 'Virtual'",
     "resolution_method": "Report this finding to user."
+  },
+  {
+    "phenomenon": "Volume health is UNKNOWN, Operating issue is UNKNOWN",
+    "root_cause": "The system is a Virtual Machine, or the disk is a Virtual Disk on Virtural Machine",
+    "localization_method": "",
+    "resolution_method": "Report this finding to user."
   }
 ]

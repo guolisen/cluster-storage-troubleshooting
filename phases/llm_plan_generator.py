@@ -325,7 +325,6 @@ TASK:
 
 CONSTRAINTS:
 - You must NOT invoke any tools - only reference them in your plan
-- You must include all static steps from the draft plan without modification
 - You must only reference tools available in the Phase1 tool registry
 - All tool references must match the exact name and parameter format shown in the tools registry
 - Include at least one disk-related check step and one volume-related check step.

@@ -7,6 +7,7 @@ disk space, mount points, kernel messages, and system logs.
 """
 
 import subprocess
+import json
 from langchain_core.tools import tool
 from tools.diagnostics.hardware import ssh_execute
 
@@ -143,3 +144,37 @@ def journalctl_command(node_name: str, options: str = "--since='5 minutes ago'")
         return ssh_execute.invoke({"node_name": node_name, "command": cmd_str})
     except Exception as e:
         return f"Error executing journalctl: {str(e)}"
+
+@tool
+def get_system_hardware_info(node_name: str) -> str:
+    """
+    Get system manufacturer and product name information using dmidecode
+    
+    Args:
+        node_name: Node hostname or IP
+        
+    Returns:
+        str: System hardware information
+    """
+    try:
+        # Execute dmidecode commands via SSH
+        manufacturer_cmd = "sudo dmidecode -s system-manufacturer"
+        product_name_cmd = "sudo dmidecode -s system-product-name"
+        
+        manufacturer = ssh_execute.invoke({"node_name": node_name, "command": manufacturer_cmd})
+        product_name = ssh_execute.invoke({"node_name": node_name, "command": product_name_cmd})
+        
+        # Clean up the output
+        manufacturer = manufacturer.strip() if isinstance(manufacturer, str) else "Unknown"
+        product_name = product_name.strip() if isinstance(product_name, str) else "Unknown"
+        
+        # Format the result
+        result = {
+            "manufacturer": manufacturer,
+            "product_name": product_name
+        }
+        
+        return json.dumps(result, indent=2)
+        
+    except Exception as e:
+        return f"Error getting system hardware info: {str(e)}"

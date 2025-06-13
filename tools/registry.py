@@ -54,7 +54,8 @@ from tools.diagnostics.system import (
     lsblk_command,
     mount_command,
     dmesg_command,
-    journalctl_command
+    journalctl_command,
+    get_system_hardware_info
 )
 
 # Import new disk check tools
@@ -147,6 +148,7 @@ def get_all_tools() -> List[Any]:
         mount_command,
         dmesg_command,
         journalctl_command,
+        get_system_hardware_info,
         
         # New disk check tools
         detect_disk_jitter,
@@ -232,6 +234,7 @@ def get_diagnostic_tools() -> List[Any]:
         mount_command,
         dmesg_command,
         journalctl_command,
+        get_system_hardware_info,
         
         # New disk check tools
         detect_disk_jitter,
@@ -282,6 +285,7 @@ def get_phase1_tools() -> List[Any]:
         mount_command,
         dmesg_command,
         journalctl_command,
+        get_system_hardware_info,
         
         # Hardware information tools
         smartctl_check,  # Read-only disk health check

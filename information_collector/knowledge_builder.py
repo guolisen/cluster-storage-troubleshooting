@@ -573,21 +573,26 @@ class KnowledgeBuilder(MetadataParsers):
         try:
             lines = nodes_output.split('\n')
             
+            newNodeData = False
             for line in lines:
                 line = line.strip()
+                if 'kind: Node' in line:
+                    newNodeData = True
+
                 # Look for node names that match cluster naming pattern
-                if 'name:' in line and 'metadata:' not in line:
-                    node_name = line.split('name:')[-1].strip()
+                if 'name:' in line and 'metadata:' not in line and 'hostname:' not in line and newNodeData:
+                    node_name = line.split(':')[-1].strip()
                     # Filter out non-cluster nodes (CSI nodes, PV nodes, etc.)
-                    if self._is_cluster_node(node_name):
+                    if not self._is_not_cluster_node(node_name):
                         cluster_nodes.append(node_name)
+                        newNodeData = False
             
         except Exception as e:
             logging.warning(f"Error parsing cluster node names: {e}")
         
         return cluster_nodes
     
-    def _is_cluster_node(self, node_name: str) -> bool:
+    def _is_not_cluster_node(self, node_name: str) -> bool:
         """Check if node name represents an actual cluster node"""
         # Filter out CSI-specific nodes, PV nodes, and other non-cluster entities
         exclude_patterns = [
@@ -606,42 +611,178 @@ class KnowledgeBuilder(MetadataParsers):
         return '.' in node_name or node_name.endswith('.local') or len(node_name.split('.')) > 1
     
     def _parse_node_info_from_output(self, node_name: str, nodes_output: str) -> Dict[str, Any]:
-        """Parse node information for a specific node from the output"""
+        """
+        Parse node information for a specific node from the output
+        
+        This function parses the complex YAML structure of node status, including:
+        - Node addresses (InternalIP, Hostname)
+        - Allocatable resources (CPU, memory, storage, etc.)
+        - Capacity information
+        - Node conditions (Ready, DiskPressure, MemoryPressure, etc.)
+        
+        Args:
+            node_name: Name of the node to parse information for
+            nodes_output: YAML output containing node information
+            
+        Returns:
+            Dictionary containing parsed node information
+        """
         node_info = {}
         
         try:
             lines = nodes_output.split('\n')
             in_node_section = False
+            in_status_section = False
+            current_section = None
+            current_list_item = None
+            current_indent = 0
+            conditions = []
+            addresses = []
+            allocatable = {}
+            capacity = {}
             
             for line in lines:
+                if not line.strip():
+                    continue
+                    
+                # Calculate the indentation level
+                indent = len(line) - len(line.lstrip())
+                
+                # Check if we're in the target node's section
+                if 'kind: Node' in line:
+                    in_node_section = False
+                    in_status_section = False
+                    current_section = None
+                    continue
+                    
                 if f'name: {node_name}' in line:
                     in_node_section = True
+                    in_status_section = False
+                    current_section = None
                     continue
-                elif in_node_section and 'name:' in line and node_name not in line:
-                    # Reached next node section
+                    
+                # Exit if we've reached the next node
+                if in_node_section and indent == 0 and 'name:' in line and node_name not in line:
                     break
-                elif in_node_section:
-                    # Extract node properties
-                    if 'ready:' in line.lower():
-                        ready_value = line.split(':')[-1].strip().lower()
-                        node_info['Ready'] = ready_value in ['true', 'ready']
-                    elif 'diskpressure:' in line.lower():
-                        pressure_value = line.split(':')[-1].strip().lower()
-                        node_info['DiskPressure'] = pressure_value in ['true', 'yes']
-                    elif 'memorypressure:' in line.lower():
-                        pressure_value = line.split(':')[-1].strip().lower()
-                        node_info['MemoryPressure'] = pressure_value in ['true', 'yes']
-                    elif 'pidpressure:' in line.lower():
-                        pressure_value = line.split(':')[-1].strip().lower()
-                        node_info['PIDPressure'] = pressure_value in ['true', 'yes']
-                    elif 'architecture:' in line.lower():
-                        node_info['Architecture'] = line.split(':')[-1].strip()
-                    elif 'kernel:' in line.lower():
-                        node_info['KernelVersion'] = line.split(':')[-1].strip()
-                    elif 'os:' in line.lower():
-                        node_info['OperatingSystem'] = line.split(':')[-1].strip()
-                    elif 'role:' in line.lower():
-                        node_info['Role'] = line.split(':')[-1].strip()
+                    
+                # Skip lines until we find our node
+                if not in_node_section:
+                    continue
+                    
+                # Check if we're entering the status section
+                if in_node_section and line.strip() == 'status:':
+                    in_status_section = True
+                    current_indent = indent
+                    continue
+                    
+                # Skip lines that are not in the status section
+                if not in_status_section:
+                    continue
+                    
+                # Exit status section if indentation decreases below status level
+                if in_status_section and indent <= current_indent:
+                    in_status_section = False
+                    continue
+                
+                # Process status subsections
+                stripped_line = line.strip()
+                
+                # Check for main sections under status
+                if indent == current_indent + 2:
+                    if stripped_line == 'addresses:':
+                        current_section = 'addresses'
+                        continue
+                    elif stripped_line == 'allocatable:':
+                        current_section = 'allocatable'
+                        continue
+                    elif stripped_line == 'capacity:':
+                        current_section = 'capacity'
+                        continue
+                    elif stripped_line == 'conditions:':
+                        current_section = 'conditions'
+                        continue
+                
+                # Process each section based on its structure
+                if current_section == 'addresses':
+                    # Handle list items in addresses
+                    if stripped_line.startswith('- '):
+                        current_list_item = {}
+                        addresses.append(current_list_item)
+                    elif current_list_item is not None and ':' in stripped_line:
+                        key, value = stripped_line.split(':', 1)
+                        current_list_item[key.strip()] = value.strip()
+                
+                elif current_section == 'allocatable':
+                    # Handle key-value pairs in allocatable
+                    if ':' in stripped_line:
+                        key, value = stripped_line.split(':', 1)
+                        allocatable[key.strip()] = value.strip()
+                
+                elif current_section == 'capacity':
+                    # Handle key-value pairs in capacity
+                    if ':' in stripped_line:
+                        key, value = stripped_line.split(':', 1)
+                        capacity[key.strip()] = value.strip()
+                
+                elif current_section == 'conditions':
+                    # Handle list items in conditions
+                    if stripped_line.startswith('- '):
+                        current_list_item = {}
+                        conditions.append(current_list_item)
+                    elif current_list_item is not None and ':' in stripped_line:
+                        key, value = stripped_line.split(':', 1)
+                        current_list_item[key.strip()] = value.strip()
+            
+            # Process the collected data
+            
+            # Add addresses to node_info
+            if addresses:
+                node_info['Addresses'] = addresses
+                # Extract specific address types for convenience
+                for addr in addresses:
+                    if addr.get('type') == 'InternalIP':
+                        node_info['InternalIP'] = addr.get('address', '')
+                    elif addr.get('type') == 'Hostname':
+                        node_info['Hostname'] = addr.get('address', '')
+            
+            # Add allocatable resources
+            if allocatable:
+                node_info['Allocatable'] = allocatable
+                # Extract specific allocatable resources for convenience
+                node_info['AllocatableCPU'] = allocatable.get('cpu', '')
+                node_info['AllocatableMemory'] = allocatable.get('memory', '')
+                node_info['AllocatableStorage'] = allocatable.get('ephemeral-storage', '')
+                node_info['AllocatablePods'] = allocatable.get('pods', '')
+            
+            # Add capacity information
+            if capacity:
+                node_info['Capacity'] = capacity
+                # Extract specific capacity information for convenience
+                node_info['CapacityCPU'] = capacity.get('cpu', '')
+                node_info['CapacityMemory'] = capacity.get('memory', '')
+                node_info['CapacityStorage'] = capacity.get('ephemeral-storage', '')
+                node_info['CapacityPods'] = capacity.get('pods', '')
+            
+            # Process conditions
+            if conditions:
+                node_info['Conditions'] = conditions
+                # Extract specific condition statuses for convenience
+                for condition in conditions:
+                    condition_type = condition.get('type', '')
+                    condition_status = condition.get('status', '').lower() == 'true'
+                    
+                    if condition_type == 'Ready':
+                        node_info['Ready'] = condition_status
+                    elif condition_type == 'DiskPressure':
+                        node_info['DiskPressure'] = condition_status
+                    elif condition_type == 'MemoryPressure':
+                        node_info['MemoryPressure'] = condition_status
+                    elif condition_type == 'PIDPressure':
+                        node_info['PIDPressure'] = condition_status
+                    elif condition_type == 'NetworkUnavailable':
+                        node_info['NetworkUnavailable'] = condition_status
+                    elif condition_type == 'EtcdIsVoter':
+                        node_info['EtcdIsVoter'] = condition_status
             
         except Exception as e:
             logging.warning(f"Error parsing node info for {node_name}: {e}")
@@ -1390,6 +1531,30 @@ class KnowledgeBuilder(MetadataParsers):
             if 'system_info' in info and isinstance(info['system_info'], dict):
                 system_info = info['system_info']
                 
+                # Check if this is a virtual machine
+                vm_manufacturers = ["vmware", "qemu", "virtualbox", "xen", "kvm", "microsoft", "innotek", "parallels"]
+                vm_products = ["virtual", "vm", "vmware", "kvm", "virtualbox", "xen", "hyperv", "qemu", "parallels"]
+
+                is_vm = False
+                vm_evidence = []
+
+                # Check manufacturer
+                if any(vm_term in system_info['manufacturer'].lower() for vm_term in vm_manufacturers):
+                    is_vm = True
+                    vm_evidence.append(f"Manufacturer '{system_info['manufacturer']}' indicates a virtual machine")
+
+                # Check product name
+                if any(vm_term in system_info['product_name'].lower() for vm_term in vm_products):
+                    is_vm = True
+                    vm_evidence.append(f"Product name '{system_info['product_name']}' indicates a virtual machine")
+
+                if is_vm:
+                    issues.append({
+                        'type': 'virtual_machine',
+                        'description': f"Node {node_name} is a virtual machine: {', '.join(vm_evidence)}",
+                        'severity': 'high'
+                    })
+
                 # Check for error in system info collection
                 if 'error' in system_info:
                     issues.append({

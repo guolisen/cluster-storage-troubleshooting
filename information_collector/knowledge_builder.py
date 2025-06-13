@@ -1402,52 +1402,52 @@ class KnowledgeBuilder(MetadataParsers):
                 logging.warning("No node names found in collected data, using 'localhost' as default")
             
             # Collect hardware information for each node
-            for node_name in node_names:
+            for node_name_item in node_names:
                 node_hardware_info = {}
                 
                 # Get system hardware info (manufacturer, product name)
                 try:
-                    hw_info_str = get_system_hardware_info(node_name)
+                    hw_info_str = get_system_hardware_info.invoke(node_name_item)
                     hw_info = json.loads(hw_info_str)
                     node_hardware_info['system_info'] = hw_info
                 except Exception as e:
-                    logging.warning(f"Error getting hardware info for {node_name}: {e}")
+                    logging.warning(f"Error getting hardware info for {node_name_item}: {e}")
                     node_hardware_info['system_info'] = {"error": str(e)}
                 
                 # Get disk space information
                 try:
-                    df_output = df_command(node_name)
+                    df_output = df_command.invoke(node_name_item)
                     node_hardware_info['disk_space'] = df_output
                 except Exception as e:
-                    logging.warning(f"Error getting disk space for {node_name}: {e}")
+                    logging.warning(f"Error getting disk space for {node_name_item}: {e}")
                     node_hardware_info['disk_space'] = f"Error: {str(e)}"
                 
                 # Get block device information
                 try:
-                    lsblk_output = lsblk_command(node_name, "-o NAME,SIZE,TYPE,MOUNTPOINT")
+                    lsblk_output = lsblk_command.invoke({"node_name": node_name_item, "options":"-o NAME,SIZE,TYPE,MOUNTPOINT"})
                     node_hardware_info['block_devices'] = lsblk_output
                 except Exception as e:
-                    logging.warning(f"Error getting block devices for {node_name}: {e}")
+                    logging.warning(f"Error getting block devices for {node_name_item}: {e}")
                     node_hardware_info['block_devices'] = f"Error: {str(e)}"
                 
                 # Get mount information
                 try:
-                    mount_output = mount_command(node_name)
+                    mount_output = mount_command.invoke(node_name_item)
                     node_hardware_info['mounts'] = mount_output
                 except Exception as e:
-                    logging.warning(f"Error getting mount info for {node_name}: {e}")
+                    logging.warning(f"Error getting mount info for {node_name_item}: {e}")
                     node_hardware_info['mounts'] = f"Error: {str(e)}"
                 
                 # Get recent kernel messages related to storage
                 try:
-                    dmesg_output = dmesg_command(node_name, "--since='5 minutes ago' -T | grep -i -E 'storage|disk|drive|volume|mount'")
+                    dmesg_output = dmesg_command.invoke(node_name_item, "grep -i -E 'storage|disk|drive|volume|mount'")
                     node_hardware_info['storage_messages'] = dmesg_output
                 except Exception as e:
-                    logging.warning(f"Error getting storage messages for {node_name}: {e}")
+                    logging.warning(f"Error getting storage messages for {node_name_item}: {e}")
                     node_hardware_info['storage_messages'] = f"Error: {str(e)}"
                 
                 # Add to overall hardware info
-                hardware_info[node_name] = node_hardware_info
+                hardware_info[node_name_item] = node_hardware_info
             
             # Add hardware system entity to knowledge graph
             hardware_id = self.knowledge_graph.add_gnode_system_entity(

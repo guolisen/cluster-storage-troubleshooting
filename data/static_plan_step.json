@@ -39,7 +39,7 @@
     "tool": "detect_disk_jitter",
     "expected": "Jitter detection report with timestamps and frequency of status changes",
     "priority": "citical",
-    "priority_score": 110
+    "priority_score": 150
   },
   {
     "description": "Analyze disk space usage to identify large files and potential space issues",

@@ -6,13 +6,22 @@ Contains methods for building enhanced Knowledge Graph from tool outputs.
 
 import yaml
 import logging
-from typing import Dict, List, Any
+import re
+from typing import Dict, List, Any, Optional, Tuple
 from .base import InformationCollectorBase
 from .metadata_parsers import MetadataParsers
 
 
 class KnowledgeBuilder(MetadataParsers):
     """Knowledge Graph construction from tool outputs with rich CSI metadata"""
+    
+    # Constants for event parsing
+    EVENT_SEVERITY_LEVELS = {
+        'Warning': 'medium',
+        'Error': 'high',
+        'Failed': 'high',
+        'Normal': 'low'
+    }
     
     async def _build_knowledge_graph_from_tools(self, 
                                                target_pod: str = None, 
@@ -28,10 +37,20 @@ class KnowledgeBuilder(MetadataParsers):
         # Load historical experience data
         await self._load_historical_experience()
         
+        # Process kubectl describe data for all resources
+        await self._process_kubectl_describe_data()
+        
         # Process target pod first if specified
         if target_pod and target_namespace:
             # Extract pod metadata
             pod_metadata = self._parse_pod_metadata(target_pod, target_namespace)
+            
+            # Enrich pod metadata with describe data if available
+            pod_describe = self.collected_data.get('kubernetes', {}).get('target_pod_describe', '')
+            if pod_describe:
+                describe_attributes = self._parse_pod_describe_data(pod_describe)
+                pod_metadata.update(describe_attributes)
+            
             pod_id = self.knowledge_graph.add_gnode_pod(
                 target_pod, target_namespace,
                 volume_path=target_volume_path or '',
@@ -48,6 +67,11 @@ class KnowledgeBuilder(MetadataParsers):
                     "Pod logs contain error messages",
                     "medium"
                 )
+                
+            # Add events from describe data as issues
+            if pod_describe:
+                events = self._extract_events_from_describe(pod_describe)
+                self._add_events_as_issues(pod_id, events)
         
         # Process volume chain entities with enhanced metadata
         if volume_chain:
@@ -55,6 +79,13 @@ class KnowledgeBuilder(MetadataParsers):
             for pvc_key in volume_chain.get('pvcs', []):
                 namespace, name = pvc_key.split('/', 1)
                 pvc_metadata = self._parse_pvc_metadata(name, namespace)
+                
+                # Enrich PVC metadata with describe data if available
+                pvc_describe = self.collected_data.get('describe', {}).get('pvcs', '')
+                if pvc_describe:
+                    describe_attributes = self._parse_pvc_describe_data(pvc_describe)
+                    pvc_metadata.update(describe_attributes)
+                
                 pvc_id = self.knowledge_graph.add_gnode_pvc(name, namespace, **pvc_metadata)
                 
                 if pvc_metadata['AccessModes'] not in ['ReadWriteOnce', 'ReadWriteMany']:
@@ -69,21 +100,45 @@ class KnowledgeBuilder(MetadataParsers):
                 if target_pod and target_namespace:
                     pod_id = f"gnode:Pod:{target_namespace}/{target_pod}"
                     self.knowledge_graph.add_relationship(pod_id, pvc_id, "uses")
+                    
+                # Add events from describe data as issues
+                if pvc_describe:
+                    events = self._extract_events_from_describe(pvc_describe)
+                    self._add_events_as_issues(pvc_id, events)
             
             # Add PVs with metadata
             for pv_name in volume_chain.get('pvs', []):
                 pv_metadata = self._parse_pv_metadata(pv_name)
+                
+                # Enrich PV metadata with describe data if available
+                pv_describe = self.collected_data.get('describe', {}).get('pvs', '')
+                if pv_describe:
+                    describe_attributes = self._parse_pv_describe_data(pv_describe)
+                    pv_metadata.update(describe_attributes)
+                
                 pv_id = self.knowledge_graph.add_gnode_pv(pv_name, **pv_metadata)
                 
                 # Link to PVCs
                 for pvc_key in volume_chain.get('pvcs', []):
                     pvc_id = f"gnode:PVC:{pvc_key}"
                     self.knowledge_graph.add_relationship(pvc_id, pv_id, "bound_to")
+                    
+                # Add events from describe data as issues
+                if pv_describe:
+                    events = self._extract_events_from_describe(pv_describe)
+                    self._add_events_as_issues(pv_id, events)
 
-            # Add PVs with metadata
+            # Add Volumes with metadata
             volume_chain_id = None
             for vol_name in volume_chain.get('volumes', []):
                 vol_metadata = self._parse_vol_metadata(vol_name)
+                
+                # Enrich Volume metadata with describe data if available
+                vol_describe = self.collected_data.get('describe', {}).get('volumes', '')
+                if vol_describe:
+                    describe_attributes = self._parse_volume_describe_data(vol_describe)
+                    vol_metadata.update(describe_attributes)
+                
                 volume_chain_id = self.knowledge_graph.add_gnode_volume(vol_name, target_namespace, **vol_metadata)
                 
                 if vol_metadata.get('Health') not in ['GOOD']:
@@ -111,11 +166,23 @@ class KnowledgeBuilder(MetadataParsers):
                     )
 
                 self.knowledge_graph.add_relationship(pvc_id, volume_chain_id, "bound_to")
+                
+                # Add events from describe data as issues
+                if vol_describe:
+                    events = self._extract_events_from_describe(vol_describe)
+                    self._add_events_as_issues(volume_chain_id, events)
 
             # Add drives with comprehensive CSI metadata
             drive_id = None
             for drive_uuid in volume_chain.get('drives', []):
                 drive_info = self._parse_comprehensive_drive_info(drive_uuid)
+                
+                # Enrich Drive metadata with describe data if available
+                drive_describe = self.collected_data.get('describe', {}).get('drives', '')
+                if drive_describe:
+                    describe_attributes = self._parse_drive_describe_data(drive_describe)
+                    drive_info.update(describe_attributes)
+                
                 drive_id = self.knowledge_graph.add_gnode_drive(drive_uuid, **drive_info)
 
                 # Link drives to volume chains
@@ -160,10 +227,22 @@ class KnowledgeBuilder(MetadataParsers):
                 for pv_name in volume_chain.get('pvs', []):
                     pv_id = f"gnode:PV:{pv_name}"
                     self.knowledge_graph.add_relationship(pv_id, drive_id, "maps_to")
+                    
+                # Add events from describe data as issues
+                if drive_describe:
+                    events = self._extract_events_from_describe(drive_describe)
+                    self._add_events_as_issues(drive_id, events)
             
             # Add nodes with enhanced metadata
             for node_name in volume_chain.get('nodes', []):
                 node_info = self._parse_comprehensive_node_info(node_name)
+                
+                # Enrich Node metadata with describe data if available
+                node_describe = self.collected_data.get('describe', {}).get('nodes', '')
+                if node_describe:
+                    describe_attributes = self._parse_node_describe_data(node_describe)
+                    node_info.update(describe_attributes)
+                
                 node_id = self.knowledge_graph.add_gnode_node(node_name, **node_info)
                 
                 # Add issues for unhealthy nodes
@@ -185,6 +264,11 @@ class KnowledgeBuilder(MetadataParsers):
                     pod_id = f"gnode:Pod:{target_namespace}/{target_pod}"
                     self.knowledge_graph.add_relationship(pod_id, node_id, "located_on")
                     self.knowledge_graph.add_relationship(node_id, pod_id, "related_to")
+                    
+                # Add events from describe data as issues
+                if node_describe:
+                    events = self._extract_events_from_describe(node_describe)
+                    self._add_events_as_issues(node_id, events)
                 
         # Add CSI Baremetal specific entities
         await self._add_csi_baremetal_entities()
@@ -1378,6 +1462,814 @@ class KnowledgeBuilder(MetadataParsers):
             error_msg = f"Error adding enhanced log analysis: {str(e)}"
             logging.error(error_msg)
             self.collected_data['errors'].append(error_msg)
+            
+    async def _process_kubectl_describe_data(self):
+        """Process kubectl describe data for all resources and add to Knowledge Graph"""
+        try:
+            logging.info("Processing kubectl describe data for all resources")
+            
+            # Check if describe data is available
+            if 'describe' not in self.collected_data:
+                logging.info("No kubectl describe data available to process")
+                return
+            
+            # Process each resource type's describe data
+            describe_data = self.collected_data['describe']
+            
+            # Log the available describe data types
+            logging.info(f"Available describe data types: {list(describe_data.keys())}")
+            
+        except Exception as e:
+            error_msg = f"Error processing kubectl describe data: {str(e)}"
+            logging.error(error_msg)
+            self.collected_data['errors'].append(error_msg)
+    
+    def _parse_pod_describe_data(self, describe_output: str) -> Dict[str, Any]:
+        """
+        Parse pod describe data and extract attributes
+        
+        Args:
+            describe_output: Output from kubectl describe pod command
+            
+        Returns:
+            Dictionary of pod attributes
+        """
+        attributes = {}
+        
+        try:
+            lines = describe_output.split('\n')
+            current_section = None
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Skip empty lines
+                if not line:
+                    continue
+                
+                # Check for section headers
+                if line.endswith(':') and not ':' in line[:-1]:
+                    current_section = line[:-1]
+                    continue
+                
+                # Extract key-value pairs
+                if ':' in line and current_section != 'Events':
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Store as attributes with proper naming
+                    attr_key = key.replace(' ', '')
+                    attributes[attr_key] = value
+                    
+                    # Extract specific important attributes
+                    if key == 'Node':
+                        # Format: Node: node-name/10.0.0.1
+                        node_parts = value.split('/', 1)
+                        if len(node_parts) > 0:
+                            attributes['NodeName'] = node_parts[0]
+                    elif key == 'Status':
+                        attributes['PodStatus'] = value
+                    elif key == 'QoS Class':
+                        attributes['QoSClass'] = value
+                    elif key == 'IP':
+                        attributes['PodIP'] = value
+                    elif key == 'Priority':
+                        try:
+                            attributes['Priority'] = int(value)
+                        except:
+                            attributes['Priority'] = value
+            
+            # Extract container information
+            container_info = self._extract_container_info(describe_output)
+            if container_info:
+                attributes['Containers'] = container_info
+                
+            return attributes
+            
+        except Exception as e:
+            logging.warning(f"Error parsing pod describe data: {e}")
+            return {}
+    
+    def _extract_container_info(self, describe_output: str) -> List[Dict[str, Any]]:
+        """
+        Extract container information from pod describe output
+        
+        Args:
+            describe_output: Output from kubectl describe pod command
+            
+        Returns:
+            List of container info dictionaries
+        """
+        containers = []
+        current_container = None
+        in_container_section = False
+        
+        try:
+            lines = describe_output.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Start of Containers section
+                if line == 'Containers:':
+                    in_container_section = True
+                    continue
+                
+                # End of Containers section
+                if in_container_section and line.endswith(':') and not ':' in line[:-1] and line != 'Containers:':
+                    in_container_section = False
+                    break
+                
+                # New container
+                if in_container_section and not line.startswith(' ') and ':' in line:
+                    # Save previous container
+                    if current_container:
+                        containers.append(current_container)
+                    
+                    container_name = line.split(':', 1)[0].strip()
+                    current_container = {'name': container_name}
+                    continue
+                
+                # Container attributes
+                if in_container_section and current_container and ':' in line:
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Store with proper naming
+                    attr_key = key.replace(' ', '')
+                    current_container[attr_key] = value
+            
+            # Add the last container
+            if current_container:
+                containers.append(current_container)
+                
+            return containers
+            
+        except Exception as e:
+            logging.warning(f"Error extracting container info: {e}")
+            return []
+    
+    def _parse_pvc_describe_data(self, describe_output: str) -> Dict[str, Any]:
+        """
+        Parse PVC describe data and extract attributes
+        
+        Args:
+            describe_output: Output from kubectl describe pvc command
+            
+        Returns:
+            Dictionary of PVC attributes
+        """
+        attributes = {}
+        
+        try:
+            lines = describe_output.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Skip empty lines and section headers
+                if not line or (line.endswith(':') and not ':' in line[:-1]):
+                    continue
+                
+                # Extract key-value pairs
+                if ':' in line and 'Events:' not in line:
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Store as attributes with proper naming
+                    attr_key = key.replace(' ', '')
+                    attributes[attr_key] = value
+                    
+                    # Extract specific important attributes
+                    if key == 'Status':
+                        attributes['PVCStatus'] = value
+                    elif key == 'Volume':
+                        attributes['BoundVolume'] = value
+                    elif key == 'Storage Class':
+                        attributes['StorageClass'] = value
+                    elif key == 'Access Modes':
+                        attributes['AccessModes'] = value
+                    elif key == 'VolumeMode':
+                        attributes['VolumeMode'] = value
+                    elif key == 'Capacity':
+                        attributes['Capacity'] = value
+            
+            return attributes
+            
+        except Exception as e:
+            logging.warning(f"Error parsing PVC describe data: {e}")
+            return {}
+    
+    def _parse_pv_describe_data(self, describe_output: str) -> Dict[str, Any]:
+        """
+        Parse PV describe data and extract attributes
+        
+        Args:
+            describe_output: Output from kubectl describe pv command
+            
+        Returns:
+            Dictionary of PV attributes
+        """
+        attributes = {}
+        
+        try:
+            lines = describe_output.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Skip empty lines and section headers
+                if not line or (line.endswith(':') and not ':' in line[:-1]):
+                    continue
+                
+                # Extract key-value pairs
+                if ':' in line and 'Events:' not in line:
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Store as attributes with proper naming
+                    attr_key = key.replace(' ', '')
+                    attributes[attr_key] = value
+                    
+                    # Extract specific important attributes
+                    if key == 'Status':
+                        attributes['PVStatus'] = value
+                    elif key == 'Claim':
+                        attributes['BoundClaim'] = value
+                    elif key == 'Storage Class':
+                        attributes['StorageClass'] = value
+                    elif key == 'Access Modes':
+                        attributes['AccessModes'] = value
+                    elif key == 'VolumeMode':
+                        attributes['VolumeMode'] = value
+                    elif key == 'Capacity':
+                        attributes['Capacity'] = value
+                    elif key == 'Node Affinity':
+                        attributes['NodeAffinity'] = value
+            
+            # Extract CSI volume attributes if present
+            csi_attributes = self._extract_csi_attributes(describe_output)
+            if csi_attributes:
+                attributes.update(csi_attributes)
+                
+            return attributes
+            
+        except Exception as e:
+            logging.warning(f"Error parsing PV describe data: {e}")
+            return {}
+    
+    def _extract_csi_attributes(self, describe_output: str) -> Dict[str, Any]:
+        """
+        Extract CSI-specific attributes from describe output
+        
+        Args:
+            describe_output: Output from kubectl describe command
+            
+        Returns:
+            Dictionary of CSI attributes
+        """
+        csi_attributes = {}
+        in_csi_section = False
+        
+        try:
+            lines = describe_output.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Start of CSI section
+                if 'CSI:' in line:
+                    in_csi_section = True
+                    continue
+                
+                # End of CSI section
+                if in_csi_section and line.endswith(':') and not ':' in line[:-1]:
+                    in_csi_section = False
+                    break
+                
+                # Extract CSI attributes
+                if in_csi_section and ':' in line:
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Store with CSI prefix
+                    attr_key = f"CSI{key.replace(' ', '')}"
+                    csi_attributes[attr_key] = value
+                    
+                    # Extract volumeHandle specifically
+                    if key == 'volumeHandle':
+                        csi_attributes['CSIVolumeHandle'] = value
+                    elif key == 'driver':
+                        csi_attributes['CSIDriver'] = value
+            
+            return csi_attributes
+            
+        except Exception as e:
+            logging.warning(f"Error extracting CSI attributes: {e}")
+            return {}
+    
+    def _parse_volume_describe_data(self, describe_output: str) -> Dict[str, Any]:
+        """
+        Parse Volume describe data and extract attributes
+        
+        Args:
+            describe_output: Output from kubectl describe volume command
+            
+        Returns:
+            Dictionary of Volume attributes
+        """
+        attributes = {}
+        
+        try:
+            lines = describe_output.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Skip empty lines and section headers
+                if not line or (line.endswith(':') and not ':' in line[:-1]):
+                    continue
+                
+                # Extract key-value pairs
+                if ':' in line and 'Events:' not in line:
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Store as attributes with proper naming
+                    attr_key = key.replace(' ', '')
+                    attributes[attr_key] = value
+                    
+                    # Extract specific important attributes
+                    if key == 'Status':
+                        attributes['VolumeStatus'] = value
+                    elif key == 'Health':
+                        attributes['Health'] = value
+                    elif key == 'CSI Status':
+                        attributes['CSIStatus'] = value
+                    elif key == 'Location':
+                        attributes['Location'] = value
+                    elif key == 'Storage Class':
+                        attributes['StorageClass'] = value
+                    elif key == 'Size':
+                        attributes['Size'] = value
+            
+            return attributes
+            
+        except Exception as e:
+            logging.warning(f"Error parsing Volume describe data: {e}")
+            return {}
+    
+    def _parse_drive_describe_data(self, describe_output: str) -> Dict[str, Any]:
+        """
+        Parse Drive describe data and extract attributes
+        
+        Args:
+            describe_output: Output from kubectl describe drive command
+            
+        Returns:
+            Dictionary of Drive attributes
+        """
+        attributes = {}
+        
+        try:
+            lines = describe_output.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Skip empty lines and section headers
+                if not line or (line.endswith(':') and not ':' in line[:-1]):
+                    continue
+                
+                # Extract key-value pairs
+                if ':' in line and 'Events:' not in line:
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Store as attributes with proper naming
+                    attr_key = key.replace(' ', '')
+                    attributes[attr_key] = value
+                    
+                    # Extract specific important attributes
+                    if key == 'Health':
+                        attributes['Health'] = value
+                    elif key == 'Status':
+                        attributes['Status'] = value
+                    elif key == 'Path':
+                        attributes['Path'] = value
+                    elif key == 'Node':
+                        attributes['NodeName'] = value
+                    elif key == 'Size':
+                        attributes['Size'] = value
+                    elif key == 'Type':
+                        attributes['Type'] = value
+                    elif key == 'Usage':
+                        attributes['Usage'] = value
+                    elif key == 'Serial Number':
+                        attributes['SerialNumber'] = value
+            
+            return attributes
+            
+        except Exception as e:
+            logging.warning(f"Error parsing Drive describe data: {e}")
+            return {}
+    
+    def _parse_node_describe_data(self, describe_output: str) -> Dict[str, Any]:
+        """
+        Parse Node describe data and extract attributes
+        
+        Args:
+            describe_output: Output from kubectl describe node command
+            
+        Returns:
+            Dictionary of Node attributes
+        """
+        attributes = {}
+        
+        try:
+            lines = describe_output.split('\n')
+            current_section = None
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Skip empty lines
+                if not line:
+                    continue
+                
+                # Check for section headers
+                if line.endswith(':') and not ':' in line[:-1]:
+                    current_section = line[:-1]
+                    continue
+                
+                # Extract key-value pairs
+                if ':' in line and current_section != 'Events':
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Store as attributes with proper naming
+                    attr_key = f"{current_section.replace(' ', '')}{key.replace(' ', '')}" if current_section else key.replace(' ', '')
+                    attributes[attr_key] = value
+            
+            # Extract node conditions
+            conditions = self._extract_node_conditions(describe_output)
+            if conditions:
+                attributes['Conditions'] = conditions
+                
+                # Set specific condition flags for easier access
+                for condition in conditions:
+                    condition_type = condition.get('Type')
+                    condition_status = condition.get('Status') == 'True'
+                    if condition_type:
+                        attributes[condition_type] = condition_status
+            
+            # Extract node capacity and allocatable resources
+            capacity = self._extract_node_resources(describe_output, 'Capacity')
+            if capacity:
+                attributes['Capacity'] = capacity
+                
+            allocatable = self._extract_node_resources(describe_output, 'Allocatable')
+            if allocatable:
+                attributes['Allocatable'] = allocatable
+                
+            return attributes
+            
+        except Exception as e:
+            logging.warning(f"Error parsing Node describe data: {e}")
+            return {}
+    
+    def _extract_node_conditions(self, describe_output: str) -> List[Dict[str, str]]:
+        """
+        Extract node conditions from node describe output
+        
+        Args:
+            describe_output: Output from kubectl describe node command
+            
+        Returns:
+            List of condition dictionaries
+        """
+        conditions = []
+        in_conditions_section = False
+        current_condition = None
+        
+        try:
+            lines = describe_output.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Start of Conditions section
+                if line == 'Conditions:':
+                    in_conditions_section = True
+                    continue
+                
+                # End of Conditions section
+                if in_conditions_section and line.endswith(':') and not ':' in line[:-1] and line != 'Conditions:':
+                    in_conditions_section = False
+                    break
+                
+                # New condition type
+                if in_conditions_section and line.startswith('Type:'):
+                    # Save previous condition
+                    if current_condition:
+                        conditions.append(current_condition)
+                    
+                    current_condition = {'Type': line.split(':', 1)[1].strip()}
+                    continue
+                
+                # Condition attributes
+                if in_conditions_section and current_condition and ':' in line:
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    current_condition[key] = value
+            
+            # Add the last condition
+            if current_condition:
+                conditions.append(current_condition)
+                
+            return conditions
+            
+        except Exception as e:
+            logging.warning(f"Error extracting node conditions: {e}")
+            return []
+    
+    def _extract_node_resources(self, describe_output: str, section_name: str) -> Dict[str, str]:
+        """
+        Extract node resource information (Capacity or Allocatable)
+        
+        Args:
+            describe_output: Output from kubectl describe node command
+            section_name: Section name to extract ('Capacity' or 'Allocatable')
+            
+        Returns:
+            Dictionary of resource values
+        """
+        resources = {}
+        in_section = False
+        
+        try:
+            lines = describe_output.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Start of section
+                if line == f'{section_name}:':
+                    in_section = True
+                    continue
+                
+                # End of section
+                if in_section and line.endswith(':') and not ':' in line[:-1]:
+                    in_section = False
+                    break
+                
+                # Resource values
+                if in_section and ':' in line:
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    resources[key] = value
+            
+            return resources
+            
+        except Exception as e:
+            logging.warning(f"Error extracting node {section_name}: {e}")
+            return {}
+    
+    def _parse_storage_class_describe_data(self, describe_output: str) -> Dict[str, Any]:
+        """
+        Parse StorageClass describe data and extract attributes
+        
+        Args:
+            describe_output: Output from kubectl describe storageclass command
+            
+        Returns:
+            Dictionary of StorageClass attributes
+        """
+        attributes = {}
+        
+        try:
+            lines = describe_output.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Skip empty lines and section headers
+                if not line or (line.endswith(':') and not ':' in line[:-1]):
+                    continue
+                
+                # Extract key-value pairs
+                if ':' in line and 'Events:' not in line:
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Store as attributes with proper naming
+                    attr_key = key.replace(' ', '')
+                    attributes[attr_key] = value
+                    
+                    # Extract specific important attributes
+                    if key == 'Provisioner':
+                        attributes['Provisioner'] = value
+                    elif key == 'Reclaim Policy':
+                        attributes['ReclaimPolicy'] = value
+                    elif key == 'Volume Binding Mode':
+                        attributes['VolumeBindingMode'] = value
+                    elif key == 'Allow Volume Expansion':
+                        attributes['AllowVolumeExpansion'] = (value.lower() == 'true')
+            
+            # Extract parameters
+            parameters = self._extract_storage_class_parameters(describe_output)
+            if parameters:
+                attributes['Parameters'] = parameters
+                
+            return attributes
+            
+        except Exception as e:
+            logging.warning(f"Error parsing StorageClass describe data: {e}")
+            return {}
+    
+    def _extract_storage_class_parameters(self, describe_output: str) -> Dict[str, str]:
+        """
+        Extract StorageClass parameters from describe output
+        
+        Args:
+            describe_output: Output from kubectl describe storageclass command
+            
+        Returns:
+            Dictionary of parameters
+        """
+        parameters = {}
+        in_parameters_section = False
+        
+        try:
+            lines = describe_output.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Start of Parameters section
+                if line == 'Parameters:':
+                    in_parameters_section = True
+                    continue
+                
+                # End of Parameters section
+                if in_parameters_section and line.endswith(':') and not ':' in line[:-1]:
+                    in_parameters_section = False
+                    break
+                
+                # Parameter values
+                if in_parameters_section and ':' in line:
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    parameters[key] = value
+            
+            return parameters
+            
+        except Exception as e:
+            logging.warning(f"Error extracting StorageClass parameters: {e}")
+            return {}
+    
+    def _extract_events_from_describe(self, describe_output: str) -> List[Dict[str, str]]:
+        """
+        Extract events from kubectl describe output
+        
+        Args:
+            describe_output: Output from kubectl describe command
+            
+        Returns:
+            List of event dictionaries with type, reason, message, etc.
+        """
+        events = []
+        in_events_section = False
+        
+        try:
+            lines = describe_output.split('\n')
+            
+            for i, line in enumerate(lines):
+                if line.strip() == 'Events:':
+                    in_events_section = True
+                    continue
+                
+                if in_events_section and line.strip():
+                    # Skip header line if present (contains Type, Reason, Age, etc.)
+                    if any(header in line for header in ['Type', 'Reason', 'Age', 'From', 'Message']):
+                        continue
+                    
+                    # Parse event line
+                    event = self._parse_event_line(line)
+                    if event:
+                        events.append(event)
+            
+            return events
+            
+        except Exception as e:
+            logging.warning(f"Error extracting events from describe output: {e}")
+            return []
+    
+    def _parse_event_line(self, line: str) -> Optional[Dict[str, str]]:
+        """
+        Parse a single event line from kubectl describe output
+        
+        Args:
+            line: Single line from events section
+            
+        Returns:
+            Dictionary with event details or None if parsing failed
+        """
+        try:
+            # Different kubectl versions have different formats for events
+            # Try to handle common formats
+            
+            # Format 1: Type    Reason     Age    From               Message
+            #           Normal  Scheduled  2m     default-scheduler  Successfully assigned default/pod-name to node-name
+            parts = line.strip().split(None, 4)
+            if len(parts) >= 5:
+                return {
+                    'type': parts[0],
+                    'reason': parts[1],
+                    'age': parts[2],
+                    'from': parts[3],
+                    'message': parts[4]
+                }
+            
+            # Format 2: Warning  FailedMount  30s (x3 over 5m)  kubelet  MountVolume.SetUp failed...
+            parts = re.split(r'\s+', line.strip(), 4)
+            if len(parts) >= 5:
+                return {
+                    'type': parts[0],
+                    'reason': parts[1],
+                    'age': parts[2],
+                    'from': parts[3],
+                    'message': parts[4]
+                }
+            
+            # Format 3: More compact format with fewer fields
+            parts = re.split(r'\s+', line.strip(), 2)
+            if len(parts) >= 3:
+                return {
+                    'type': parts[0],
+                    'reason': parts[0],  # Use type as reason if not explicitly provided
+                    'message': parts[2]
+                }
+            
+            # If we can't parse the format but have Warning/Error keywords, create a basic event
+            if any(keyword in line for keyword in ['Warning', 'Error', 'Failed']):
+                return {
+                    'type': 'Warning' if 'Warning' in line else 'Error',
+                    'reason': 'Unknown',
+                    'message': line.strip()
+                }
+            
+            return None
+            
+        except Exception as e:
+            logging.debug(f"Error parsing event line '{line}': {e}")
+            return None
+    
+    def _add_events_as_issues(self, node_id: str, events: List[Dict[str, str]]):
+        """
+        Add events as issues to the Knowledge Graph
+        
+        Args:
+            node_id: Node ID to attach issues to
+            events: List of event dictionaries
+        """
+        try:
+            # Filter for warning or error events
+            for event in events:
+                event_type = event.get('type', '')
+                
+                # Only process Warning or Error events
+                if event_type not in ['Warning', 'Error', 'Failed']:
+                    continue
+                
+                reason = event.get('reason', 'Unknown')
+                message = event.get('message', 'No message provided')
+                
+                # Determine severity based on event type
+                severity = self.EVENT_SEVERITY_LEVELS.get(event_type, 'medium')
+                
+                # Add issue to the Knowledge Graph
+                self.knowledge_graph.add_issue(
+                    node_id,
+                    f"event_{reason.lower()}",
+                    f"Event {reason}: {message}",
+                    severity
+                )
+                
+        except Exception as e:
+            logging.warning(f"Error adding events as issues for node {node_id}: {e}")
             
     async def _add_hardware_system_entity(self):
         """Add hardware system entity with comprehensive information from system diagnostic tools"""

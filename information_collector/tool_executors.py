@@ -64,8 +64,13 @@ class ToolExecutors(InformationCollectorBase):
         """Execute volume chain discovery tools"""
         logging.info("Executing volume chain discovery tools")
 
+        # Initialize describe data container if not exists
+        if 'describe' not in self.collected_data:
+            self.collected_data['describe'] = {}
+
         if volume_chain.get('pods', []):
             pod_namespace, pod_name = volume_chain.get('pods', [])[0].split('/', 1)
+            # Get pod information with kubectl get
             pods_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'pod',
@@ -73,13 +78,25 @@ class ToolExecutors(InformationCollectorBase):
                     'namespace': pod_namespace,
                     'output_format': 'yaml'
                 },
-                'kubectl_get_pods', 'Get all PVC information'
+                'kubectl_get_pods', 'Get pod information'
             )
             self.collected_data['kubernetes']['pods'] = pods_output
+            
+            # Get detailed pod information with kubectl describe
+            pod_describe = self._execute_tool_with_validation(
+                kubectl_describe, {
+                    'resource_type': 'pod',
+                    'resource_name': pod_name,
+                    'namespace': pod_namespace
+                },
+                'kubectl_describe_pod', 'Get detailed pod configuration and events'
+            )
+            self.collected_data['describe']['pods'] = pod_describe
 
         # Get all PVCs
         if volume_chain.get('pvcs', []):
             pvc_namespace, pvc_name = volume_chain.get('pvcs', [])[0].split('/', 1)
+            # Get PVC information with kubectl get
             pvcs_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'pvc',
@@ -87,79 +104,169 @@ class ToolExecutors(InformationCollectorBase):
                     'namespace': pvc_namespace,
                     'output_format': 'yaml'
                 },
-                'kubectl_get_pvcs', 'Get all PVC information'
+                'kubectl_get_pvcs', 'Get PVC information'
             )
             self.collected_data['kubernetes']['pvcs'] = pvcs_output
+            
+            # Get detailed PVC information with kubectl describe
+            pvc_describe = self._execute_tool_with_validation(
+                kubectl_describe, {
+                    'resource_type': 'pvc',
+                    'resource_name': pvc_name,
+                    'namespace': pvc_namespace
+                },
+                'kubectl_describe_pvc', 'Get detailed PVC configuration and events'
+            )
+            self.collected_data['describe']['pvcs'] = pvc_describe
         
         # Get all PVs
         if volume_chain.get('pvs', []):
+            pv_name = volume_chain.get('pvs', [])[0]
+            # Get PV information with kubectl get
             pvs_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'pv',
-                    'resource_name': volume_chain.get('pvs', [])[0],
+                    'resource_name': pv_name,
                     'namespace': target_volume_path,
                     'output_format': 'yaml'
                 },
-                'kubectl_get_pvs', 'Get all PV information'
+                'kubectl_get_pvs', 'Get PV information'
             )
             self.collected_data['kubernetes']['pvs'] = pvs_output
+            
+            # Get detailed PV information with kubectl describe
+            pv_describe = self._execute_tool_with_validation(
+                kubectl_describe, {
+                    'resource_type': 'pv',
+                    'resource_name': pv_name
+                },
+                'kubectl_describe_pv', 'Get detailed PV configuration and events'
+            )
+            self.collected_data['describe']['pvs'] = pv_describe
         
+        # Get volume information
         if volume_chain.get('volumes', []):
+            volume_name = volume_chain.get('volumes', [])[0]
+            # Get volume information with kubectl get
             vol_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'volume',
-                    'resource_name': volume_chain.get('volumes', [])[0],
+                    'resource_name': volume_name,
                     'namespace': target_volume_path,
                     'output_format': 'yaml'
                 },
-                'kubectl_get_volume', 'Get all volume information'
+                'kubectl_get_volume', 'Get volume information'
             )
             self.collected_data['kubernetes']['volumes'] = vol_output
+            
+            # Get detailed volume information with kubectl describe
+            vol_describe = self._execute_tool_with_validation(
+                kubectl_describe, {
+                    'resource_type': 'volume',
+                    'resource_name': volume_name,
+                    'namespace': target_volume_path
+                },
+                'kubectl_describe_volume', 'Get detailed volume configuration and events'
+            )
+            self.collected_data['describe']['volumes'] = vol_describe
 
+        # Get LVG information
         if volume_chain.get('lvg', []):
+            lvg_name = volume_chain.get('lvg', [])[0]
+            # Get LVG information with kubectl get
             lvg_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'lvg',
-                    'resource_name': volume_chain.get('lvg', [])[0],
+                    'resource_name': lvg_name,
                     'namespace': target_volume_path,
                     'output_format': 'yaml'
                 },
-                'kubectl_get_volume', 'Get all volume information'
+                'kubectl_get_lvg', 'Get LVG information'
             )
             self.collected_data['kubernetes']['lvg'] = lvg_output
+            
+            # Get detailed LVG information with kubectl describe
+            lvg_describe = self._execute_tool_with_validation(
+                kubectl_describe, {
+                    'resource_type': 'lvg',
+                    'resource_name': lvg_name,
+                    'namespace': target_volume_path
+                },
+                'kubectl_describe_lvg', 'Get detailed LVG configuration and events'
+            )
+            self.collected_data['describe']['lvg'] = lvg_describe
 
+        # Get drive information
         if volume_chain.get('drives', []):
+            drive_name = volume_chain.get('drives', [])[0]
+            # Get drive information with kubectl get
             drv_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'drive',
-                    'resource_name': volume_chain.get('drives', [])[0],
+                    'resource_name': drive_name,
                     'output_format': 'yaml'
                 },
-                'kubectl_get_drive', 'Get all drive information'
+                'kubectl_get_drive', 'Get drive information'
             )
             self.collected_data['kubernetes']['drives'] = drv_output
+            
+            # Get detailed drive information with kubectl describe
+            drv_describe = self._execute_tool_with_validation(
+                kubectl_describe, {
+                    'resource_type': 'drive',
+                    'resource_name': drive_name
+                },
+                'kubectl_describe_drive', 'Get detailed drive configuration and events'
+            )
+            self.collected_data['describe']['drives'] = drv_describe
 
+        # Get node information
         if volume_chain.get('nodes', []):
-            drv_output = self._execute_tool_with_validation(
+            node_name = volume_chain.get('nodes', [])[0]
+            # Get node information with kubectl get
+            node_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'node',
-                    'resource_name': volume_chain.get('nodes', [])[0],
+                    'resource_name': node_name,
                     'output_format': 'yaml'
                 },
-                'kubectl_get_node', 'Get all node information'
+                'kubectl_get_node', 'Get node information'
             )
-            self.collected_data['kubernetes']['nodes'] = drv_output
+            self.collected_data['kubernetes']['nodes'] = node_output
+            
+            # Get detailed node information with kubectl describe
+            node_describe = self._execute_tool_with_validation(
+                kubectl_describe, {
+                    'resource_type': 'node',
+                    'resource_name': node_name
+                },
+                'kubectl_describe_node', 'Get detailed node configuration and events'
+            )
+            self.collected_data['describe']['nodes'] = node_describe
 
+        # Get StorageClass information
         if volume_chain.get('StorageClass', []):
+            sc_name = volume_chain.get('StorageClass', [])[0]
+            # Get StorageClass information with kubectl get
             sc_output = self._execute_tool_with_validation(
                 kubectl_get, {
                     'resource_type': 'StorageClass',
-                    'resource_name': volume_chain.get('StorageClass', [])[0],
+                    'resource_name': sc_name,
                     'output_format': 'yaml'
                 },
-                'kubectl_get_StorageClass', 'Get all StorageClass information'
+                'kubectl_get_StorageClass', 'Get StorageClass information'
             )
             self.collected_data['kubernetes']['storage_classes'] = sc_output
+            
+            # Get detailed StorageClass information with kubectl describe
+            sc_describe = self._execute_tool_with_validation(
+                kubectl_describe, {
+                    'resource_type': 'StorageClass',
+                    'resource_name': sc_name
+                },
+                'kubectl_describe_StorageClass', 'Get detailed StorageClass configuration'
+            )
+            self.collected_data['describe']['storage_classes'] = sc_describe
     
     async def _execute_csi_baremetal_tools(self, drives: List[str]):
         """Execute CSI Baremetal discovery tools"""

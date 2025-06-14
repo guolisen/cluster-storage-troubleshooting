@@ -91,8 +91,8 @@
   },
   {
     "phenomenon": "Volume health is UNKNOWN, Operating issue is UNKNOWN",
-    "root_cause": "The system is a Virtual Machine, or the disk is a Virtual Disk on Virtural Machine",
-    "localization_method": "",
-    "resolution_method": "Report this finding to user."
+    "root_cause": "The system is a Virtual Machine, or the disk is a Virtual Disk on Virtural Machine, the Virtual Machine doesn't have Volume, so Volume health is UNKNOWN is a normal state",
+    "localization_method": "Check the Knowledge Graph High level issues",
+    "resolution_method": "Report this finding to user, this is a normal state."
   }
 ]

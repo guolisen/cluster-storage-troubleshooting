@@ -94,7 +94,7 @@ def mount_command(node_name: str, options: str = "") -> str:
         return f"Error executing mount: {str(e)}"
 
 @tool
-def dmesg_command(node_name: str, options: str = "--since='5 minutes ago' -T") -> str:
+def dmesg_command(node_name: str, options: str = "") -> str:
     """
     Execute dmesg command to show kernel messages
     
@@ -105,7 +105,7 @@ def dmesg_command(node_name: str, options: str = "--since='5 minutes ago' -T") -
     Returns:
         str: Command output
     """
-    cmd = ["dmesg", "--since=5 minutes ago", "-T"]
+    cmd = ["dmesg", "--since='5 minutes ago'", "-T"]
     
     if options:
         cmd.extend(options.split())
@@ -158,8 +158,8 @@ def get_system_hardware_info(node_name: str) -> str:
     """
     try:
         # Execute dmidecode commands via SSH
-        manufacturer_cmd = "sudo dmidecode -s system-manufacturer"
-        product_name_cmd = "sudo dmidecode -s system-product-name"
+        manufacturer_cmd = "dmidecode -s system-manufacturer"
+        product_name_cmd = "dmidecode -s system-product-name"
         
         manufacturer = ssh_execute.invoke({"node_name": node_name, "command": manufacturer_cmd})
         product_name = ssh_execute.invoke({"node_name": node_name, "command": product_name_cmd})

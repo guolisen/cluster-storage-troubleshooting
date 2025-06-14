@@ -153,6 +153,46 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
     def call_model(state: MessagesState):
         logging.info(f"Processing state with {len(state['messages'])} messages")
         
+        final_output_example = """ 
+=== GRAPH END OUTPUT EXAMPLE ===
+1. Summary of Findings:
+- Issues detected with volume mounts and storage
+- Node kernel logs show disk-related errors
+- CSI Baremetal driver resources missing
+
+2. Detailed Analysis:
+Primary Issues:
+- Volume uses local path provisioner instead of CSI Baremetal
+- Kernel logs show disk errors (I/O, filesystem, mount issues)
+
+3. Relationship Analysis:
+- Pod → PVC → PV → Local disk with errors
+
+4. Investigation Process:
+- Checked pod, PVC, PV configurations
+- Analyzed kernel logs and disk status
+
+5. Potential Root Causes:
+- Hardware disk failure (High likelihood)
+- Configuration mismatch (High likelihood)
+
+6. Open Questions:
+- Is CSI Baremetal driver intended for this cluster?
+
+7. Next Steps:
+- Verify CSI driver installation
+- Check disk health with smartctl
+
+Root Cause:
+- Disk hardware issues on node's local disk
+- Missing proper CSI driver configuration
+
+Fix Plan:
+1. Verify CSI Baremetal driver installation
+2. Check disk health with diagnostic tools
+3. Consider hardware replacement if needed
+=== GRAPH END OUTPUT EXAMPLE ===
+"""
         # Add phase-specific guidance with optimized content
         phase_specific_guidance = ""
         if phase == "phase1":
@@ -212,6 +252,10 @@ Provide a detailed investigation report that includes:
     - The most likely root cause based on the evidence collected
 8. Fix Plan:
     - Proposed remediation steps to address the issues
+
+INVESTIGATION PLAN EXAMPLE:
+{final_output_example}
+
 """
         elif phase == "phase2":
             phase_specific_guidance = """
@@ -271,53 +315,11 @@ Issues Summary:
 === END PRE-COLLECTED CONTEXT ===
 """
 
-        final_output_example = """ 
-=== GRAPH END OUTPUT EXAMPLE ===
-1. Summary of Findings:
-- Issues detected with volume mounts and storage
-- Node kernel logs show disk-related errors
-- CSI Baremetal driver resources missing
-
-2. Detailed Analysis:
-Primary Issues:
-- Volume uses local path provisioner instead of CSI Baremetal
-- Kernel logs show disk errors (I/O, filesystem, mount issues)
-
-3. Relationship Analysis:
-- Pod → PVC → PV → Local disk with errors
-
-4. Investigation Process:
-- Checked pod, PVC, PV configurations
-- Analyzed kernel logs and disk status
-
-5. Potential Root Causes:
-- Hardware disk failure (High likelihood)
-- Configuration mismatch (High likelihood)
-
-6. Open Questions:
-- Is CSI Baremetal driver intended for this cluster?
-
-7. Next Steps:
-- Verify CSI driver installation
-- Check disk health with smartctl
-
-Root Cause:
-- Disk hardware issues on node's local disk
-- Missing proper CSI driver configuration
-
-Fix Plan:
-1. Verify CSI Baremetal driver installation
-2. Check disk health with diagnostic tools
-3. Consider hardware replacement if needed
-=== GRAPH END OUTPUT EXAMPLE ===
-"""
-
         # Create system message with only static guiding principles
         system_message = SystemMessage(
             content = f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
 
 <<< Note >>>: Please following the Investigation Plan to run tools step by step, and run 8 steps at least.
-<<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
 
 {phase_specific_guidance}
 
@@ -385,7 +387,6 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
    - First check issues with kg_get_all_issues before running diagnostic commands. These issues are critical information to find root cause.
    - Use kg_get_summary to get high-level statistics about the cluster state.
    - For root cause analysis, use kg_analyze_issues to identify patterns across the system.
-   - Remember that entity IDs use the format "entity_type:entity_id" (e.g., "Pod:default/nginx-pod")
 
 7. **Constraints**:
    - Restrict operations to the Kubernetes cluster and configured worker nodes; do not access external networks or resources.
@@ -397,6 +398,7 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
    - Try to find all of possible root causes before proposing any remediation steps.
    - Provide clear, concise explanations of diagnostic steps, findings, and remediation proposals.
    - Include performance benchmarks in reports (e.g., HDD: 100–200 IOPS, SSD: thousands, NVMe: tens of thousands).
+   - Don't ask questions to user, just decide by yourself.
    - **Don't output with JSON format, use plain text for better readability.**
    - **the output should include the following sections:**
     # Summary of Findings
@@ -407,7 +409,7 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
     # Open Questions
     # Next Steps
     # Root Cause
-    # Fix Plan
+    # **Fix Plan**      # this section must exist
 
 You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.
 """
@@ -419,9 +421,7 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         context_message = HumanMessage(
             content = f"""Pre-collected diagnostic context:
 {context_summary}
-
-OUTPUT EXAMPLE:
-{final_output_example}"""
+"""
         )
         
         # Ensure system message is first, followed by context message, then any existing user messages

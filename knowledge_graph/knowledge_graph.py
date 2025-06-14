@@ -1067,11 +1067,11 @@ class KnowledgeGraph:
                 if issues_list:
                     icon = severity_icons[severity]
                     output.append(f"\n{icon} {severity.upper()} Issues ({len(issues_list)}):")
-                    for issue in issues_list[:3]:  # Show first 3 issues per severity
+                    for issue in issues_list[:50]:  # Show first 3 issues per severity
                         node_name = self.graph.nodes[issue['node_id']].get('name', issue['node_id'].split(':')[-1])
                         output.append(f"  • {node_name}: {issue['description']}")
-                    if len(issues_list) > 3:
-                        output.append(f"  ... and {len(issues_list) - 3} more")
+                    #if len(issues_list) > 3:
+                    #    output.append(f"  ... and {len(issues_list) - 3} more")
         
         # Analysis and Patterns
         if include_analysis:
@@ -1081,7 +1081,7 @@ class KnowledgeGraph:
                 if analysis['potential_root_causes']:
                     output.append("\n🎯 ROOT CAUSE ANALYSIS:")
                     output.append("-" * 40)
-                    for i, cause in enumerate(analysis['potential_root_causes'][:3], 1):
+                    for i, cause in enumerate(analysis['potential_root_causes'][:50], 1):
                         severity_icon = {'critical': '🔴', 'high': '🟠', 'medium': '🟡', 'low': '🟢'}.get(cause['severity'], '⚪')
                         output.append(f"{i}. {severity_icon} {cause['type'].upper()}")
                         output.append(f"   📝 {cause['description']}")
@@ -1091,7 +1091,7 @@ class KnowledgeGraph:
                 if analysis['issue_patterns']:
                     output.append("\n🔍 DETECTED PATTERNS:")
                     output.append("-" * 40)
-                    for pattern in analysis['issue_patterns'][:3]:
+                    for pattern in analysis['issue_patterns'][:50]:
                         pattern_icon = {
                             'multiple_pods_same_drive': '💿',
                             'same_error_multiple_pods': '🔄'

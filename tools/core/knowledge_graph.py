@@ -305,8 +305,7 @@ def kg_get_all_issues(severity: str = None, issue_type: str = None) -> str:
     elif severity == 'primary':
         critical_issues = kg.get_issues_by_severity("critical")
         high_issues = kg.get_issues_by_severity("high")
-        medium_issues = kg.get_issues_by_severity("medium")
-        issues = critical_issues + high_issues + medium_issues
+        issues = critical_issues + high_issues
     elif severity:
         issues = kg.get_issues_by_severity(severity)
     elif issue_type:

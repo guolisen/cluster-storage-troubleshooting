@@ -61,6 +61,10 @@ class ChatMode:
             self.logger.info("User requested to exit the program")
             return message_list, True
         else:
+            if user_input == '':
+                self.logger.info("User requested to exit the program")
+                return message_list, True
+
             self.logger.info(f"User provided instructions: {user_input}")
             
             # Add user input to message list
@@ -131,6 +135,10 @@ The plan must be comprehensive, logically structured, and include all necessary 
             self.logger.info("User requested to exit the program")
             return message_list, True
         else:
+            if user_input == '':
+                self.logger.info("User requested to exit the program")
+                return message_list, True
+
             self.logger.info(f"User provided instructions: {user_input}")
             
             # Add user input to message list

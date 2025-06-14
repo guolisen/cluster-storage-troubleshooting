@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.panel import Panel
 from langgraph.graph import StateGraph
 from kubernetes import client
-from langchain_openai import ChatOpenAI
+from phases.llm_factory import LLMFactory
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from troubleshooting.graph import create_troubleshooting_graph_with_context
@@ -344,18 +344,9 @@ def process_analysis_result(result: str, message_list: List[Dict[str, str]], pod
     
     # Initialize LLM for summarization
     try:
-
-        # Get LLM configuration
-        llm_config = config_data.get('llm', {})
-        
-        # Initialize LLM with configuration
-        llm = ChatOpenAI(
-            model=llm_config.get('model', 'gpt-4'),
-            api_key=llm_config.get('api_key', None),
-            base_url=llm_config.get('api_endpoint', None),
-            temperature=llm_config.get('temperature', 0.1),
-            max_tokens=llm_config.get('max_tokens', 8192)
-        )
+        # Create LLM using the factory
+        llm_factory = LLMFactory(config_data)
+        llm = llm_factory.create_llm()
 
         # Generate summary of investigation results
         summary = summarize_investigation_results(result, llm)

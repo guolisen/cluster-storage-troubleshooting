@@ -9,9 +9,10 @@ import logging
 import json
 import inspect
 from typing import Dict, List, Any, Optional, Tuple
-from langchain_openai import ChatOpenAI
+from phases.llm_factory import LLMFactory
 from phases.utils import handle_exception, format_json_safely
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage
+from langchain_core.language_models.chat_models import BaseChatModel
 
 logger = logging.getLogger(__name__)
 
@@ -35,25 +36,17 @@ class LLMPlanGenerator:
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.llm = self._initialize_llm()
     
-    def _initialize_llm(self) -> Optional[ChatOpenAI]:
+    def _initialize_llm(self) -> Optional[BaseChatModel]:
         """
-        Initialize the LLM for plan generation
+        Initialize the LLM for plan generation using the LLMFactory
         
         Returns:
-            ChatOpenAI: Initialized LLM instance or None if initialization fails
+            BaseChatModel: Initialized LLM instance or None if initialization fails
         """
         try:
-            # Get LLM configuration
-            llm_config = self.config_data.get('llm', {})
-            
-            # Initialize LLM with configuration
-            return ChatOpenAI(
-                model=llm_config.get('model', 'gpt-4'),
-                api_key=llm_config.get('api_key', None),
-                base_url=llm_config.get('api_endpoint', None),
-                temperature=llm_config.get('temperature', 0.1),
-                max_tokens=llm_config.get('max_tokens', 4000)
-            )
+            # Create LLM using the factory
+            llm_factory = LLMFactory(self.config_data)
+            return llm_factory.create_llm()
         except Exception as e:
             error_msg = handle_exception("_initialize_llm", e, self.logger)
             return None

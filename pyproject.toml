@@ -26,6 +26,8 @@ classifiers = [
 dependencies = [
     "kubernetes",
     "langchain>=0.3.25",
+    "langchain-google-genai>=2.1.5",
+    "langchain-ollama>=0.3.3",
     "langchain-openai>=0.3.17",
     "langgraph",
     "networkx>=3.4.2",

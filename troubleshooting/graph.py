@@ -23,7 +23,8 @@ from typing import Dict, List, Any, TypedDict, Optional, Union, Callable
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import tools_condition
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from phases.llm_factory import LLMFactory
+from phases.llm_factory import LLMFactory
 from troubleshooting.serial_tool_node import SerialToolNode, BeforeCallToolsHook, AfterCallToolsHook
 from rich.console import Console
 from rich.panel import Panel
@@ -140,14 +141,9 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
     if config_data is None:
         raise ValueError("Configuration data is required")
     
-    # Initialize language model
-    model = ChatOpenAI(
-        model=config_data['llm']['model'],
-        api_key=config_data['llm']['api_key'],
-        base_url=config_data['llm']['api_endpoint'],
-        temperature=config_data['llm']['temperature'],
-        max_tokens=config_data['llm']['max_tokens']
-    )
+    # Initialize language model using LLMFactory
+    llm_factory = LLMFactory(config_data)
+    model = llm_factory.create_llm()
     
     # Define function to call the model with pre-collected context
     def call_model(state: MessagesState):

@@ -496,7 +496,8 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         - "Final report"
         - "Investigation complete"
         - "FIX PLAN", "Fix Plan"
-        - A question from AI that indicates the end of the process, such as "Is there anything else I can help you with?" or "Do you have any further questions?"
+        - " Would you like to"
+        - A question from AI that indicates the end of the process, such as " Would you like to proceed with planning the disk replacement or further investigate filesystem integrity?"
         
         Examples of implicit end markers include:
         - A summary followed by recommendations with no further questions
@@ -561,7 +562,9 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
             "Investigation Process:",
             "Potential Root Causes:",
             "Root Cause:",
-            "Fix Plan:"
+            "Fix Plan:",
+            "Summary",
+            "Recommendations"
         ]
         
         phase2_sections = [
@@ -570,6 +573,16 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
             "Resolution Status:",
             "Remaining Issues:",
             "Recommendations:"
+            "Summary of Findings:",
+            "Special Case Detected",
+            "Detailed Analysis:",
+            "Relationship Analysis:",
+            "Investigation Process:",
+            "Potential Root Causes:",
+            "Root Cause:",
+            "Fix Plan:",
+            "Summary",
+            "Recommendations"
         ]
         
         # Select the appropriate sections based on the phase
@@ -584,7 +597,7 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         For {phase}, the following sections are expected in a complete report:
         {', '.join(required_sections)}
         
-        A complete report should have most of these sections and provide comprehensive information 
+        A complete report should have some of these sections and provide comprehensive information 
         in each section. The report should feel complete and not leave major questions unanswered.
         
         Respond with "YES" if you believe the text represents a complete report, or "NO" if it seems incomplete.

@@ -359,7 +359,8 @@ def process_analysis_result(result: str, message_list: List[Dict[str, str]], pod
 
         # Generate summary of investigation results
         summary = summarize_investigation_results(result, llm)
-        
+        logging.info(f"Event Summary: {summary}")
+
         # Send Kubernetes event
         event_sent = send_k8s_event(namespace, pod_name, "Pod", summary)
         

@@ -196,7 +196,7 @@ def verify_volume_mount(pod_name: str, namespace: str = "default",
     Args:
         pod_name: Name of the pod
         namespace: Kubernetes namespace
-        mount_path: Expected mount path, must be specified
+        mount_path: Expected mount path, must be set by client
         
     Returns:
         str: Volume mount verification results

@@ -17,7 +17,6 @@ from kubernetes import client
 from phases.llm_factory import LLMFactory
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from troubleshooting.graph import create_troubleshooting_graph_with_context
 from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
 from phases.utils import format_historical_experiences_from_collected_info, handle_exception
 
@@ -81,6 +80,9 @@ class AnalysisPhase:
             if message_list == None:
                 message_list = []
 
+            # Import here to avoid circular dependency
+            from troubleshooting.graph import create_troubleshooting_graph_with_context
+            
             # Create troubleshooting graph with pre-collected context
             graph = create_troubleshooting_graph_with_context(
                 self.collected_info, phase="phase1", config_data=self.config_data

@@ -127,7 +127,7 @@ def generate_basic_fallback_plan(pod_name: str, namespace: str, volume_path: str
 Target: Pod {namespace}/{pod_name}, Volume Path: {volume_path}
 Generated Steps: 4 basic steps (fallback mode)
 
-Step 1: Get all critical issues from Knowledge Graph | Tool: kg_get_all_issues(severity='critical') | Expected: List of critical issues affecting the system
+Step 1: Get all critical issues from Knowledge Graph | Tool: kg_get_all_issues(severity='primary') | Expected: List of critical issues affecting the system
 Step 2: Analyze existing issues and patterns | Tool: kg_analyze_issues() | Expected: Root cause analysis and issue relationships  
 Step 3: Get system overview | Tool: kg_get_summary() | Expected: Overall system health and entity statistics
 Step 4: Print complete Knowledge Graph for manual analysis | Tool: kg_print_graph(include_details=True, include_issues=True) | Expected: Full system visualization for troubleshooting

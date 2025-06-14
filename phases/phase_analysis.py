@@ -8,10 +8,14 @@ which actively investigates using tools with pre-collected data as base knowledg
 
 import logging
 import asyncio
+import datetime
 from typing import Dict, List, Any, Optional, Tuple
 from rich.console import Console
 from rich.panel import Panel
 from langgraph.graph import StateGraph
+from kubernetes import client
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from troubleshooting.graph import create_troubleshooting_graph_with_context
 from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
@@ -39,7 +43,7 @@ class AnalysisPhase:
         self.config_data = config_data
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.console = Console()
-    
+
     def _extract_final_message(self, response: Dict[str, Any]) -> str:
         """
         Extract the final message from a graph response
@@ -174,6 +178,100 @@ If the issue can be resolved automatically:
             return error_msg, message_list
 
 
+def summarize_investigation_results(results: str, llm) -> str:
+    """
+    Use LLM to summarize investigation results into a concise message (≤1024 chars)
+    
+    Args:
+        results: Investigation results from Phase1
+        llm: LLM instance to use for summarization
+        
+    Returns:
+        str: Summarized investigation results (≤1024 chars)
+    """
+    # Prompt the LLM to summarize the results
+    prompt = "Summarize the investigation results for Kubernetes pod volume I/O failures into a concise message under 1024 characters, highlighting primary issues."
+    
+    # Create messages for the LLM
+    messages = [
+        SystemMessage(content="You are an expert Kubernetes storage troubleshooter. Your task is to summarize investigation results concisely."),
+        HumanMessage(content=f"{prompt}\n\nInvestigation Results:\n{results}")
+    ]
+    
+    try:
+        # Call the LLM
+        response = llm.invoke(messages)
+        
+        # Extract the summary
+        summary = response.content.strip()
+        
+        # Truncate if necessary
+        if len(summary) > 1024:
+            summary = summary[:1020] + "..."
+            
+        return summary
+    except Exception as e:
+        logging.error(f"Error in summarize_investigation_results: {e}")
+        # Return a basic summary in case of failure
+        return f"Investigation completed. Error generating detailed summary: {str(e)[:100]}..."
+
+def send_k8s_event(namespace: str, resource_name: str, resource_kind: str, message: str) -> bool:
+    """
+    Send a Kubernetes event with investigation results
+    
+    Args:
+        namespace: Namespace of the resource
+        resource_name: Name of the resource
+        resource_kind: Kind of the resource (e.g., Pod)
+        message: Event message containing investigation summary
+        
+    Returns:
+        bool: True if event was sent successfully, False otherwise
+    """
+    try:
+        # Create Kubernetes API client
+        v1 = client.CoreV1Api()
+        
+        # Create event metadata
+        metadata = client.V1ObjectMeta(
+            generate_name="troubleshooting-",
+            namespace=namespace
+        )
+        
+        # Create involved object reference
+        involved_object = client.V1ObjectReference(
+            kind=resource_kind,
+            namespace=namespace,
+            name=resource_name
+        )
+        
+        # Create event source
+        source = client.V1EventSource(
+            component="troubleshooting-system"
+        )
+        
+        # Create event
+        event = client.CoreV1Event(
+            metadata=metadata,
+            involved_object=involved_object,
+            reason="VolumeIOError",
+            message=message,
+            type="Error",
+            source=source,
+            first_timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            last_timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        )
+        
+        # Send event
+        v1.create_namespaced_event(namespace, event)
+        
+        logging.info(f"Kubernetes event sent successfully for {resource_kind}/{resource_name} in namespace {namespace}")
+        return True
+    except Exception as e:
+        logging.error(f"Error sending Kubernetes event: {e}")
+        return False
+
+
 async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_path: str, 
                                      collected_info: Dict[str, Any], investigation_plan: str,
                                      config_data: Dict[str, Any], message_list: List[Dict[str, str]] = None) -> Tuple[str, bool, List[Dict[str, str]]]:
@@ -209,9 +307,9 @@ async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_pat
         
         # Run the investigation
         result, message_list = await phase.run_investigation(pod_name, namespace, volume_path, investigation_plan, message_list)
-        
+
         # Process the result
-        return process_analysis_result(result, message_list)
+        return process_analysis_result(result, message_list, pod_name, namespace, config_data)
     
     except Exception as e:
         error_msg = handle_exception("run_analysis_phase_with_plan", e, logger)
@@ -222,13 +320,16 @@ async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_pat
         
         return error_msg, False, message_list
 
-def process_analysis_result(result: str, message_list: List[Dict[str, str]]) -> Tuple[str, bool, List[Dict[str, str]]]:
+def process_analysis_result(result: str, message_list: List[Dict[str, str]], pod_name: str, namespace: str, config_data: Dict[str, Any]) -> Tuple[str, bool, List[Dict[str, str]]]:
     """
-    Process the analysis result to check for SKIP_PHASE2 marker
+    Process the analysis result to check for SKIP_PHASE2 marker and send Kubernetes event
     
     Args:
         result: Analysis result
         message_list: Message list for chat mode
+        pod_name: Name of the pod with the error
+        namespace: Namespace of the pod
+        config_data: Configuration data
         
     Returns:
         Tuple[str, bool, List[Dict[str, str]]]: (Processed result, Skip Phase2 flag, Message list)
@@ -240,5 +341,33 @@ def process_analysis_result(result: str, message_list: List[Dict[str, str]]) -> 
     if skip_phase2:
         result = result.replace("SKIP_PHASE2: YES", "").strip()
         logging.info("Phase 1 indicated Phase 2 should be skipped")
+    
+    # Initialize LLM for summarization
+    try:
+
+        # Get LLM configuration
+        llm_config = config_data.get('llm', {})
+        
+        # Initialize LLM with configuration
+        llm = ChatOpenAI(
+            model=llm_config.get('model', 'gpt-4'),
+            api_key=llm_config.get('api_key', None),
+            base_url=llm_config.get('api_endpoint', None),
+            temperature=llm_config.get('temperature', 0.1),
+            max_tokens=llm_config.get('max_tokens', 8192)
+        )
+
+        # Generate summary of investigation results
+        summary = summarize_investigation_results(result, llm)
+        
+        # Send Kubernetes event
+        event_sent = send_k8s_event(namespace, pod_name, "Pod", summary)
+        
+        if event_sent:
+            logging.info(f"Kubernetes event sent with investigation summary for pod {namespace}/{pod_name}")
+        else:
+            logging.warning(f"Failed to send Kubernetes event for pod {namespace}/{pod_name}")
+    except Exception as e:
+        logging.error(f"Error during event creation: {e}")
     
     return result, skip_phase2, message_list

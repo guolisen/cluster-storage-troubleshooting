@@ -290,7 +290,7 @@ def kg_get_all_issues(severity: str = None, issue_type: str = None) -> str:
     Get all issues in the Knowledge Graph with optional filtering
     
     Args:
-        severity: Optional severity filter (critical, high, medium, low)
+        severity: Optional severity filter (primary, critical, high, medium, low)
         issue_type: Optional issue type filter
         
     Returns:
@@ -302,6 +302,11 @@ def kg_get_all_issues(severity: str = None, issue_type: str = None) -> str:
     if severity and issue_type:
         issues = [issue for issue in kg.issues 
                  if issue['severity'] == severity and issue['type'] == issue_type]
+    elif severity == 'primary':
+        critical_issues = kg.get_issues_by_severity("critical")
+        high_issues = kg.get_issues_by_severity("high")
+        medium_issues = kg.get_issues_by_severity("medium")
+        issues = critical_issues + high_issues + medium_issues
     elif severity:
         issues = kg.get_issues_by_severity(severity)
     elif issue_type:

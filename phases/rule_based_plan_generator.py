@@ -258,7 +258,7 @@ class RuleBasedPlanGenerator:
                 "step": None,  # Will be set later
                 "description": "Get all critical issues that may be causing volume I/O errors",
                 "tool": "kg_get_all_issues",
-                "arguments": {"severity": "None"},
+                "arguments": {"severity": "primary"},
                 "expected": "List of critical issues affecting the system",
                 "priority": "critical",
                 "category": "issue_analysis",
@@ -564,7 +564,7 @@ class RuleBasedPlanGenerator:
             "step": 1,
             "description": "Get all critical issues from Knowledge Graph",
             "tool": "kg_get_all_issues",
-            "arguments": {},
+            "arguments": {"severity": "primary"},
             "expected": "List of critical issues affecting the system",
             "priority": "critical",
             "category": "issue_analysis"

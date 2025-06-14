@@ -378,7 +378,7 @@ async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volum
 Target: Pod {namespace}/{pod_name}, Volume Path: {volume_path}
 Generated Steps: 3 fallback steps (Plan Phase failed)
 
-Step 1: Get all critical issues | Tool: kg_get_all_issues(severity='critical') | Expected: Critical issues in the system
+Step 1: Get all critical issues | Tool: kg_get_all_issues(severity='primary') | Expected: Critical issues in the system
 Step 2: Analyze issue patterns | Tool: kg_analyze_issues() | Expected: Root cause analysis and patterns
 Step 3: Get system overview | Tool: kg_get_summary() | Expected: Overall system health statistics
 

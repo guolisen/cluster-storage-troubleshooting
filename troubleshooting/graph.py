@@ -495,6 +495,7 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         - "This concludes the analysis"
         - "Final report"
         - "Investigation complete"
+        - "FIX PLAN", "Fix Plan"
         - A question from AI that indicates the end of the process, such as "Is there anything else I can help you with?" or "Do you have any further questions?"
         
         Examples of implicit end markers include:
@@ -651,69 +652,16 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         content = getattr(last_message, "content", "")
         if not content:
             return {"result": "continue"}
-        
-        if model == None:
-            logging.info("No LLM model available, falling back to simple checks")
-        else:
-            logging.info("Using LLM model: %s", model.model_name)
 
         # Situation 2: Check if has explicit end markers in the content using LLM
-        if model:
-            # Use LLM to check for explicit end markers
-            if check_explicit_end_markers_with_llm(content, model):
-                logging.info("Ending graph: LLM detected explicit end markers")
-                return {"result": "end"}
-        else:
-            # Fall back to simple string matching if LLM is not available
-            if "[END_GRAPH]" in content or "[END]" in content or "End of graph" in content or "GRAPH END" in content:
-                logging.info("Ending graph: explicit end marker found")
-                return {"result": "end"}
+        if check_explicit_end_markers_with_llm(content, model):
+            logging.info("Ending graph: LLM detected explicit end markers")
+            return {"result": "end"}
         
         # Situation 3: Check for specific phrases indicating completion using LLM
-        if model:
-            # Use LLM to check for completion indicators
-            if check_completion_indicators_with_llm(content, phase, model):
-                logging.info("Ending graph: LLM detected completion indicators")
-                return {"result": "end"}
-        else:
-            # Fall back to counting sections if LLM is not available
-            if phase == "phase1":
-                required_sections = [
-                    "Summary of Findings:",
-                    "Special Case Detected",
-                    "Detailed Analysis:",
-                    "Relationship Analysis:",
-                    "Investigation Process:",
-                    "Potential Root Causes:",
-                    "Root Cause:",
-                    "Fix Plan:"
-                ]
-                
-                # Count how many required sections are present
-                sections_found = sum(1 for section in required_sections if section in content)
-                
-                # If most required sections are present, consider it complete
-                if sections_found >= 3:  # At least 3 of the 8 required sections
-                    logging.info(f"Ending graph: found {sections_found}/{len(required_sections)} required sections")
-                    return {"result": "end"}
-                    
-            # Check for required sections in the output for Phase 2
-            elif phase == "phase2":
-                required_sections = [
-                    "Actions Taken:",
-                    "Test Results:",
-                    "Resolution Status:",
-                    "Remaining Issues:",
-                    "Recommendations:"
-                ]
-                
-                # Count how many required sections are present
-                sections_found = sum(1 for section in required_sections if section in content)
-                
-                # If most required sections are present, consider it complete
-                if sections_found >= 2:  # At least 2 of the 5 required sections
-                    logging.info(f"Ending graph: found {sections_found}/{len(required_sections)} required sections")
-                    return {"result": "end"}
+        if check_completion_indicators_with_llm(content, phase, model):
+            logging.info("Ending graph: LLM detected completion indicators")
+            return {"result": "end"}
         
         # Situation 4: Check for convergence (model repeating itself)
         if len(ai_messages) > 3:

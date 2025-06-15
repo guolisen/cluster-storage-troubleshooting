@@ -314,7 +314,7 @@ Issues Summary:
         system_message = SystemMessage(
             content = f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
 
-<<< Note >>>: Please following the Investigation Plan to run tools step by step, and run 8 steps at least.
+<<< Note >>>: Please following the Investigation Plan to run tools and investigate the volume i/o issue step by step, and run 8 steps at least.
 
 {phase_specific_guidance}
 

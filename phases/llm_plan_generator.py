@@ -129,7 +129,7 @@ class LLMPlanGenerator:
         return f"""Refine the draft Investigation Plan for volume read/write errors in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
 this plan will be used to troubleshoot the issue in next phases. The next phase will execute or run tool according to the steps in this plan.
 
-KNOWLEDGE GRAPH CONTEXT(current base knowledge and some hardware information): 
+KNOWLEDGE GRAPH CONTEXT(current base knowledge and some hardware information, the issues in Knowledge Graph is very important informations): 
 {kg_context_str}
 
 DRAFT PLAN(static plan steps and preliminary steps from rule-based generator, please do not modify static steps as much as possible):
@@ -146,7 +146,7 @@ AVAILABLE TOOLS FOR PHASE1(this tools will be used in next phases, please do not
 
 Your task is to refine the draft plan by:
 1. Respecting the existing steps from the draft plan (both rule-based and static steps)
-2. Based on the Knowledge Graph context and historical experience data, infer the potential volume read/write error phenomena and their root causes. Formulate detailed investigation steps, prioritizing the verification steps most likely to identify the issue.
+2. Based on the Knowledge Graph issues context and historical experience data, infer the potential volume read/write error phenomena and their root causes. Formulate detailed investigation steps, prioritizing the verification steps most likely to identify the issue.
     Refinement Notes:
         a. Streamlined language for clarity and conciseness.
         b. Emphasized "detailed investigation steps" and "prioritized verification" to ensure actionable and focused output.
@@ -164,8 +164,8 @@ IMPORTANT CONSTRAINTS:
 6. Output the plan in the required format:
 
 Investigation Plan:
-Step 1: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
-Step 2: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
+Step 1: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [expected]
+Step 2: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [expected]
 ...
 """
     

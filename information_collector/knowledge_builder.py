@@ -1442,20 +1442,21 @@ class KnowledgeBuilder(MetadataParsers):
                         )
             
             # Analyze service logs
-            for service_name, log_output in service_logs.items():
-                if log_output and ('error' in log_output.lower() or 'failed' in log_output.lower()):
-                    # Determine system entity based on service
-                    if service_name == 'kubelet':
-                        entity_id = "gnode:System:kubelet"
-                    else:
-                        entity_id = "gnode:System:storage_services"
-                    
-                    self.knowledge_graph.add_issue(
-                        entity_id,
-                        "service_error",
-                        f"Service {service_name} logs contain error messages",
-                        "medium"
-                    )
+            for _, service_log_output in service_logs.items():
+                for service_name, log_output in service_log_output.items():
+                    if log_output and ('error' in log_output.lower() or 'failed' in log_output.lower()):
+                        # Determine system entity based on service
+                        if service_name == 'kubelet':
+                            entity_id = "gnode:System:kubelet"
+                        else:
+                            entity_id = "gnode:System:storage_services"
+                        
+                        self.knowledge_graph.add_issue(
+                            entity_id,
+                            "service_error",
+                            f"Service {service_name} logs contain error messages",
+                            "medium"
+                        )
             
             logging.info("Enhanced log analysis completed")
             

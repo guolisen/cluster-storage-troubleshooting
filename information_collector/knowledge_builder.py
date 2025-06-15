@@ -1427,18 +1427,19 @@ class KnowledgeBuilder(MetadataParsers):
             logging.info("Analyzing enhanced logs for storage issues...")
             
             # Analyze enhanced dmesg patterns
-            for pattern_key, log_output in enhanced_logs.items():
-                if log_output and log_output.strip():
-                    # Extract pattern type from key
-                    pattern_type = pattern_key.replace('dmesg_', '').replace('_', ' ')
-                    
-                    # Add issue to kernel system entity
-                    self.knowledge_graph.add_issue(
-                        "gnode:System:kernel",
-                        "enhanced_log_pattern",
-                        f"Enhanced log analysis detected {pattern_type} issues",
-                        "medium"
-                    )
+            for _, node_log_output in enhanced_logs.items():
+                for pattern_key, log_output in node_log_output.items():
+                    if log_output and log_output.strip():
+                        # Extract pattern type from key
+                        pattern_type = pattern_key.replace('dmesg_', '').replace('_', ' ')
+                        
+                        # Add issue to kernel system entity
+                        self.knowledge_graph.add_issue(
+                            "gnode:System:kernel",
+                            "enhanced_log_pattern",
+                            f"Enhanced log analysis detected {pattern_type} issues, log {log_output}",
+                            "medium"
+                        )
             
             # Analyze service logs
             for service_name, log_output in service_logs.items():

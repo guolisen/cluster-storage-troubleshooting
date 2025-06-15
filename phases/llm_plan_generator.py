@@ -321,16 +321,16 @@ CONSTRAINTS:
 - You must only reference tools available in the Phase1 tool registry
 - All tool references must match the exact name and parameter format shown in the tools registry
 - Include at least one disk-related check step and one volume-related check step.
-- Max Steps: 8
+- Max Steps: 10
 - IMPORTANT: Each tool should be used at most once in the entire plan. Do not include duplicate tool calls. If a tool is already used in a step, do not use it again in another step.
 
 OUTPUT FORMAT:
 Your response must be a refined Investigation Plan with steps in this format:
-Step X: [Description] | Tool: [tool_name(parameters)] | Expected: [expected]
+Step X: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [expected]
 
 You may include fallback steps for error handling in this format:
 Fallback Steps (if main steps fail):
-Step FX: [Description] | Tool: [tool_name(parameters)] | Expected: [expected] | Trigger: [failure_condition]
+Step FX: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [expected] | Trigger: [failure_condition]
 
 The plan must be comprehensive, logically structured, and include all necessary steps to investigate the volume I/O errors.
 """

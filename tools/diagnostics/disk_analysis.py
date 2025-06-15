@@ -12,6 +12,7 @@ import subprocess
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from langchain_core.tools import tool
+from tools.diagnostics.system import journalctl_command, dmesg_command
 
 @tool
 def check_disk_health(node_name: str, device_path: str) -> str:
@@ -184,7 +185,8 @@ def scan_disk_error_logs(node_name: str, hours_back: int = 24,
     Scan system logs for disk-related errors or warnings
     
     This tool scans system logs for disk-related errors or warnings,
-    summarizing findings with actionable insights.
+    summarizing findings with actionable insights. It checks traditional
+    log files, journalctl logs, and dmesg output.
     
     Args:
         node_name: Node hostname or IP
@@ -255,11 +257,61 @@ def scan_disk_error_logs(node_name: str, hours_back: int = 24,
             else:
                 results.append(f"\n=== {log_path} (No errors) ===")
         
+        # Get logs from journalctl
+        journalctl_options = f"--since='{hours_back} hours ago' -p err"
+        journalctl_result = journalctl_command.invoke({'node_name': node_name, 'options': journalctl_options})
+        
+        # Filter journalctl output for disk errors
+        journalctl_errors = []
+        for line in journalctl_result.split('\n'):
+            if any(keyword.lower() in line.lower() for keyword in disk_error_keywords):
+                journalctl_errors.append(line)
+        
+        # Add journalctl results
+        if journalctl_errors:
+            journalctl_error_count = len(journalctl_errors)
+            error_count += journalctl_error_count
+            results.append(f"\n=== journalctl ({journalctl_error_count} errors) ===")
+            
+            # Limit output to avoid overwhelming
+            if journalctl_error_count > 20:
+                results.append(f"First 20 of {journalctl_error_count} errors:")
+                results.append('\n'.join(journalctl_errors[:20]))
+            else:
+                results.append('\n'.join(journalctl_errors))
+        else:
+            results.append("\n=== journalctl (No errors) ===")
+        
+        # Get logs from dmesg
+        dmesg_options = f"--level=err,crit,alert,emerg --since='{hours_back} hours ago' -T"
+        dmesg_result = dmesg_command.invoke({'node_name': node_name, 'options': dmesg_options})
+        
+        # Filter dmesg output for disk errors
+        dmesg_errors = []
+        for line in dmesg_result.split('\n'):
+            if any(keyword.lower() in line.lower() for keyword in disk_error_keywords):
+                dmesg_errors.append(line)
+        
+        # Add dmesg results
+        if dmesg_errors:
+            dmesg_error_count = len(dmesg_errors)
+            error_count += dmesg_error_count
+            results.append(f"\n=== dmesg ({dmesg_error_count} errors) ===")
+            
+            # Limit output to avoid overwhelming
+            if dmesg_error_count > 20:
+                results.append(f"First 20 of {dmesg_error_count} errors:")
+                results.append('\n'.join(dmesg_errors[:20]))
+            else:
+                results.append('\n'.join(dmesg_errors))
+        else:
+            results.append("\n=== dmesg (No errors) ===")
+        
         # Create summary
         summary = [
             f"Disk Error Log Scan for {node_name} (past {hours_back} hours):",
             f"Total errors found: {error_count}",
-            f"Logs scanned: {', '.join(log_paths)}"
+            f"Sources scanned: {', '.join(log_paths + ['journalctl', 'dmesg'])}"
         ]
         
         # Add recommendations based on findings
@@ -269,13 +321,14 @@ def scan_disk_error_logs(node_name: str, hours_back: int = 24,
             recommendations.append("Disk errors detected - further investigation recommended")
             
             # Check for common patterns
-            if "I/O error" in ' '.join(results):
+            all_results = ' '.join(results)
+            if "I/O error" in all_results:
                 recommendations.append("I/O errors detected - possible hardware failure")
                 
-            if "timeout" in ' '.join(results):
+            if "timeout" in all_results:
                 recommendations.append("Disk timeout errors detected - check disk connectivity")
                 
-            if "bad sector" in ' '.join(results) or "uncorrectable" in ' '.join(results):
+            if "bad sector" in all_results or "uncorrectable" in all_results:
                 recommendations.append("Bad sectors detected - backup data and consider replacement")
         
         # Add recommendations to summary if any

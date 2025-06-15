@@ -94,7 +94,7 @@ def mount_command(node_name: str, options: str = "") -> str:
         return f"Error executing mount: {str(e)}"
 
 @tool
-def dmesg_command(node_name: str, options: str = "") -> str:
+def dmesg_command(node_name: str, options: str = "--since='1 hours ago'") -> str:
     """
     Execute dmesg command to show kernel messages
     
@@ -105,7 +105,9 @@ def dmesg_command(node_name: str, options: str = "") -> str:
     Returns:
         str: Command output
     """
-    cmd = ["dmesg", "--since='5 minutes ago'", "-T"]
+    cmd = ["dmesg"]
+    if "--since" not in options:
+        cmd = ["dmesg", "--since='1 hours ago'", "-T"]
     
     if options:
         cmd.extend(options.split())
@@ -120,7 +122,7 @@ def dmesg_command(node_name: str, options: str = "") -> str:
         return f"Error executing dmesg: {str(e)}"
 
 @tool
-def journalctl_command(node_name: str, options: str = "--since='5 minutes ago'") -> str:
+def journalctl_command(node_name: str, options: str = "--since='1 hours ago'") -> str:
     """
     Execute journalctl command to show systemd journal logs from the last 5 minutes
     
@@ -131,7 +133,9 @@ def journalctl_command(node_name: str, options: str = "--since='5 minutes ago'")
     Returns:
         str: Command output
     """
-    cmd = ["journalctl", "--since=5 minutes ago"]
+    cmd = ["journalctl"]
+    if "--since" not in options:
+        cmd = ["journalctl", "--since='1 hours ago'"]
     
     if options:
         cmd.extend(options.split())

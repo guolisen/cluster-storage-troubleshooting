@@ -192,7 +192,8 @@ Fix Plan:
         phase_specific_guidance = ""
         if phase == "phase1":
             phase_specific_guidance = """
-You are currently in Phase 1 (Investigation). Your primary task is to perform comprehensive root cause analysis and evidence collection using investigation tools only.
+You are currently in Phase 1 (Investigation). Your primary task is to perform comprehensive root cause analysis and evidence collection using investigation tools.
+
 
 PHASE 1 RESTRICTIONS:
 - NO destructive operations (no kubectl_apply, kubectl_delete, fsck_check)
@@ -310,13 +311,177 @@ Issues Summary:
 === END PRE-COLLECTED CONTEXT ===
 """
 
-        # Create system message with only static guiding principles
+        # Create system message with Chain of Thought (CoT) format and historical experience examples
         system_message = SystemMessage(
             content = f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
 
-<<< Note >>>: Please following the Investigation Plan to run tools and investigate the volume i/o issue step by step, and run 8 steps at least.
+<<< Note >>>: Please follow the Investigation Plan to run tools and investigate the volume i/o issue step by step, and run 8 steps at least.
 
 {phase_specific_guidance}
+
+# CHAIN OF THOUGHT APPROACH
+
+When troubleshooting, use a structured Chain of Thought approach to reason through problems:
+
+1. **OBSERVATION**: Clearly identify what issue or symptom you're seeing
+   - What errors are present in logs or events?
+   - What behavior is unexpected or problematic?
+
+2. **THINKING**:
+   - What are the possible causes of this issue?
+   - What components could be involved?
+   - What tools can I use to investigate further?
+   - What patterns should I look for in the results?
+
+3. **INVESTIGATION**:
+   - Execute tools in a logical sequence
+   - For each tool, explain WHY you're using it and WHAT you expect to learn
+   - After each result, analyze what it tells you and what to check next
+
+4. **DIAGNOSIS**:
+   - Based on evidence, determine the most likely root cause
+   - Explain your reasoning with supporting evidence
+   - Consider alternative explanations and why they're less likely
+
+5. **RESOLUTION**:
+   - Propose specific steps to resolve the issue
+   - Explain why each step will help address the root cause
+   - Consider potential side effects or risks
+
+# HISTORICAL EXPERIENCE EXAMPLES
+
+Here are examples of how to apply Chain of Thought reasoning to common volume issues:
+
+## Example 1: Volume Read Errors
+
+**OBSERVATION**: Volume read errors appearing in pod logs
+
+**THINKING**:
+1. Read errors often indicate hardware issues with the underlying disk
+2. Could be bad sectors, disk degradation, or controller problems
+3. Need to check both logical (filesystem) and physical (hardware) health
+4. Should examine error logs first, then check disk health metrics
+5. Will use knowledge graph to find affected components, then check disk health
+
+**INVESTIGATION**:
+1. First, query error logs with `kg_query_nodes(type='log', time_range='24h', filters={{'message': 'I/O error'}})` to identify affected pods
+   - This will show which pods are experiencing I/O errors and their frequency
+2. Check disk health with `check_disk_health(node='node-1', disk_id='disk1')`
+   - This will reveal SMART data and physical health indicators
+3. Use 'xfs_repair -n *' to check volume health without modifying it
+   - This will identify filesystem-level corruption or inconsistencies
+
+**DIAGNOSIS**: Hardware failure in the underlying disk, specifically bad sectors causing read operations to fail
+
+**RESOLUTION**:
+1. Replace the faulty disk identified in `check_disk_health`
+2. Restart the affected service with `systemctl restart db-service`
+3. Verify pod status with `kubectl get pods` to ensure normal operation
+
+## Example 2: Permission Denied Errors
+
+**OBSERVATION**: Permission denied errors when pod tries to access volume
+
+**THINKING**:
+1. Permission issues could be at filesystem level or pod security context
+2. Need to check both PVC metadata and pod security settings
+3. Will examine permission settings on the volume and pod security context
+
+**INVESTIGATION**:
+1. Check PVC metadata with `kg_get_node_metadata(node_type='pvc', filters={{'name': 'data-pvc'}})` for permission settings
+   - This will show access modes and any special permission configurations
+2. Verify pod security context with `kg_query_nodes(type='pod', filters={{'name': 'app-1'}})`
+   - This will reveal if the pod has appropriate security context for volume access
+
+**DIAGNOSIS**: Incorrect permission settings on the volume, preventing the pod from accessing with required permissions
+
+**RESOLUTION**:
+1. Update PVC permissions with `kubectl exec -it <pod> -- chmod 755 /mnt/data`
+2. Or reconfigure the storage class to align with required permissions
+
+## Example 3: Intermittent I/O Timeouts
+
+**OBSERVATION**: Intermittent I/O timeouts occurring under high load conditions
+
+**THINKING**:
+1. Timeouts under load suggest resource contention issues
+2. Could be node-level (CPU/memory) or storage-specific (IOPS limits)
+3. Need to check resource utilization and I/O patterns
+4. Will examine node pressure conditions and measure volume performance
+
+**INVESTIGATION**:
+1. Check node resource utilization with `kg_query_nodes(type='node', filters={{'DiskPressure': true, 'MemoryPressure': true}})`
+   - This will identify if nodes are under resource pressure
+2. Monitor I/O patterns with `measure_volume_performance(volume_id='vol-123')`
+   - This will show if I/O operations are hitting performance limits
+
+**DIAGNOSIS**: Resource contention on the node, leading to insufficient I/O capacity during peak usage
+
+**RESOLUTION**:
+1. Increase volume QoS limits in the storage class configuration
+2. Or migrate the workload to a less busy node using `kubectl drain <node>` and reschedule pods
+
+## Example 4: Volume Mount Failure After Node Reboot
+
+**OBSERVATION**: Volume fails to mount properly after node reboot
+
+**THINKING**:
+1. Mount failures after reboot often indicate service issues or mount option problems
+2. Need to check kubelet service status and mount configurations
+3. Will verify service status and examine mount options
+
+**INVESTIGATION**:
+1. Verify kubelet service status with `check_service_status(node='affected-node', service='kubelet')`
+   - This will show if the kubelet service is running properly
+2. Examine mount options with `kg_get_node_metadata(node_type='pv', filters={{'name': 'pv-001'}})`
+   - This will reveal any problematic mount options
+
+**DIAGNOSIS**: Kubelet service failure preventing proper volume mounting post-reboot
+
+**RESOLUTION**:
+1. Restart kubelet with `systemctl restart kubelet` on the affected node
+2. If issue persists, recreate the PVC using `kubectl delete pvc <pvc-name>` and `kubectl apply -f <pvc-config>.yaml`
+
+## Example 5: CSI Driver Crashes
+
+**OBSERVATION**: CSI driver crashes during volume operations
+
+**THINKING**:
+1. Driver crashes could indicate bugs, compatibility issues, or resource problems
+2. Need to check driver logs for crash patterns and error messages
+3. Will examine CSI driver logs for specific error patterns
+
+**INVESTIGATION**:
+1. Inspect CSI driver logs with `kg_query_nodes(type='log', time_range='24h', filters={{'service': 'csi-baremetal-controller'}})`
+   - This will show crash patterns or specific errors in the driver logs
+
+**DIAGNOSIS**: Bugs in the CSI driver causing it to crash under specific volume operation conditions
+
+**RESOLUTION**:
+1. Upgrade the CSI driver to the latest stable version using `helm upgrade csi-baremetal <chart>`
+2. Or apply known patches for the identified error
+
+## Example 6: Volume Becomes Read-Only
+
+**OBSERVATION**: Volume suddenly becomes read-only during operation
+
+**THINKING**:
+1. Read-only transitions often indicate filesystem corruption or I/O errors
+2. Kernel may have remounted filesystem as read-only to prevent further damage
+3. Need to check filesystem errors and kernel logs
+4. Will run filesystem checks and examine kernel logs for I/O errors
+
+**INVESTIGATION**:
+1. Check filesystem errors with `run_fsck(volume_path='/mnt/data')`
+   - This will identify filesystem inconsistencies or corruption
+2. Inspect kernel logs with `kg_query_nodes(type='log', time_range='24h', filters={{'source': 'kernel'}})` for I/O errors
+   - This will show if kernel detected I/O errors that triggered read-only mode
+
+**DIAGNOSIS**: Filesystem corruption triggering kernel to switch volume to read-only mode
+
+**RESOLUTION**:
+1. Repair filesystem errors using `fsck /mnt/data` in a maintenance pod
+2. Remount the volume with `mount -o remount,rw /mnt/data` or create a new volume and restore data
 
 Follow these strict guidelines for safe, reliable, and effective troubleshooting:
 

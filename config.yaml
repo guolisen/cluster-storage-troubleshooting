@@ -12,7 +12,6 @@ llm:
     #model: "grok-3-mini"
     #api_endpoint: "https://api.openai.com/v1"
     #api_key: 'sk-proj--'
-    #model: "gemini-2.5-pro-preview-06-05"
     #model: "gemini-2.5-flash-preview-05-20"
     api_key: "sk-"
     api_endpoint: "https://api.zhizengzeng.com/v1"
@@ -28,8 +27,8 @@ llm:
   
   # Ollama Configuration (for local LLMs)
   ollama:
-    model: "llama3"
-    base_url: "http://localhost:11434"
+    model: "qwen3:8b"
+    base_url: "http://192.168.239.1:11434"
     temperature: 0
     max_tokens: 8192
 

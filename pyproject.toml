@@ -24,12 +24,14 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 dependencies = [
+    "jupyter>=1.1.1",
     "kubernetes",
     "langchain>=0.3.25",
     "langchain-google-genai>=2.1.5",
     "langchain-ollama>=0.3.3",
     "langchain-openai>=0.3.17",
     "langgraph",
+    "mermaid-python>=0.1",
     "networkx>=3.4.2",
     "paramiko",
     "pip>=25.1.1",

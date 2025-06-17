@@ -506,6 +506,7 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
    - Always recommend data backup before suggesting write/change operations (e.g., `fsck`).
 
 8. **Output**:
+   - << Adding the analysis and summary for each steps when call tools >>
    - Try to find all of possible root causes before proposing any remediation steps.
    - Provide clear, concise explanations of diagnostic steps, findings, and remediation proposals.
    - Include performance benchmarks in reports (e.g., HDD: 100–200 IOPS, SSD: thousands, NVMe: tens of thousands).
@@ -529,7 +530,7 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         # Add pre-collected diagnostic context and output example to user message
         user_messages = []
 
-        context_message = HumanMessage(
+        context_message = SystemMessage(
             content = f"""Pre-collected diagnostic context:
 {context_summary}
 """
@@ -540,7 +541,7 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
             if isinstance(state["messages"], list):
                 # Extract existing user messages (skip system message if present)
                 for msg in state["messages"]:
-                    if msg.type != "system":
+                    if not isinstance(msg, SystemMessage):
                         user_messages.append(msg)
                 
                 # Create new message list with system message, context message, and existing user messages
@@ -609,7 +610,8 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         - "FIX PLAN", "Fix Plan"
         - " Would you like to"
         - A question from AI that indicates the end of the process, such as " Would you like to proceed with planning the disk replacement or further investigate filesystem integrity?"
-        
+        - If just a call tools result, then return 'NO'
+
         Examples of implicit end markers include:
         - A summary followed by recommendations with no further questions
         - A conclusion paragraph that wraps up all findings
@@ -710,6 +712,7 @@ You must adhere to these guidelines at all times to ensure safe, reliable, and e
         
         A complete report should have some of these sections and provide comprehensive information 
         in each section. The report should feel complete and not leave major questions unanswered.
+        If just a call tools result, then return 'NO'.
         
         Respond with "YES" if you believe the text represents a complete report, or "NO" if it seems incomplete.
         """

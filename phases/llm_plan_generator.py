@@ -397,30 +397,75 @@ The plan must be comprehensive, logically structured, and include all necessary 
     
     def _format_historical_experience_entries(self, experiences: List[Dict[str, Any]]) -> str:
         """
-        Format historical experience entries
+        Format historical experience entries using Chain of Thought (CoT) structure
         
         Args:
             experiences: List of historical experience entries
             
         Returns:
-            str: Formatted entries
+            str: Formatted entries with CoT structure
         """
         formatted_entries = []
         
         for idx, exp in enumerate(experiences, 1):
             # Get attributes from the experience
             attributes = exp.get('attributes', {})
-            phenomenon = attributes.get('phenomenon', 'Unknown phenomenon')
-            root_cause = attributes.get('root_cause', 'Unknown root cause')
-            localization_method = attributes.get('localization_method', 'No localization method provided')
-            resolution_method = attributes.get('resolution_method', 'No resolution method provided')
             
-            # Format the entry
-            entry = f"""HISTORICAL EXPERIENCE #{idx}:
-Phenomenon: {phenomenon}
-Root Cause: {root_cause}
-Localization Method: {localization_method}
-Resolution Method: {resolution_method}
+            # Check for new CoT format fields first
+            observation = attributes.get('observation', attributes.get('phenomenon', 'Unknown observation'))
+            thinking = attributes.get('thinking', [])
+            investigation = attributes.get('investigation', [])
+            diagnosis = attributes.get('diagnosis', attributes.get('root_cause', 'Unknown diagnosis'))
+            resolution = attributes.get('resolution', attributes.get('resolution_method', 'No resolution method provided'))
+            
+            # Format thinking points
+            thinking_formatted = ""
+            if thinking:
+                thinking_formatted = "Thinking:\n"
+                for i, point in enumerate(thinking, 1):
+                    thinking_formatted += f"{i}. {point}\n"
+            
+            # Format investigation steps
+            investigation_formatted = ""
+            if investigation:
+                investigation_formatted = "Investigation:\n"
+                for i, step in enumerate(investigation, 1):
+                    if isinstance(step, dict):
+                        step_text = step.get('step', '')
+                        reasoning = step.get('reasoning', '')
+                        investigation_formatted += f"{i}. {step_text}\n   - {reasoning}\n"
+                    else:
+                        investigation_formatted += f"{i}. {step}\n"
+            else:
+                # Fall back to legacy format
+                localization_method = attributes.get('localization_method', '')
+                if localization_method:
+                    investigation_formatted = f"Investigation:\n{localization_method}\n"
+            
+            # Format resolution steps
+            resolution_formatted = ""
+            if isinstance(resolution, list):
+                resolution_formatted = "Resolution:\n"
+                for i, step in enumerate(resolution, 1):
+                    resolution_formatted += f"{i}. {step}\n"
+            else:
+                resolution_formatted = f"Resolution:\n{resolution}\n"
+            
+            # Format the entry using CoT structure
+            entry = f"""## HISTORICAL EXPERIENCE #{idx}: {observation}
+
+**OBSERVATION**: {observation}
+
+**THINKING**:
+{thinking_formatted}
+
+**INVESTIGATION**:
+{investigation_formatted}
+
+**DIAGNOSIS**: {diagnosis}
+
+**RESOLUTION**:
+{resolution_formatted}
 """
             formatted_entries.append(entry)
         

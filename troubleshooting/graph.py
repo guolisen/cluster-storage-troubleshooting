@@ -9,16 +9,15 @@ Enhanced with specific end conditions for better control over graph termination.
 
 import json
 import logging
+import os
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List, TypedDict, Optional, Union, Callable
 
 # Configure logging (file only, no console output)
 logger = logging.getLogger('langgraph')
 logger.setLevel(logging.INFO)
 # Don't propagate to root logger to avoid console output
 logger.propagate = False
-
-from typing import Dict, List, Any, TypedDict, Optional, Union, Callable
 
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import tools_condition
@@ -311,6 +310,91 @@ Issues Summary:
 === END PRE-COLLECTED CONTEXT ===
 """
 
+        # Load historical experience data from JSON file
+        historical_experience_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'historical_experience.json')
+        historical_experience_examples = ""
+        
+        try:
+            with open(historical_experience_path, 'r') as f:
+                historical_experience = json.load(f)
+                
+            # Format historical experience data into CoT examples
+            for i, experience in enumerate(historical_experience):
+                # Create example header
+                example_num = i + 1
+                example_title = experience.get('observation', f"Example {example_num}")
+                historical_experience_examples += f"\n## Example {example_num}: {example_title}\n\n"
+                
+                # Add OBSERVATION section
+                historical_experience_examples += f"**OBSERVATION**: {experience.get('observation', '')}\n\n"
+                
+                # Add THINKING section
+                historical_experience_examples += "**THINKING**:\n"
+                thinking_points = experience.get('thinking', [])
+                for j, point in enumerate(thinking_points):
+                    historical_experience_examples += f"{j+1}. {point}\n"
+                historical_experience_examples += "\n"
+                
+                # Add INVESTIGATION section
+                historical_experience_examples += "**INVESTIGATION**:\n"
+                investigation_steps = experience.get('investigation', [])
+                for j, step_info in enumerate(investigation_steps):
+                    if isinstance(step_info, dict):
+                        step = step_info.get('step', '')
+                        reasoning = step_info.get('reasoning', '')
+                        historical_experience_examples += f"{j+1}. {step}\n   - {reasoning}\n"
+                    else:
+                        historical_experience_examples += f"{j+1}. {step_info}\n"
+                historical_experience_examples += "\n"
+                
+                # Add DIAGNOSIS section
+                historical_experience_examples += f"**DIAGNOSIS**: {experience.get('diagnosis', '')}\n\n"
+                
+                # Add RESOLUTION section
+                historical_experience_examples += "**RESOLUTION**:\n"
+                resolution_steps = experience.get('resolution', [])
+                if isinstance(resolution_steps, list):
+                    for j, step in enumerate(resolution_steps):
+                        historical_experience_examples += f"{j+1}. {step}\n"
+                else:
+                    historical_experience_examples += f"{resolution_steps}\n"
+                historical_experience_examples += "\n"
+                
+                # Limit to 6 examples to keep the prompt size manageable
+                if example_num >= 6:
+                    break
+                    
+        except Exception as e:
+            logging.error(f"Error loading historical experience data: {e}")
+            # Provide a fallback example in case the file can't be loaded
+            historical_experience_examples = """
+## Example 1: Volume Read Errors
+
+**OBSERVATION**: Volume read errors appearing in pod logs
+
+**THINKING**:
+1. Read errors often indicate hardware issues with the underlying disk
+2. Could be bad sectors, disk degradation, or controller problems
+3. Need to check both logical (filesystem) and physical (hardware) health
+4. Should examine error logs first, then check disk health metrics
+5. Will use knowledge graph to find affected components, then check disk health
+
+**INVESTIGATION**:
+1. First, query error logs with `kg_query_nodes(type='log', time_range='24h', filters={{'message': 'I/O error'}})` to identify affected pods
+   - This will show which pods are experiencing I/O errors and their frequency
+2. Check disk health with `check_disk_health(node='node-1', disk_id='disk1')`
+   - This will reveal SMART data and physical health indicators
+3. Use 'xfs_repair -n *' to check volume health without modifying it
+   - This will identify filesystem-level corruption or inconsistencies
+
+**DIAGNOSIS**: Hardware failure in the underlying disk, specifically bad sectors causing read operations to fail
+
+**RESOLUTION**:
+1. Replace the faulty disk identified in `check_disk_health`
+2. Restart the affected service with `systemctl restart db-service`
+3. Verify pod status with `kubectl get pods` to ensure normal operation
+"""
+        
         # Create system message with Chain of Thought (CoT) format and historical experience examples
         system_message = SystemMessage(
             content = f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
@@ -351,137 +435,7 @@ When troubleshooting, use a structured Chain of Thought approach to reason throu
 # HISTORICAL EXPERIENCE EXAMPLES
 
 Here are examples of how to apply Chain of Thought reasoning to common volume issues:
-
-## Example 1: Volume Read Errors
-
-**OBSERVATION**: Volume read errors appearing in pod logs
-
-**THINKING**:
-1. Read errors often indicate hardware issues with the underlying disk
-2. Could be bad sectors, disk degradation, or controller problems
-3. Need to check both logical (filesystem) and physical (hardware) health
-4. Should examine error logs first, then check disk health metrics
-5. Will use knowledge graph to find affected components, then check disk health
-
-**INVESTIGATION**:
-1. First, query error logs with `kg_query_nodes(type='log', time_range='24h', filters={{'message': 'I/O error'}})` to identify affected pods
-   - This will show which pods are experiencing I/O errors and their frequency
-2. Check disk health with `check_disk_health(node='node-1', disk_id='disk1')`
-   - This will reveal SMART data and physical health indicators
-3. Use 'xfs_repair -n *' to check volume health without modifying it
-   - This will identify filesystem-level corruption or inconsistencies
-
-**DIAGNOSIS**: Hardware failure in the underlying disk, specifically bad sectors causing read operations to fail
-
-**RESOLUTION**:
-1. Replace the faulty disk identified in `check_disk_health`
-2. Restart the affected service with `systemctl restart db-service`
-3. Verify pod status with `kubectl get pods` to ensure normal operation
-
-## Example 2: Permission Denied Errors
-
-**OBSERVATION**: Permission denied errors when pod tries to access volume
-
-**THINKING**:
-1. Permission issues could be at filesystem level or pod security context
-2. Need to check both PVC metadata and pod security settings
-3. Will examine permission settings on the volume and pod security context
-
-**INVESTIGATION**:
-1. Check PVC metadata with `kg_get_node_metadata(node_type='pvc', filters={{'name': 'data-pvc'}})` for permission settings
-   - This will show access modes and any special permission configurations
-2. Verify pod security context with `kg_query_nodes(type='pod', filters={{'name': 'app-1'}})`
-   - This will reveal if the pod has appropriate security context for volume access
-
-**DIAGNOSIS**: Incorrect permission settings on the volume, preventing the pod from accessing with required permissions
-
-**RESOLUTION**:
-1. Update PVC permissions with `kubectl exec -it <pod> -- chmod 755 /mnt/data`
-2. Or reconfigure the storage class to align with required permissions
-
-## Example 3: Intermittent I/O Timeouts
-
-**OBSERVATION**: Intermittent I/O timeouts occurring under high load conditions
-
-**THINKING**:
-1. Timeouts under load suggest resource contention issues
-2. Could be node-level (CPU/memory) or storage-specific (IOPS limits)
-3. Need to check resource utilization and I/O patterns
-4. Will examine node pressure conditions and measure volume performance
-
-**INVESTIGATION**:
-1. Check node resource utilization with `kg_query_nodes(type='node', filters={{'DiskPressure': true, 'MemoryPressure': true}})`
-   - This will identify if nodes are under resource pressure
-2. Monitor I/O patterns with `measure_volume_performance(volume_id='vol-123')`
-   - This will show if I/O operations are hitting performance limits
-
-**DIAGNOSIS**: Resource contention on the node, leading to insufficient I/O capacity during peak usage
-
-**RESOLUTION**:
-1. Increase volume QoS limits in the storage class configuration
-2. Or migrate the workload to a less busy node using `kubectl drain <node>` and reschedule pods
-
-## Example 4: Volume Mount Failure After Node Reboot
-
-**OBSERVATION**: Volume fails to mount properly after node reboot
-
-**THINKING**:
-1. Mount failures after reboot often indicate service issues or mount option problems
-2. Need to check kubelet service status and mount configurations
-3. Will verify service status and examine mount options
-
-**INVESTIGATION**:
-1. Verify kubelet service status with `check_service_status(node='affected-node', service='kubelet')`
-   - This will show if the kubelet service is running properly
-2. Examine mount options with `kg_get_node_metadata(node_type='pv', filters={{'name': 'pv-001'}})`
-   - This will reveal any problematic mount options
-
-**DIAGNOSIS**: Kubelet service failure preventing proper volume mounting post-reboot
-
-**RESOLUTION**:
-1. Restart kubelet with `systemctl restart kubelet` on the affected node
-2. If issue persists, recreate the PVC using `kubectl delete pvc <pvc-name>` and `kubectl apply -f <pvc-config>.yaml`
-
-## Example 5: CSI Driver Crashes
-
-**OBSERVATION**: CSI driver crashes during volume operations
-
-**THINKING**:
-1. Driver crashes could indicate bugs, compatibility issues, or resource problems
-2. Need to check driver logs for crash patterns and error messages
-3. Will examine CSI driver logs for specific error patterns
-
-**INVESTIGATION**:
-1. Inspect CSI driver logs with `kg_query_nodes(type='log', time_range='24h', filters={{'service': 'csi-baremetal-controller'}})`
-   - This will show crash patterns or specific errors in the driver logs
-
-**DIAGNOSIS**: Bugs in the CSI driver causing it to crash under specific volume operation conditions
-
-**RESOLUTION**:
-1. Upgrade the CSI driver to the latest stable version using `helm upgrade csi-baremetal <chart>`
-2. Or apply known patches for the identified error
-
-## Example 6: Volume Becomes Read-Only
-
-**OBSERVATION**: Volume suddenly becomes read-only during operation
-
-**THINKING**:
-1. Read-only transitions often indicate filesystem corruption or I/O errors
-2. Kernel may have remounted filesystem as read-only to prevent further damage
-3. Need to check filesystem errors and kernel logs
-4. Will run filesystem checks and examine kernel logs for I/O errors
-
-**INVESTIGATION**:
-1. Check filesystem errors with `run_fsck(volume_path='/mnt/data')`
-   - This will identify filesystem inconsistencies or corruption
-2. Inspect kernel logs with `kg_query_nodes(type='log', time_range='24h', filters={{'source': 'kernel'}})` for I/O errors
-   - This will show if kernel detected I/O errors that triggered read-only mode
-
-**DIAGNOSIS**: Filesystem corruption triggering kernel to switch volume to read-only mode
-
-**RESOLUTION**:
-1. Repair filesystem errors using `fsck /mnt/data` in a maintenance pod
-2. Remount the volume with `mount -o remount,rw /mnt/data` or create a new volume and restore data
+{historical_experience_examples}
 
 Follow these strict guidelines for safe, reliable, and effective troubleshooting:
 

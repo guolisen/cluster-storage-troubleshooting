@@ -1,98 +1,371 @@
 [
   {
-    "phenomenon": "Volume read errors in pod logs",
-    "root_cause": "Hardware failure in the underlying disk, such as bad sectors or disk degradation, causing read operations to fail.",
-    "localization_method": "Query error logs with `kg_query_nodes(type='log', time_range='24h', filters={'message': 'I/O error'})` to identify affected pods and check disk health with `check_disk_health(node='node-1', disk_id='disk1')`, use 'xfs_repair -n *' to check volume health",
-    "resolution_method": "Replace the faulty disk identified in `check_disk_health`. Restart the affected service with `systemctl restart db-service` and verify pod status with `kubectl get pods`."
+    "observation": "Volume read errors in pod logs",
+    "thinking": [
+      "Read errors often indicate hardware issues with the underlying disk",
+      "Could be bad sectors, disk degradation, or controller problems",
+      "Need to check both logical (filesystem) and physical (hardware) health",
+      "Should examine error logs first, then check disk health metrics",
+      "Will use knowledge graph to find affected components, then check disk health"
+    ],
+    "investigation": [
+      {
+        "step": "Query error logs with `kg_query_nodes(type='log', time_range='24h', filters={'message': 'I/O error'})` to identify affected pods",
+        "reasoning": "This will show which pods are experiencing I/O errors and their frequency"
+      },
+      {
+        "step": "Check disk health with `check_disk_health(node='node-1', disk_id='disk1')`",
+        "reasoning": "This will reveal SMART data and physical health indicators"
+      },
+      {
+        "step": "Use 'xfs_repair -n *' to check volume health without modifying it",
+        "reasoning": "This will identify filesystem-level corruption or inconsistencies"
+      }
+    ],
+    "diagnosis": "Hardware failure in the underlying disk, specifically bad sectors causing read operations to fail",
+    "resolution": [
+      "Replace the faulty disk identified in `check_disk_health`",
+      "Restart the affected service with `systemctl restart db-service`",
+      "Verify pod status with `kubectl get pods` to ensure normal operation"
+    ]
   },
   {
-    "phenomenon": "Permission denied on volume access",
-    "root_cause": "Incorrect permission settings on the volume or pod security context, preventing the pod from accessing the volume with required permissions.",
-    "localization_method": "Check PVC metadata with `kg_get_node_metadata(node_type='pvc', filters={'name': 'data-pvc'})` for permission settings and verify pod security context with `kg_query_nodes(type='pod', filters={'name': 'app-1'})`",
-    "resolution_method": "Update PVC permissions with `kubectl exec -it <pod> -- chmod 755 /mnt/data` or reconfigure the storage class to align with required permissions."
+    "observation": "Permission denied on volume access",
+    "thinking": [
+      "Permission issues could be at filesystem level or pod security context",
+      "Need to check both PVC metadata and pod security settings",
+      "Will examine permission settings on the volume and pod security context"
+    ],
+    "investigation": [
+      {
+        "step": "Check PVC metadata with `kg_get_node_metadata(node_type='pvc', filters={'name': 'data-pvc'})` for permission settings",
+        "reasoning": "This will show access modes and any special permission configurations"
+      },
+      {
+        "step": "Verify pod security context with `kg_query_nodes(type='pod', filters={'name': 'app-1'})`",
+        "reasoning": "This will reveal if the pod has appropriate security context for volume access"
+      }
+    ],
+    "diagnosis": "Incorrect permission settings on the volume or pod security context, preventing the pod from accessing the volume with required permissions",
+    "resolution": [
+      "Update PVC permissions with `kubectl exec -it <pod> -- chmod 755 /mnt/data`",
+      "Or reconfigure the storage class to align with required permissions"
+    ]
   },
   {
-    "phenomenon": "Intermittent I/O timeouts under high load",
-    "root_cause": "Resource contention on the node or storage backend, leading to insufficient I/O capacity during peak usage periods.",
-    "localization_method": "Check node resource utilization with `kg_query_nodes(type='node', filters={'DiskPressure': true, 'MemoryPressure': true})` and monitor I/O patterns with `measure_volume_performance(volume_id='vol-123')`",
-    "resolution_method": "Increase volume QoS limits in the storage class configuration or migrate the workload to a less busy node using `kubectl drain <node>` and reschedule pods."
+    "observation": "Intermittent I/O timeouts under high load",
+    "thinking": [
+      "Timeouts under load suggest resource contention issues",
+      "Could be node-level (CPU/memory) or storage-specific (IOPS limits)",
+      "Need to check resource utilization and I/O patterns",
+      "Will examine node pressure conditions and measure volume performance"
+    ],
+    "investigation": [
+      {
+        "step": "Check node resource utilization with `kg_query_nodes(type='node', filters={'DiskPressure': true, 'MemoryPressure': true})`",
+        "reasoning": "This will identify if nodes are under resource pressure"
+      },
+      {
+        "step": "Monitor I/O patterns with `measure_volume_performance(volume_id='vol-123')`",
+        "reasoning": "This will show if I/O operations are hitting performance limits"
+      }
+    ],
+    "diagnosis": "Resource contention on the node or storage backend, leading to insufficient I/O capacity during peak usage periods",
+    "resolution": [
+      "Increase volume QoS limits in the storage class configuration",
+      "Or migrate the workload to a less busy node using `kubectl drain <node>` and reschedule pods"
+    ]
   },
   {
-    "phenomenon": "Volume mount failure after node reboot",
-    "root_cause": "Kubelet service failure or misconfigured mount options, preventing the volume from being properly mounted post-reboot.",
-    "localization_method": "Verify kubelet service status with `check_service_status(node='affected-node', service='kubelet')` and examine mount options with `kg_get_node_metadata(node_type='pv', filters={'name': 'pv-001'})`",
-    "resolution_method": "Restart kubelet with `systemctl restart kubelet` on the affected node. If the issue persists, recreate the PVC using `kubectl delete pvc <pvc-name>` and `kubectl apply -f <pvc-config>.yaml`."
+    "observation": "Volume mount failure after node reboot",
+    "thinking": [
+      "Mount failures after reboot often indicate service issues or mount option problems",
+      "Need to check kubelet service status and mount configurations",
+      "Will verify service status and examine mount options"
+    ],
+    "investigation": [
+      {
+        "step": "Verify kubelet service status with `check_service_status(node='affected-node', service='kubelet')`",
+        "reasoning": "This will show if the kubelet service is running properly"
+      },
+      {
+        "step": "Examine mount options with `kg_get_node_metadata(node_type='pv', filters={'name': 'pv-001'})`",
+        "reasoning": "This will reveal any problematic mount options"
+      }
+    ],
+    "diagnosis": "Kubelet service failure or misconfigured mount options, preventing the volume from being properly mounted post-reboot",
+    "resolution": [
+      "Restart kubelet with `systemctl restart kubelet` on the affected node",
+      "If the issue persists, recreate the PVC using `kubectl delete pvc <pvc-name>` and `kubectl apply -f <pvc-config>.yaml`"
+    ]
   },
   {
-    "phenomenon": "Slow volume I/O operations",
-    "root_cause": "Storage contention or suboptimal storage class configuration, leading to reduced throughput or IOPS for the volume.",
-    "localization_method": "Measure volume performance with `measure_volume_performance(volume_id='vol-123')` to check throughput and IOPS. Query other pods on the same node with `kg_query_nodes(type='pod', filters={'node': 'node-1'})` to identify contention",
-    "resolution_method": "Check for storage contention. If confirmed, move the volume to a different storage class with higher IOPS or migrate the pod to another node using `kubectl edit deployment <deployment-name>`."
+    "observation": "Slow volume I/O operations",
+    "thinking": [
+      "Slow I/O could indicate storage contention or suboptimal configuration",
+      "Need to measure actual performance and check for contention",
+      "Will check throughput, IOPS, and look for other pods using the same resources"
+    ],
+    "investigation": [
+      {
+        "step": "Measure volume performance with `measure_volume_performance(volume_id='vol-123')` to check throughput and IOPS",
+        "reasoning": "This will establish baseline performance metrics and identify bottlenecks"
+      },
+      {
+        "step": "Query other pods on the same node with `kg_query_nodes(type='pod', filters={'node': 'node-1'})` to identify contention",
+        "reasoning": "This will show if multiple pods are competing for the same storage resources"
+      }
+    ],
+    "diagnosis": "Storage contention or suboptimal storage class configuration, leading to reduced throughput or IOPS for the volume",
+    "resolution": [
+      "Check for storage contention",
+      "If confirmed, move the volume to a different storage class with higher IOPS",
+      "Or migrate the pod to another node using `kubectl edit deployment <deployment-name>`"
+    ]
   },
   {
-    "phenomenon": "CSI driver crashes during volume operations",
-    "root_cause": "Bugs or compatibility issues in the CSI driver, causing it to crash under specific volume operation conditions.",
-    "localization_method": "Inspect CSI driver logs with `kg_query_nodes(type='log', time_range='24h', filters={'service': 'csi-baremetal-controller'})` and check for crash patterns or errors",
-    "resolution_method": "Upgrade the CSI driver to the latest stable version using `helm upgrade csi-baremetal <chart>` or apply known patches for the identified error."
+    "observation": "CSI driver crashes during volume operations",
+    "thinking": [
+      "Driver crashes could indicate bugs, compatibility issues, or resource problems",
+      "Need to check driver logs for crash patterns and error messages",
+      "Will examine CSI driver logs for specific error patterns"
+    ],
+    "investigation": [
+      {
+        "step": "Inspect CSI driver logs with `kg_query_nodes(type='log', time_range='24h', filters={'service': 'csi-baremetal-controller'})`",
+        "reasoning": "This will show crash patterns or specific errors in the driver logs"
+      }
+    ],
+    "diagnosis": "Bugs or compatibility issues in the CSI driver, causing it to crash under specific volume operation conditions",
+    "resolution": [
+      "Upgrade the CSI driver to the latest stable version using `helm upgrade csi-baremetal <chart>`",
+      "Or apply known patches for the identified error"
+    ]
   },
   {
-    "phenomenon": "PVC stuck in Pending state",
-    "root_cause": "Insufficient storage capacity or misconfigured storage provisioner, preventing the PVC from binding to a suitable Persistent Volume.",
-    "localization_method": "Check storage provisioner logs and events with `get_events(namespace='kube-system', resource_type='StatefulSet', resource_name='csi-provisioner')` and verify storage class with `kg_get_node_metadata(node_type='storageclass')`",
-    "resolution_method": "Ensure sufficient storage capacity on nodes. Update the storage class configuration with `kubectl edit storageclass <storageclass-name>` or scale up the storage provisioner."
+    "observation": "PVC stuck in Pending state",
+    "thinking": [
+      "Pending PVCs usually indicate provisioning issues",
+      "Could be insufficient storage capacity or misconfigured provisioner",
+      "Need to check provisioner logs and storage class configuration",
+      "Will examine events and logs related to the provisioner"
+    ],
+    "investigation": [
+      {
+        "step": "Check storage provisioner logs and events with `get_events(namespace='kube-system', resource_type='StatefulSet', resource_name='csi-provisioner')`",
+        "reasoning": "This will reveal errors or issues in the provisioning process"
+      },
+      {
+        "step": "Verify storage class with `kg_get_node_metadata(node_type='storageclass')`",
+        "reasoning": "This will show if the storage class is properly configured"
+      }
+    ],
+    "diagnosis": "Insufficient storage capacity or misconfigured storage provisioner, preventing the PVC from binding to a suitable Persistent Volume",
+    "resolution": [
+      "Ensure sufficient storage capacity on nodes",
+      "Update the storage class configuration with `kubectl edit storageclass <storageclass-name>`",
+      "Or scale up the storage provisioner"
+    ]
   },
   {
-    "phenomenon": "Volume becomes read-only during operation",
-    "root_cause": "Filesystem corruption or kernel-level I/O errors, triggering the volume to switch to read-only mode to prevent further damage.",
-    "localization_method": "Check filesystem errors with `run_fsck(volume_path='/mnt/data')` and inspect kernel logs with `kg_query_nodes(type='log', time_range='24h', filters={'source': 'kernel'})` for I/O errors",
-    "resolution_method": "Repair filesystem errors using `fsck /mnt/data` in a maintenance pod. Remount the volume with `mount -o remount,rw /mnt/data` or create a new volume and restore data from backup."
+    "observation": "Volume becomes read-only during operation",
+    "thinking": [
+      "Read-only transitions often indicate filesystem corruption or I/O errors",
+      "Kernel may have remounted filesystem as read-only to prevent further damage",
+      "Need to check filesystem errors and kernel logs",
+      "Will run filesystem checks and examine kernel logs for I/O errors"
+    ],
+    "investigation": [
+      {
+        "step": "Check filesystem errors with `run_fsck(volume_path='/mnt/data')`",
+        "reasoning": "This will identify filesystem inconsistencies or corruption"
+      },
+      {
+        "step": "Inspect kernel logs with `kg_query_nodes(type='log', time_range='24h', filters={'source': 'kernel'})` for I/O errors",
+        "reasoning": "This will show if kernel detected I/O errors that triggered read-only mode"
+      }
+    ],
+    "diagnosis": "Filesystem corruption or kernel-level I/O errors, triggering the volume to switch to read-only mode to prevent further damage",
+    "resolution": [
+      "Repair filesystem errors using `fsck /mnt/data` in a maintenance pod",
+      "Remount the volume with `mount -o remount,rw /mnt/data`",
+      "Or create a new volume and restore data from backup"
+    ]
   },
   {
-    "phenomenon": "Data corruption on persistent volumes",
-    "root_cause": "Physical drive failure or lack of data integrity mechanisms, leading to corrupted data on the volume.",
-    "localization_method": "Verify drive SMART data with `check_smart_data(drive_id='drive-123')` and run filesystem consistency checks with `run_fsck(volume_path='/mnt/data')`",
-    "resolution_method": "Replace the faulty drive and restore data from the latest backup. Enable data integrity features in the storage class with `kubectl edit storageclass <storageclass-name>`."
+    "observation": "Data corruption on persistent volumes",
+    "thinking": [
+      "Data corruption suggests physical drive issues or filesystem problems",
+      "Need to check both drive health and filesystem integrity",
+      "Will examine SMART data and run filesystem consistency checks"
+    ],
+    "investigation": [
+      {
+        "step": "Verify drive SMART data with `check_smart_data(drive_id='drive-123')`",
+        "reasoning": "This will show physical drive health indicators like reallocated sectors"
+      },
+      {
+        "step": "Run filesystem consistency checks with `run_fsck(volume_path='/mnt/data')`",
+        "reasoning": "This will identify filesystem-level corruption or inconsistencies"
+      }
+    ],
+    "diagnosis": "Physical drive failure or lack of data integrity mechanisms, leading to corrupted data on the volume",
+    "resolution": [
+      "Replace the faulty drive and restore data from the latest backup",
+      "Enable data integrity features in the storage class with `kubectl edit storageclass <storageclass-name>`"
+    ]
   },
   {
-    "phenomenon": "Volume detach operations failing",
-    "root_cause": "Kubelet or volume attachment controller issues, causing the volume to remain attached despite detach requests.",
-    "localization_method": "Check volume attachment status with `kubectl describe volumeattachment <attachment-name>` and inspect kubelet logs with `kg_query_nodes(type='log', filters={'service': 'kubelet'})` for detach failures",
-    "resolution_method": "Force detach the volume with `kubectl patch volumeattachment <attachment-name> -p '{\"metadata\":{\"finalizers\":null}}'` and restart kubelet with `systemctl restart kubelet` if necessary."
+    "observation": "Volume detach operations failing",
+    "thinking": [
+      "Detach failures often indicate controller issues or stuck attachments",
+      "Need to check volume attachment status and kubelet logs",
+      "Will examine attachment resources and look for detach failures in logs"
+    ],
+    "investigation": [
+      {
+        "step": "Check volume attachment status with `kubectl describe volumeattachment <attachment-name>`",
+        "reasoning": "This will show the current state of the volume attachment and any finalizers"
+      },
+      {
+        "step": "Inspect kubelet logs with `kg_query_nodes(type='log', filters={'service': 'kubelet'})` for detach failures",
+        "reasoning": "This will reveal errors or issues in the detach process"
+      }
+    ],
+    "diagnosis": "Kubelet or volume attachment controller issues, causing the volume to remain attached despite detach requests",
+    "resolution": [
+      "Force detach the volume with `kubectl patch volumeattachment <attachment-name> -p '{\"metadata\":{\"finalizers\":null}}'`",
+      "Restart kubelet with `systemctl restart kubelet` if necessary"
+    ]
   },
   {
-    "phenomenon": "Network storage connectivity issues",
-    "root_cause": "Network disruptions or misconfigured network policies, preventing the pod from accessing the network-attached storage backend.",
-    "localization_method": "Check network connectivity to the storage backend with `check_network_connectivity(endpoint='storage-backend:3260')` and verify pod network policies with `kg_query_nodes(type='networkpolicy')`",
-    "resolution_method": "Resolve network issues by restarting the storage backend service or updating network policies with `kubectl apply -f <networkpolicy>.yaml`. Verify connectivity post-resolution."
+    "observation": "Network storage connectivity issues",
+    "thinking": [
+      "Connectivity issues suggest network problems or policy restrictions",
+      "Need to check network connectivity and network policies",
+      "Will verify connectivity to storage backend and examine network policies"
+    ],
+    "investigation": [
+      {
+        "step": "Check network connectivity to the storage backend with `check_network_connectivity(endpoint='storage-backend:3260')`",
+        "reasoning": "This will verify if the pod can reach the storage backend"
+      },
+      {
+        "step": "Verify pod network policies with `kg_query_nodes(type='networkpolicy')`",
+        "reasoning": "This will show if network policies are restricting access to the storage backend"
+      }
+    ],
+    "diagnosis": "Network disruptions or misconfigured network policies, preventing the pod from accessing the network-attached storage backend",
+    "resolution": [
+      "Resolve network issues by restarting the storage backend service",
+      "Or update network policies with `kubectl apply -f <networkpolicy>.yaml`",
+      "Verify connectivity post-resolution"
+    ]
   },
   {
-    "phenomenon": "Volume snapshot creation failure",
-    "root_cause": "Misconfigured snapshot storage class or snapshot controller failure, preventing successful snapshot creation.",
-    "localization_method": "Inspect snapshot controller logs with `kg_query_nodes(type='log', time_range='24h', filters={'service': 'snapshot-controller'})` and check VolumeSnapshot resource status with `kubectl describe volumesnapshot <snapshot-name>`",
-    "resolution_method": "Ensure the snapshot storage class is correctly configured with `kubectl edit volumesnapshotclass <class-name>`. Restart the snapshot controller pod if needed."
+    "observation": "Volume snapshot creation failure",
+    "thinking": [
+      "Snapshot failures could indicate controller issues or misconfiguration",
+      "Need to check snapshot controller logs and snapshot class configuration",
+      "Will examine logs and resource status"
+    ],
+    "investigation": [
+      {
+        "step": "Inspect snapshot controller logs with `kg_query_nodes(type='log', time_range='24h', filters={'service': 'snapshot-controller'})`",
+        "reasoning": "This will show errors or issues in the snapshot creation process"
+      },
+      {
+        "step": "Check VolumeSnapshot resource status with `kubectl describe volumesnapshot <snapshot-name>`",
+        "reasoning": "This will reveal the current state of the snapshot and any error messages"
+      }
+    ],
+    "diagnosis": "Misconfigured snapshot storage class or snapshot controller failure, preventing successful snapshot creation",
+    "resolution": [
+      "Ensure the snapshot storage class is correctly configured with `kubectl edit volumesnapshotclass <class-name>`",
+      "Restart the snapshot controller pod if needed"
+    ]
   },
   {
-    "phenomenon": "Disk/volume size not enough",
-    "root_cause": "Insufficient storage capacity allocated to the PVC or PV, causing out-of-space errors during write operations.",
-    "localization_method": "Check PVC and PV capacity with `kg_get_node_metadata(node_type='pvc', filters={'name': 'data-pvc'})` and `kg_get_node_metadata(node_type='pv', filters={'name': 'pv-001'})`. Verify pod logs for out-of-space errors with `kg_query_nodes(type='log', time_range='24h', filters={'message': 'No space left'})`",
-    "resolution_method": "Return detail to let user extend the PVC size by manually, no need to do any actions by langgraph."
+    "observation": "Disk/volume size not enough",
+    "thinking": [
+      "Out-of-space errors indicate insufficient storage allocation",
+      "Need to check PVC and PV capacity and verify actual usage",
+      "Will examine capacity settings and look for out-of-space errors in logs"
+    ],
+    "investigation": [
+      {
+        "step": "Check PVC and PV capacity with `kg_get_node_metadata(node_type='pvc', filters={'name': 'data-pvc'})` and `kg_get_node_metadata(node_type='pv', filters={'name': 'pv-001'})`",
+        "reasoning": "This will show the allocated storage capacity"
+      },
+      {
+        "step": "Verify pod logs for out-of-space errors with `kg_query_nodes(type='log', time_range='24h', filters={'message': 'No space left'})`",
+        "reasoning": "This will confirm if the issue is related to insufficient storage"
+      }
+    ],
+    "diagnosis": "Insufficient storage capacity allocated to the PVC or PV, causing out-of-space errors during write operations",
+    "resolution": [
+      "Return detail to let user extend the PVC size manually",
+      "No need to do any actions by langgraph"
+    ]
   },
   {
-    "phenomenon": "PVC metadata defined as 'ReadOnlyMany' causing write failures",
-    "root_cause": "PVC access mode set to 'ReadOnlyMany', restricting the pod to read-only access and preventing write operations.",
-    "localization_method": "Check PVC access mode with `kg_get_node_metadata(node_type='pvc', filters={'name': 'data-pvc'})` to confirm 'ReadOnlyMany' setting. Verify pod logs for write permission errors with `kg_query_nodes(type='log', time_range='24h', filters={'message': 'Permission denied'})`",
-    "resolution_method": "Update the PVC access mode to 'ReadWriteOnce' or 'ReadWriteMany' with `kubectl edit pvc <pvc-name>` if supported by the storage class. Restart the pod with `kubectl delete pod <pod-name>` to apply changes."
+    "observation": "PVC metadata defined as 'ReadOnlyMany' causing write failures",
+    "thinking": [
+      "Write failures with ReadOnlyMany access mode are expected behavior",
+      "Need to verify PVC access mode and check for write permission errors",
+      "Will examine PVC configuration and look for permission denied errors"
+    ],
+    "investigation": [
+      {
+        "step": "Check PVC access mode with `kg_get_node_metadata(node_type='pvc', filters={'name': 'data-pvc'})` to confirm 'ReadOnlyMany' setting",
+        "reasoning": "This will verify if the PVC is indeed set to ReadOnlyMany"
+      },
+      {
+        "step": "Verify pod logs for write permission errors with `kg_query_nodes(type='log', time_range='24h', filters={'message': 'Permission denied'})`",
+        "reasoning": "This will confirm if the issue is related to read-only access"
+      }
+    ],
+    "diagnosis": "PVC access mode set to 'ReadOnlyMany', restricting the pod to read-only access and preventing write operations",
+    "resolution": [
+      "Update the PVC access mode to 'ReadWriteOnce' or 'ReadWriteMany' with `kubectl edit pvc <pvc-name>` if supported by the storage class",
+      "Restart the pod with `kubectl delete pod <pod-name>` to apply changes"
+    ]
   },
   {
-    "phenomenon": "SMART information get error or no information",
-    "root_cause": "The related disk is a Virtural Disk on Virtural Machine",
-    "localization_method": "Check Disk serial number, vendor, model...etc, whether this information has string like 'Virtual'",
-    "resolution_method": "Report this finding to user."
+    "observation": "SMART information get error or no information",
+    "thinking": [
+      "SMART errors on virtual disks are expected as they don't have physical attributes",
+      "Need to check if the disk is a virtual disk",
+      "Will examine disk metadata for virtualization indicators"
+    ],
+    "investigation": [
+      {
+        "step": "Check Disk serial number, vendor, model...etc, whether this information has string like 'Virtual'",
+        "reasoning": "This will confirm if the disk is a virtual disk on a virtual machine"
+      }
+    ],
+    "diagnosis": "The related disk is a Virtual Disk on Virtual Machine",
+    "resolution": [
+      "Report this finding to user"
+    ]
   },
   {
-    "phenomenon": "Volume health is UNKNOWN, Operating issue is UNKNOWN",
-    "root_cause": "The system is a Virtual Machine, or the disk is a Virtual Disk on Virtural Machine, the Virtual Machine doesn't have Volume, so Volume health is UNKNOWN is a normal state",
-    "localization_method": "Check the Knowledge Graph High level issues",
-    "resolution_method": "Report this finding to user, this is a normal state."
+    "observation": "Volume health is UNKNOWN, Operating issue is UNKNOWN",
+    "thinking": [
+      "UNKNOWN volume health on virtual machines is normal",
+      "Virtual machines don't have physical volumes to report health",
+      "Need to check if the system is a virtual machine",
+      "Will examine knowledge graph for high-level issues"
+    ],
+    "investigation": [
+      {
+        "step": "Check the Knowledge Graph High level issues",
+        "reasoning": "This will confirm if the system is a virtual machine"
+      }
+    ],
+    "diagnosis": "The system is a Virtual Machine, or the disk is a Virtual Disk on Virtual Machine, the Virtual Machine doesn't have Volume, so Volume health is UNKNOWN is a normal state",
+    "resolution": [
+      "Report this finding to user, this is a normal state"
+    ]
   }
 ]

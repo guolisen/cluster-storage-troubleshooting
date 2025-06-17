@@ -123,17 +123,28 @@ class RuleBasedPlanGenerator:
             
         for experience in historical_experience:
             attributes = experience.get('attributes', {})
-            root_cause = attributes.get('root_cause', '').lower()
+            
+            # Check for diagnosis (new format) or root_cause (old format)
+            root_cause = attributes.get('diagnosis', attributes.get('root_cause', '')).lower()
             
             if not root_cause:
                 continue
                 
-            if 'hardware failure' in root_cause:
+            # Check for hardware-related issues
+            if any(term in root_cause for term in ['hardware failure', 'disk failure', 'bad sector', 'drive failure']):
                 priorities.append("hardware_verification")
-            elif 'network' in root_cause:
+            
+            # Check for network-related issues
+            elif any(term in root_cause for term in ['network', 'connectivity', 'timeout']):
                 priorities.append("network_verification")
-            elif 'configuration' in root_cause:
+            
+            # Check for configuration-related issues
+            elif any(term in root_cause for term in ['configuration', 'misconfigured', 'permission', 'setting']):
                 priorities.append("config_verification")
+            
+            # Check for filesystem-related issues
+            elif any(term in root_cause for term in ['filesystem', 'corruption', 'xfs', 'ext4', 'mount']):
+                priorities.append("filesystem_verification")
         
         return priorities
     

@@ -322,40 +322,83 @@ class KnowledgeGraph:
         kg_logger.debug(f"Added ClusterNode node: {node_id}")
         return node_id
         
-    def add_gnode_historical_experience(self, experience_id: str, phenomenon: str, root_cause: str, 
-                                       localization_method: str, resolution_method: str, **attributes) -> str:
+    def add_gnode_historical_experience(self, experience_id: str, **attributes) -> str:
         """
         Add a Historical Experience node to the knowledge graph
         
         Args:
             experience_id: Unique identifier for the historical experience
-            phenomenon: Description of the observed issue
-            root_cause: Analysis of the underlying cause
-            localization_method: Steps or tools to diagnose the issue
-            resolution_method: Steps or actions to resolve the issue
-            **attributes: Additional attributes
+            **attributes: Additional attributes including:
+                - observation/phenomenon: Description of the observed issue
+                - thinking: List of reasoning steps (new format)
+                - investigation/localization_method: Steps or tools to diagnose the issue
+                - diagnosis/root_cause: Analysis of the underlying cause
+                - resolution/resolution_method: Steps or actions to resolve the issue
             
         Returns:
             str: Node ID
         """
         node_id = f"gnode:HistoricalExperience:{experience_id}"
-        self.graph.add_node(node_id,
-                           entity_type="gnode",
-                           gnode_subtype="HistoricalExperience",
-                           experience_id=experience_id,
-                           phenomenon=phenomenon,
-                           root_cause=root_cause,
-                           localization_method=localization_method,
-                           resolution_method=resolution_method,
-                           **attributes)
+        
+        # Handle both old and new field names
+        # Map new field names to old field names for backward compatibility
+        field_mapping = {
+            'observation': 'phenomenon',
+            'diagnosis': 'root_cause',
+            'investigation': 'localization_method',
+            'resolution': 'resolution_method'
+        }
+        
+        # Create a copy of attributes to avoid modifying the original
+        node_attrs = attributes.copy()
+        
+        # For each new field name, check if it exists and map to old field name if not present
+        for new_field, old_field in field_mapping.items():
+            # If new field exists but old field doesn't, copy value to old field
+            if new_field in node_attrs and old_field not in node_attrs:
+                node_attrs[old_field] = node_attrs[new_field]
+            # If old field exists but new field doesn't, copy value to new field
+            elif old_field in node_attrs and new_field not in node_attrs:
+                node_attrs[new_field] = node_attrs[old_field]
+        
+        # Add required fields with default values if missing
+        required_fields = ['phenomenon', 'root_cause', 'localization_method', 'resolution_method',
+                          'observation', 'diagnosis', 'investigation', 'resolution']
+        
+        missing_fields = [field for field in required_fields if field not in node_attrs]
+        if missing_fields:
+            kg_logger.debug(f"Historical experience {experience_id} is missing fields: {missing_fields}")
+            
+            # Set default values for missing fields
+            defaults = {
+                'phenomenon': node_attrs.get('observation', 'No phenomenon provided'),
+                'root_cause': node_attrs.get('diagnosis', 'No root cause provided'),
+                'localization_method': node_attrs.get('investigation', 'No localization method provided'),
+                'resolution_method': node_attrs.get('resolution', 'No resolution method provided'),
+                'observation': node_attrs.get('phenomenon', 'No observation provided'),
+                'diagnosis': node_attrs.get('root_cause', 'No diagnosis provided'),
+                'investigation': node_attrs.get('localization_method', 'No investigation provided'),
+                'resolution': node_attrs.get('resolution_method', 'No resolution provided')
+            }
+            
+            for field in missing_fields:
+                node_attrs[field] = defaults.get(field, 'Not provided')
+        
+        # Add node to graph with all attributes
+        node_attrs.update({
+            'entity_type': 'gnode',
+            'gnode_subtype': 'HistoricalExperience',
+            'experience_id': experience_id
+        })
+        
+        self.graph.add_node(node_id, **node_attrs)
+        
+        # Add to entities dictionary
         self.entities['gnodes']['historical_experiences'][node_id] = {
             'experience_id': experience_id,
-            'phenomenon': phenomenon,
-            'root_cause': root_cause,
-            'localization_method': localization_method,
-            'resolution_method': resolution_method,
-            **attributes
+            **node_attrs
         }
+        
         kg_logger.debug(f"Added HistoricalExperience node: {node_id}")
         return node_id
     

@@ -2497,24 +2497,31 @@ class KnowledgeBuilder(MetadataParsers):
             
             # Add each historical experience to the knowledge graph
             for idx, experience in enumerate(historical_experiences):
-                # Validate required fields
-                required_fields = ['phenomenon', 'root_cause', 'localization_method', 'resolution_method']
-                missing_fields = [field for field in required_fields if field not in experience]
+                # Map new field names to old field names for backward compatibility
+                field_mapping = {
+                    'observation': 'phenomenon',
+                    'diagnosis': 'root_cause',
+                    'investigation': 'localization_method',
+                    'resolution': 'resolution_method'
+                }
                 
-                if missing_fields:
-                    error_msg = f"Historical experience entry {idx} is missing required fields: {missing_fields}"
-                    logging.warning(error_msg)
-                    self.collected_data['errors'].append(error_msg)
-                    continue
+                # Create a copy of experience with mapped fields
+                mapped_experience = experience.copy()
                 
-                # Add historical experience node to the knowledge graph
+                # For each new field name, check if it exists and map to old field name if not present
+                for new_field, old_field in field_mapping.items():
+                    # If new field exists but old field doesn't, copy value to old field
+                    if new_field in experience and old_field not in experience:
+                        mapped_experience[old_field] = experience[new_field]
+                    # If old field exists but new field doesn't, copy value to new field
+                    elif old_field in experience and new_field not in experience:
+                        mapped_experience[new_field] = experience[old_field]
+                
+                # Add historical experience node to the knowledge graph with all attributes
                 experience_id = f"hist_{idx+1}"
                 he_id = self.knowledge_graph.add_gnode_historical_experience(
                     experience_id=experience_id,
-                    phenomenon=experience['phenomenon'],
-                    root_cause=experience['root_cause'],
-                    localization_method=experience['localization_method'],
-                    resolution_method=experience['resolution_method']
+                    **mapped_experience  # Pass all attributes to the updated method
                 )
                 
                 # Link historical experience to related system components based on phenomenon
@@ -2536,7 +2543,8 @@ class KnowledgeBuilder(MetadataParsers):
             experience: Historical experience data
         """
         try:
-            phenomenon = experience['phenomenon'].lower()
+            # Try to get phenomenon, fall back to observation if not found
+            phenomenon = experience.get('phenomenon', experience.get('observation', '')).lower()
             
             # Link to logs if phenomenon mentions logs
             if 'logs' in phenomenon:

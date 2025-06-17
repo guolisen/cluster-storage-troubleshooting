@@ -347,7 +347,7 @@ class KnowledgeBuilder(MetadataParsers):
                             continue
                         
                         # Extract LVG health
-                        health = lvg.get('spec', {}).get('health', 'UNKNOWN')
+                        health = lvg.get('spec', {}).get('Health', 'ReadDataError')
                         
                         # Extract drive UUIDs
                         current_drives = lvg.get('spec', {}).get('Locations', [])

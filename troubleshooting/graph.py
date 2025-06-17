@@ -361,7 +361,7 @@ Issues Summary:
                 historical_experience_examples += "\n"
                 
                 # Limit to 6 examples to keep the prompt size manageable
-                if example_num >= 6:
+                if example_num >= 2:
                     break
                     
         except Exception as e:
@@ -399,7 +399,7 @@ Issues Summary:
         system_message = SystemMessage(
             content = f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
 
-<<< Note >>>: Please follow the Investigation Plan to run tools and investigate the volume i/o issue step by step, and run 8 steps at least.
+<<< Note >>>: Please follow the Investigation Plan to run tools and investigate the volume i/o issue step by step, and run 5 steps at least.
 
 {phase_specific_guidance}
 
@@ -459,6 +459,7 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
    - Follow this structured diagnostic process for local HDD/SSD/NVMe disks managed by CSI Baremetal:
      a. **Check Knowledge Graph**: First use Knowledge Graph tools (kg_*) to understand the current state and existing issues.
      b. **Confirm Issue**: If Knowledge Graph lacks information, run `kubectl logs <pod-name> -n <namespace>` and `kubectl describe pod <pod-name> -n <namespace>` to identify errors (e.g., "Input/Output Error", "Permission Denied", "FailedMount").
+        - Analyze the pod/pvc/volume's definition with `kubectl get pod/pvc/pv <resource_name> -o yaml`. whether the definition has keywords like: readOnlyRootFilesystem, ReadOnlyMany, readOnly, etc.
      c. **Verify Configurations**: Check Pod, PVC, and PV with `kubectl get pod/pvc/pv <resource_name> -o yaml`. Confirm PV uses local volume, valid disk path (e.g., `/dev/sda`), and correct `nodeAffinity`. Verify mount points with `kubectl exec <pod-name> -n <namespace> -- df -h` and `ls -ld <mount-path>`.
      d. **Check CSI Baremetal Driver and Resources**:
         - Identify driver: `kubectl get storageclass <storageclass-name> -o yaml` (e.g., `csi-baremetal-sc-ssd`).

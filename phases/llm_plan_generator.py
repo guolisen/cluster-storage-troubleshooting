@@ -126,44 +126,64 @@ class LLMPlanGenerator:
         used_tools_str = ", ".join(used_tools)
         
         # Prepare user message for refinement task
-        return f"""Refine the draft Investigation Plan for volume read/write errors in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
-this plan will be used to troubleshoot the issue in next phases. The next phase will execute or run tool according to the steps in this plan.
+        return f"""# INVESTIGATION PLAN GENERATION
+## TARGET: Volume read/write errors in pod {pod_name} (namespace: {namespace}, volume path: {volume_path})
 
-KNOWLEDGE GRAPH CONTEXT(current base knowledge and some hardware information, the issues in Knowledge Graph is very important informations): 
+This plan will guide troubleshooting in subsequent phases. Each step will execute specific tools according to this plan.
+
+## BACKGROUND INFORMATION
+
+### 1. KNOWLEDGE GRAPH CONTEXT
+Current base knowledge and hardware information. Issues identified in the Knowledge Graph are critical:
 {kg_context_str}
 
-DRAFT PLAN(static plan steps and preliminary steps from rule-based generator, please do not modify static steps as much as possible):
-{draft_plan_str}
-
-TOOLS ALREADY USED IN DRAFT PLAN:
-{used_tools_str}
-
-HISTORICAL EXPERIENCE(the historical experience data, you can learn from this data to improve the plan):
+### 2. HISTORICAL EXPERIENCE
+Learn from previous similar cases to improve your plan:
 {historical_experiences_formatted}
 
-AVAILABLE TOOLS FOR PHASE1(this tools will be used in next phases, please do not invoke any tools, just reference them in your plan):
+### 3. DRAFT PLAN
+Static plan steps and preliminary steps from rule-based generator:
+{draft_plan_str}
+
+### 4. TOOLS ALREADY USED IN DRAFT PLAN
+{used_tools_str}
+
+### 5. AVAILABLE TOOLS FOR PHASE1
+These tools will be used in next phases (reference only, do not invoke):
 {phase1_tools_str}
 
-Your task is to refine the draft plan by:
-1. Respecting the existing steps from the draft plan (both rule-based and static steps)
-2. Based on the Knowledge Graph issues context and historical experience data, infer the potential volume read/write error phenomena and their root causes. Formulate detailed investigation steps, prioritizing the verification steps most likely to identify the issue.
-    Refinement Notes:
-        a. Streamlined language for clarity and conciseness.
-        b. Emphasized "detailed investigation steps" and "prioritized verification" to ensure actionable and focused output.
-        c. Preserved core intent for accurate translation. 
-3. Adding additional steps as needed using the available Phase1 tools
-4. Reordering steps if necessary for logical flow
-5. Ensuring all steps reference only tools from the Phase1 tool registry
+## PLANNING INSTRUCTIONS
 
-IMPORTANT CONSTRAINTS:
+### PRIMARY OBJECTIVE
+Create a comprehensive investigation plan that identifies potential problems and provides specific steps to diagnose and resolve volume read/write errors.
+
+### SPECIFIC TASKS
+1. **Task 1:** Analyze the Knowledge Graph context and historical experience to infer and list all possible problems
+2. **Task 2:** For each possible problem, create detailed investigation steps using appropriate tools
+
+### PLANNING GUIDELINES
+1. Respect existing steps from the draft plan (both rule-based and static steps)
+2. Infer potential volume read/write error phenomena and root causes based on Knowledge Graph and historical experience
+3. Formulate detailed investigation steps, prioritizing verification steps most likely to identify the issue
+4. Add additional steps as needed using available Phase1 tools
+5. Reorder steps if necessary for logical flow
+6. Ensure all steps reference only tools from the Phase1 tool registry
+
+## IMPORTANT CONSTRAINTS
 1. Do NOT invoke any tools - only reference them in your plan
 2. Include static steps from the draft plan without modification
 3. Use historical experience data to inform additional steps and refinements
 4. Ensure all tool references follow the format shown in the AVAILABLE TOOLS
-5. IMPORTANT: Do not add steps that use tools already present in the draft plan. Each tool should be used at most once in the entire plan.
-6. Output the plan in the required format:
+5. IMPORTANT: Do not add steps that use tools already present in the draft plan. Each tool should be used at most once in the entire plan
+
+## REQUIRED OUTPUT FORMAT
 
 Investigation Plan:
+PossibleProblem 1: [Problem description, e.g., PVC configuration errors, access mode is incorrect]
+Step 1: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [expected]
+Step 2: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [expected]
+...
+PossibleProblem 2: [Problem description, e.g., Drive status is OFFLINE]
 Step 1: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [expected]
 Step 2: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [expected]
 ...

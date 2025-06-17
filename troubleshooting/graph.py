@@ -441,10 +441,6 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
 
 1. **Knowledge Graph Prioritization**:
    - ALWAYS check the Knowledge Graph FIRST before using command execution tools.
-   - Start with discovery tools to understand what's in the Knowledge Graph:
-     * Use kg_list_entity_types() to discover available entity types and their counts
-     * Use kg_list_entities(entity_type) to find specific entities of a given type
-     * Use kg_list_relationship_types() to understand how entities are related
    - Then use detailed query tools:
      * Use kg_get_entity_info(entity_type, id) to retrieve detailed information about specific entities
      * Use kg_get_related_entities(entity_type, id) to understand relationships between components

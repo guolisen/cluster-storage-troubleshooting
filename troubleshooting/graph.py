@@ -524,6 +524,7 @@ Follow these strict guidelines for safe, reliable, and effective troubleshooting
     # **Fix Plan**      # this section must exist
 
 You must adhere to these guidelines at all times to ensure safe, reliable, and effective troubleshooting of local disk issues in Kubernetes with the CSI Baremetal driver.
+Adding the analysis and summary for each call tools steps
 """
         )
         

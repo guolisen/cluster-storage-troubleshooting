@@ -46,7 +46,7 @@ from tools.diagnostics.hardware import (
     fio_performance_test,
     fsck_check,
     xfs_repair_check,
-    ssh_execute
+    #ssh_execute
 )
 
 from tools.diagnostics.system import (
@@ -140,7 +140,7 @@ def get_all_tools() -> List[Any]:
         fio_performance_test,
         fsck_check,
         xfs_repair_check,
-        ssh_execute,
+        #ssh_execute,
         
         # System diagnostic tools
         df_command,
@@ -226,7 +226,7 @@ def get_diagnostic_tools() -> List[Any]:
         fio_performance_test,
         fsck_check,
         xfs_repair_check,
-        ssh_execute,
+        #ssh_execute,
         
         # System diagnostic tools
         df_command,
@@ -290,7 +290,7 @@ def get_phase1_tools() -> List[Any]:
         # Hardware information tools
         smartctl_check,  # Read-only disk health check
         xfs_repair_check,  # Read-only file system check
-        ssh_execute,     # Limited to read-only operations
+        #ssh_execute,     # Limited to read-only operations
         
         # New read-only disk check tools
         detect_disk_jitter,  # Monitoring tool

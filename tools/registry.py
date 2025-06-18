@@ -8,7 +8,8 @@ Supports phase-based tool selection for investigation (Phase 1) and
 action (Phase 2) workflows.
 """
 
-from typing import List, Any
+from typing import List, Dict, Any
+from tools.core.mcp_adapter import get_mcp_adapter
 
 # Import all tool modules
 from tools.core.knowledge_graph import (

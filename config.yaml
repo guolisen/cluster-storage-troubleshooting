@@ -98,3 +98,29 @@ chat_mode:
   entry_points:
     #- "plan_phase"  # After Plan Phase
     - "phase1"      # After Phase1
+
+# MCP Configuration
+mcp_enabled: true  # Set to true to enable MCP integration
+mcp_servers:
+  # Example server configurations (commented out by default)
+  # k8s:
+  #   type: sse
+  #   url: http://10.227.104.51:32085/sse
+  #   command: null
+  #   args: []
+  #   env: {}
+  #   tools:
+  #     plan_phase: true
+  #     phase1: true
+  #     phase2: false
+  # tavily:
+  #   type: stdio
+  #   url: ""
+  #   command: npx
+  #   args: ["-y", "tavily-mcp@0.1.4"]
+  #   env:
+  #     TAVILY_API_KEY: ""
+  #   tools:
+  #     plan_phase: false
+  #     phase1: true
+  #     phase2: true

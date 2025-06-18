@@ -12,6 +12,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from rich.console import Console
 from rich.panel import Panel
 from langgraph.graph import StateGraph
+from tools.core.mcp_adapter import get_mcp_adapter
 
 from troubleshooting.graph import create_troubleshooting_graph_with_context
 from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
@@ -40,6 +41,16 @@ class RemediationPhase:
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.console = Console()
         self.interactive_mode = config_data.get('troubleshoot', {}).get('interactive_mode', False)
+        
+        # Get MCP adapter and tools
+        self.mcp_adapter = get_mcp_adapter()
+        self.mcp_tools = []
+        
+        # Get MCP tools for phase2 if available
+        if self.mcp_adapter:
+            self.mcp_tools = self.mcp_adapter.get_tools_for_phase('phase2')
+            if self.mcp_tools:
+                self.logger.info(f"Loaded {len(self.mcp_tools)} MCP tools for Phase2")
     
     async def run_remediation_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 1800) -> str:
         """

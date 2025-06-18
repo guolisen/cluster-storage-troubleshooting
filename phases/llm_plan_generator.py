@@ -13,6 +13,7 @@ from phases.llm_factory import LLMFactory
 from phases.utils import handle_exception, format_json_safely
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage
 from langchain_core.language_models.chat_models import BaseChatModel
+from tools.core.mcp_adapter import get_mcp_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,16 @@ class LLMPlanGenerator:
         self.config_data = config_data or {}
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.llm = self._initialize_llm()
+        
+        # Get MCP adapter and tools
+        self.mcp_adapter = get_mcp_adapter()
+        self.mcp_tools = []
+        
+        # Get MCP tools for plan phase if available
+        if self.mcp_adapter:
+            self.mcp_tools = self.mcp_adapter.get_tools_for_phase('plan_phase')
+            if self.mcp_tools:
+                self.logger.info(f"Loaded {len(self.mcp_tools)} MCP tools for Plan Phase")
     
     def _initialize_llm(self) -> Optional[BaseChatModel]:
         """
@@ -112,6 +123,11 @@ class LLMPlanGenerator:
         draft_plan_str = format_json_safely(draft_plan, fallback_message="Draft plan (simplified format)")
         phase1_tools_str = format_json_safely(phase1_tools, fallback_message="Phase1 tools (simplified format)")
         
+        # Format MCP tools if available
+        mcp_tools_str = ""
+        if self.mcp_tools:
+            mcp_tools_str = format_json_safely(self.mcp_tools, fallback_message="MCP tools (simplified format)")
+        
         # Extract and format historical experience data from kg_context
         historical_experiences_formatted = self._format_historical_experiences(kg_context)
         
@@ -151,6 +167,10 @@ Static plan steps and preliminary steps from rule-based generator:
 ### 5. AVAILABLE TOOLS FOR PHASE1
 These tools will be used in next phases (reference only, do not invoke):
 {phase1_tools_str}
+
+### 6. AVAILABLE MCP TOOLS
+These MCP tools can be used for cloud-specific diagnostics:
+{mcp_tools_str}
 
 ## PLANNING INSTRUCTIONS
 

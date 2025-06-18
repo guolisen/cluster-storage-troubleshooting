@@ -30,6 +30,7 @@ from phases import (
     run_remediation_phase
 )
 from phases.chat_mode import ChatMode
+from tools.core.mcp_adapter import initialize_mcp_adapter, get_mcp_adapter
 from rich.logging import RichHandler
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -614,6 +615,10 @@ async def main():
         if args.verbose:
             logging.getLogger().setLevel(logging.DEBUG)
         
+        # Initialize MCP adapter
+        mcp_adapter = initialize_mcp_adapter(CONFIG_DATA)
+        await mcp_adapter.initialize_servers()
+        
         # Validate inputs
         if not args.pod_name or not args.namespace or not args.volume_path:
             logging.error("Pod name, namespace, and volume path are required")
@@ -664,6 +669,11 @@ async def main():
                 client.close()
             except:
                 pass
+                
+        # Clean up MCP connections
+        mcp_adapter = get_mcp_adapter()
+        if mcp_adapter:
+            await mcp_adapter.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

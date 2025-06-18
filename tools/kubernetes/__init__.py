@@ -13,7 +13,8 @@ from tools.kubernetes.core import (
     kubectl_apply,
     kubectl_delete,
     kubectl_exec,
-    kubectl_logs
+    kubectl_logs,
+    kubectl_ls_pod_volume
 )
 
 from tools.kubernetes.csi_baremetal import (
@@ -33,6 +34,7 @@ __all__ = [
     'kubectl_delete',
     'kubectl_exec',
     'kubectl_logs',
+    'kubectl_ls_pod_volume',
     
     # CSI Baremetal specific tools
     'kubectl_get_drive',

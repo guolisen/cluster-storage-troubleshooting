@@ -193,7 +193,6 @@ Fix Plan:
             phase_specific_guidance = """
 You are currently in Phase 1 (Investigation). Your primary task is to perform comprehensive root cause analysis and evidence collection using investigation tools.
 
-
 PHASE 1 RESTRICTIONS:
 - NO destructive operations (no kubectl_apply, kubectl_delete, fsck_check)
 - NO test resource creation
@@ -248,7 +247,7 @@ Provide a detailed investigation report that includes:
 8. Fix Plan:
     - Proposed remediation steps to address the issues
 
-INVESTIGATION PLAN EXAMPLE:
+INVESTIGATION RESULT EXAMPLE:
 {final_output_example}
 
 """
@@ -400,6 +399,7 @@ Issues Summary:
             content = f"""You are an AI assistant powering a Kubernetes volume troubleshooting system using LangGraph ReAct. Your role is to monitor and resolve volume I/O errors in Kubernetes pods backed by local HDD/SSD/NVMe disks managed by the CSI Baremetal driver (csi-baremetal.dell.com). Exclude remote storage (e.g., NFS, Ceph). 
 
 <<< Note >>>: Please follow the Investigation Plan to run tools and investigate the volume i/o issue step by step, and run 5 steps at least.
+<<< Note >>>: If you suspect some issue root cause according to current call tools result, you can add call tools step by yourself
 
 {phase_specific_guidance}
 

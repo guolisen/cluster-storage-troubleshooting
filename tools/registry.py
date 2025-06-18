@@ -29,7 +29,8 @@ from tools.kubernetes.core import (
     kubectl_apply,
     kubectl_delete,
     kubectl_exec,
-    kubectl_logs
+    kubectl_logs,
+    kubectl_ls_pod_volume
 )
 
 from tools.kubernetes.csi_baremetal import (
@@ -126,6 +127,7 @@ def get_all_tools() -> List[Any]:
         kubectl_delete,
         kubectl_exec,
         kubectl_logs,
+        kubectl_ls_pod_volume,
         
         # CSI Baremetal specific tools
         kubectl_get_drive,
@@ -203,6 +205,7 @@ def get_kubernetes_tools() -> List[Any]:
         kubectl_delete,
         kubectl_exec,
         kubectl_logs,
+        kubectl_ls_pod_volume,
         
         # CSI Baremetal specific tools
         kubectl_get_drive,
@@ -270,6 +273,7 @@ def get_phase1_tools() -> List[Any]:
         kubectl_describe,
         kubectl_logs,
         kubectl_exec,  # Limited to read-only commands
+        kubectl_ls_pod_volume,  # New tool for listing pod volume contents
         
         # CSI Baremetal information tools
         kubectl_get_drive,

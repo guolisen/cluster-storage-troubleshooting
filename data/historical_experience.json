@@ -367,5 +367,28 @@
     "resolution": [
       "Report this finding to user, this is a normal state"
     ]
+  },
+  {
+    "observation": "When write data to Pod's volume, get 'Permission denied' error message",
+    "thinking": [
+      "What current user i'm using?",
+      "what's the user the volume path belong to?",
+      "what's the volume path access mode? is it 'drwxrwxrwx'",
+      "Need to check if the current user have the perimission to access the volume path"
+    ],
+    "investigation": [
+      {
+        "step": "'ls -al' the pod's volume path",
+        "reasoning": "check the access mode and path user of pod's volume path"
+      },
+      {
+        "step": "'kubect get' the pod yaml definition",
+        "reasoning": "check the pod user definition in the Pod definition"
+      }
+    ],
+    "diagnosis": "check the pod yaml definition to know current pod user, then check the volume path access mode and path user, confirm whether the pod user has the permission to access the volume path.",
+    "resolution": [
+      "Report this finding to user, need user to change the pod definition"
+    ]
   }
 ]

@@ -7,6 +7,7 @@ resource management tools.
 """
 
 import subprocess
+import shlex
 from langchain_core.tools import tool
 
 @tool
@@ -188,3 +189,23 @@ def kubectl_logs(pod_name: str, namespace: str = None, container: str = None, ta
         return f"Error: {e.stderr}"
     except Exception as e:
         return f"Error executing kubectl logs: {str(e)}"
+
+@tool
+def kubectl_ls_pod_volume(pod_name: str, volume_path: str, ls_options: str = "-la", namespace: str = None) -> str:
+    """
+    Execute 'ls' command on a pod's volume path
+    
+    Args:
+        pod_name: Pod name (e.g. test-pod-1)
+        volume_path: Path to the volume in the pod (e.g. /data)
+        ls_options: Options for ls command (e.g. -la, -lh) (optional)
+        namespace: Namespace (optional) (e.g. default)
+        
+    Returns:
+        str: Command output
+    """
+    # Safely construct the ls command with proper escaping
+    ls_command = f"ls {ls_options} {shlex.quote(volume_path)}"
+    
+    # Use the existing kubectl_exec function to run the command
+    return kubectl_exec(pod_name, ls_command, namespace)

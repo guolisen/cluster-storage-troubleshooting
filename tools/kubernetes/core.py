@@ -208,4 +208,4 @@ def kubectl_ls_pod_volume(pod_name: str, volume_path: str, ls_options: str = "-l
     ls_command = f"ls {ls_options} {shlex.quote(volume_path)}"
     
     # Use the existing kubectl_exec function to run the command
-    return kubectl_exec(pod_name, ls_command, namespace)
+    return kubectl_exec.invoke({"pod_name": pod_name, "command": ls_command, "namespace": namespace})

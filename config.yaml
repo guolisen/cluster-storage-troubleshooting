@@ -15,7 +15,7 @@ llm:
     #model: "gemini-2.5-flash-preview-05-20"
     api_key: "sk-"
     api_endpoint: "https://api.zhizengzeng.com/v1"
-    temperature: 0
+    temperature: 0.1
     max_tokens: 8192
   
   # Google Gemini Configuration

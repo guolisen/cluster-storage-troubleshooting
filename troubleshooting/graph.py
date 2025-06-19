@@ -553,45 +553,44 @@ Adding the analysis and summary for each call tools steps
         else:
             state["messages"] = [system_message, context_message]
         
-    # Get MCP adapter and tools
-    mcp_adapter = get_mcp_adapter()
-    mcp_tools = []
-    
-    # Select tools based on phase
-    if phase == "phase1":
-        from tools import get_phase1_tools
-        tools = get_phase1_tools()
+        # Get MCP adapter and tools
+        mcp_adapter = get_mcp_adapter()
+        mcp_tools = []
         
-        # Add MCP tools for phase1 if available
-        if mcp_adapter:
-            mcp_tools = mcp_adapter.get_tools_for_phase('phase1')
-            if mcp_tools:
-                tools.extend(mcp_tools)
-                logging.info(f"Using Phase 1 tools: {len(tools)} investigation tools (including {len(mcp_tools)} MCP tools)")
+        # Select tools based on phase
+        if phase == "phase1":
+            from tools import get_phase1_tools
+            tools = get_phase1_tools()
+            # Add MCP tools for phase1 if available
+            if mcp_adapter:
+                mcp_tools = mcp_adapter.get_tools_for_phase('phase1')
+                if mcp_tools:
+                    tools.extend(mcp_tools)
+                    logging.info(f"Using Phase 1 tools: {len(tools)} investigation tools (including {len(mcp_tools)} MCP tools)")
+                else:
+                    logging.info(f"Using Phase 1 tools: {len(tools)} investigation tools")
             else:
                 logging.info(f"Using Phase 1 tools: {len(tools)} investigation tools")
-        else:
-            logging.info(f"Using Phase 1 tools: {len(tools)} investigation tools")
-    elif phase == "phase2":
-        from tools import get_phase2_tools
-        tools = get_phase2_tools()
-        
-        # Add MCP tools for phase2 if available
-        if mcp_adapter:
-            mcp_tools = mcp_adapter.get_tools_for_phase('phase2')
-            if mcp_tools:
-                tools.extend(mcp_tools)
-                logging.info(f"Using Phase 2 tools: {len(tools)} investigation + action tools (including {len(mcp_tools)} MCP tools)")
+        elif phase == "phase2":
+            from tools import get_phase2_tools
+            tools = get_phase2_tools()
+            
+            # Add MCP tools for phase2 if available
+            if mcp_adapter:
+                mcp_tools = mcp_adapter.get_tools_for_phase('phase2')
+                if mcp_tools:
+                    tools.extend(mcp_tools)
+                    logging.info(f"Using Phase 2 tools: {len(tools)} investigation + action tools (including {len(mcp_tools)} MCP tools)")
+                else:
+                    logging.info(f"Using Phase 2 tools: {len(tools)} investigation + action tools")
             else:
                 logging.info(f"Using Phase 2 tools: {len(tools)} investigation + action tools")
         else:
-            logging.info(f"Using Phase 2 tools: {len(tools)} investigation + action tools")
-    else:
-        # Fallback to all tools for backward compatibility
-        from tools import define_remediation_tools
-        tools = define_remediation_tools()
-        logging.info(f"Using all tools (fallback): {len(tools)} tools")
-        
+            # Fallback to all tools for backward compatibility
+            from tools import define_remediation_tools
+            tools = define_remediation_tools()
+            logging.info(f"Using all tools (fallback): {len(tools)} tools")
+            
         # Call the model with tools for both phases (Phase 1 now actively investigates)
         response = model.bind_tools(tools).invoke(state["messages"])
         

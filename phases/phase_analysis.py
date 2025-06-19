@@ -16,6 +16,7 @@ from langgraph.graph import StateGraph
 from kubernetes import client
 from phases.llm_factory import LLMFactory
 from langchain_core.messages import SystemMessage, HumanMessage
+from tools.core.mcp_adapter import get_mcp_adapter
 
 from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
 from phases.utils import format_historical_experiences_from_collected_info, handle_exception
@@ -42,6 +43,16 @@ class AnalysisPhase:
         self.config_data = config_data
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.console = Console()
+        
+        # Get MCP adapter and tools
+        self.mcp_adapter = get_mcp_adapter()
+        self.mcp_tools = []
+        
+        # Get MCP tools for phase1 if available
+        if self.mcp_adapter:
+            self.mcp_tools = self.mcp_adapter.get_tools_for_phase('phase1')
+            if self.mcp_tools:
+                self.logger.info(f"Loaded {len(self.mcp_tools)} MCP tools for Phase1")
 
     def _extract_final_message(self, response: Dict[str, Any]) -> str:
         """

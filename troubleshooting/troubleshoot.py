@@ -30,6 +30,7 @@ from phases import (
     run_remediation_phase
 )
 from phases.chat_mode import ChatMode
+from tools.core.mcp_adapter import initialize_mcp_adapter, get_mcp_adapter
 from rich.logging import RichHandler
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -618,7 +619,15 @@ async def main():
         if not args.pod_name or not args.namespace or not args.volume_path:
             logging.error("Pod name, namespace, and volume path are required")
             sys.exit(1)
-        
+        llm_provider = CONFIG_DATA.get("llm").get("provider")
+        current_api_key = CONFIG_DATA.get("llm").get(llm_provider, "openai").get("api_key")
+        if len(current_api_key) < 10:
+            logging.error("AI key is empty!")
+            sys.exit(1)
+
+        # Initialize MCP adapter
+        mcp_adapter = await initialize_mcp_adapter(CONFIG_DATA)
+
         # Initialize Kubernetes configuration
         try:
             config.load_incluster_config()
@@ -664,6 +673,11 @@ async def main():
                 client.close()
             except:
                 pass
+                
+        # Clean up MCP connections
+        mcp_adapter = get_mcp_adapter()
+        if mcp_adapter:
+            await mcp_adapter.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

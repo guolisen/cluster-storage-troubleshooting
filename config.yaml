@@ -103,16 +103,26 @@ chat_mode:
 mcp_enabled: true  # Set to true to enable MCP integration
 mcp_servers:
   # Example server configurations (commented out by default)
-  # k8s:
-  #   type: sse
-  #   url: http://10.227.104.51:32085/sse
-  #   command: null
-  #   args: []
-  #   env: {}
-  #   tools:
-  #     plan_phase: true
-  #     phase1: true
-  #     phase2: false
+  k8s:
+    type: sse
+    url: http://0.0.0.0:8000
+    command: null
+    args: []
+    env: {}
+    tools:
+      plan_phase: true
+      phase1: true
+      phase2: false
+  gaode:
+    type: sse
+    url: https://mcp.amap.com/sse?key=ed40afb4730ce2c8f5523c2fceca08be
+    command: null
+    args: []
+    env: {}
+    tools:
+      plan_phase: true
+      phase1: true
+      phase2: false
   # tavily:
   #   type: stdio
   #   url: ""

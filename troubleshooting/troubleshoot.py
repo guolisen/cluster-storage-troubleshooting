@@ -616,14 +616,18 @@ async def main():
             logging.getLogger().setLevel(logging.DEBUG)
         
         # Initialize MCP adapter
-        mcp_adapter = initialize_mcp_adapter(CONFIG_DATA)
-        await mcp_adapter.initialize_servers()
+        mcp_adapter = await initialize_mcp_adapter(CONFIG_DATA)
         
         # Validate inputs
         if not args.pod_name or not args.namespace or not args.volume_path:
             logging.error("Pod name, namespace, and volume path are required")
             sys.exit(1)
-        
+        llm_provider = CONFIG_DATA.get("llm").get("provider")
+        current_api_key = CONFIG_DATA.get("llm").get(llm_provider, "openai").get("api_key")
+        if len(current_api_key) < 10:
+            logging.error("AI key is empty!")
+            sys.exit(1)
+
         # Initialize Kubernetes configuration
         try:
             config.load_incluster_config()

@@ -90,7 +90,7 @@ class MCPAdapter:
                 server_config = {server_name: server_config_dict}
                 self.mcp_clients[server_name] = MultiServerMCPClient(server_config)
                 
-                # Get tools from this server
+                # Get tools from this server 
                 tools = await self.mcp_clients[server_name].get_tools()
                 if tools:
                     self.mcp_tools[server_name] = tools
@@ -173,13 +173,13 @@ class MCPAdapter:
             
         for server_name, client in self.mcp_clients.items():
             try:
-                await client.aclose()
+                #await client.aclose()
                 self.logger.info(f"Closed MCP client: {server_name}")
             except Exception as e:
                 self.logger.error(f"Error closing MCP client {server_name}: {e}")
 
 
-def initialize_mcp_adapter(config_data: Dict[str, Any]) -> MCPAdapter:
+async def initialize_mcp_adapter(config_data: Dict[str, Any]) -> MCPAdapter:
     """
     Initialize the global MCP adapter
     
@@ -195,14 +195,7 @@ def initialize_mcp_adapter(config_data: Dict[str, Any]) -> MCPAdapter:
         _mcp_adapter = MCPAdapter(config_data)
         
         # Initialize MCP servers asynchronously
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            # Create a new event loop if there isn't one
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        loop.run_until_complete(_mcp_adapter.initialize_servers())
+        await _mcp_adapter.initialize_servers()
     
     return _mcp_adapter
 

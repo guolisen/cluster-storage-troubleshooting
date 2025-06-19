@@ -45,6 +45,7 @@ mcp_servers:
 - `mcp_servers`: Dictionary of MCP server configurations, each with:
   - Key: Server name (e.g., `k8s`, `tavily`).
   - Value: Dictionary containing:
+    - `enable`: Boolean to enable/disable this specific MCP server (default: `true`).
     - `type`: Communication mode (`sse` or `stdio`, default: `sse`).
     - `url`: URL for SSE mode (required if `type: sse`, empty for `stdio`).
     - `command`: Command to run for stdio mode (required if `type: stdio`, null for `sse`).
@@ -65,6 +66,7 @@ Example configuration:
 
 ```yaml
 k8s:
+  enable: true
   type: sse
   url: http://10.227.104.51:32085/sse
   command: null
@@ -84,6 +86,7 @@ Example configuration:
 
 ```yaml
 tavily:
+  enable: true
   type: stdio
   url: ""
   command: npx

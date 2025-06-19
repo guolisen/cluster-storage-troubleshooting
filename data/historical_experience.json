@@ -390,5 +390,26 @@
     "resolution": [
       "Report this finding to user, need user to change the pod definition"
     ]
+  },
+  {
+    "observation": "volume i/o error, file cannot be accessed, or cannot be created",
+    "thinking": [
+      "whether the xfs filesystem is broken?",
+      "whether the xfs filesystem metadata is wrong?"
+    ],
+    "investigation": [
+      {
+        "step": "'get the mount path on node host",
+        "reasoning": "the fsck need the volume path as the parameter"
+      },
+      {
+        "step": "use xfs_repair_check tool to check the volume filesystem",
+        "reasoning": "check the volume by fsck"
+      }
+    ],
+    "diagnosis": "check the xfs_repair_check result to decide whether the filesystem has problem.",
+    "resolution": [
+      "Report this finding to user, need user to do fsck to fix filesystem"
+    ]
   }
 ]

@@ -53,6 +53,11 @@ class MCPAdapter:
             return
         
         for server_name, server_config in self.mcp_servers.items():
+            # Check if server is enabled (default to True if not specified)
+            if not server_config.get('enable', True):
+                self.logger.info(f"Skipping disabled MCP server: {server_name}")
+                continue
+                
             try:
                 # Extract server configuration
                 server_type = server_config.get('type', 'sse')

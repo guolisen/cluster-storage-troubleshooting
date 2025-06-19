@@ -15,7 +15,7 @@ llm:
     #model: "gemini-2.5-flash-preview-05-20"
     api_key: "sk-"
     api_endpoint: "https://api.zhizengzeng.com/v1"
-    temperature: 0.1
+    temperature: 0.7
     max_tokens: 8192
   
   # Google Gemini Configuration
@@ -104,6 +104,7 @@ mcp_enabled: true  # Set to true to enable MCP integration
 mcp_servers:
   # Example server configurations (commented out by default)
   k8s:
+    enable: false  # Enable this MCP server
     type: sse
     url: http://0.0.0.0:8000
     command: null
@@ -114,8 +115,9 @@ mcp_servers:
       phase1: true
       phase2: false
   gaode:
+    enable: true  # Enable this MCP server
     type: sse
-    url: https://mcp.amap.com/sse?key=ed40afb4730ce2c8f5523c2fceca08be
+    url: https://mcp.amap.com/sse?key=
     command: null
     args: []
     env: {}
@@ -123,14 +125,15 @@ mcp_servers:
       plan_phase: true
       phase1: true
       phase2: false
-  # tavily:
-  #   type: stdio
-  #   url: ""
-  #   command: npx
-  #   args: ["-y", "tavily-mcp@0.1.4"]
-  #   env:
-  #     TAVILY_API_KEY: ""
-  #   tools:
-  #     plan_phase: false
-  #     phase1: true
-  #     phase2: true
+  tavily:
+    enable: true  # Disable this MCP server
+    type: stdio
+    url: ""
+    command: npx
+    args: ["-y", "tavily-mcp@0.1.4"]
+    env:
+      TAVILY_API_KEY: "tvly-dev"
+    tools:
+      plan_phase: true
+      phase1: true
+      phase2: true

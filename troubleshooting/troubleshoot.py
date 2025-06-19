@@ -615,9 +615,6 @@ async def main():
         if args.verbose:
             logging.getLogger().setLevel(logging.DEBUG)
         
-        # Initialize MCP adapter
-        mcp_adapter = await initialize_mcp_adapter(CONFIG_DATA)
-        
         # Validate inputs
         if not args.pod_name or not args.namespace or not args.volume_path:
             logging.error("Pod name, namespace, and volume path are required")
@@ -627,6 +624,9 @@ async def main():
         if len(current_api_key) < 10:
             logging.error("AI key is empty!")
             sys.exit(1)
+
+        # Initialize MCP adapter
+        mcp_adapter = await initialize_mcp_adapter(CONFIG_DATA)
 
         # Initialize Kubernetes configuration
         try:

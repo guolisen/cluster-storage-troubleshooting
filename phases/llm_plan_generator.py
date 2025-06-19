@@ -361,7 +361,7 @@ CONSTRAINTS:
 - You must only reference tools available in the Phase1 tool registry
 - All tool references must match the exact name and parameter format shown in the tools registry
 - Include at least one disk-related check step and one volume-related check step.
-- Max Steps: 10
+- Max Steps: 15
 - IMPORTANT: Each tool should be used at most once in the entire plan. Do not include duplicate tool calls. If a tool is already used in a step, do not use it again in another step.
 
 OUTPUT FORMAT:

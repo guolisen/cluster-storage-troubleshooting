@@ -53,6 +53,9 @@ class AnalysisPhase:
             self.mcp_tools = self.mcp_adapter.get_tools_for_phase('phase1')
             if self.mcp_tools:
                 self.logger.info(f"Loaded {len(self.mcp_tools)} MCP tools for Phase1")
+                
+        # Initialize LLM factory
+        self.llm_factory = LLMFactory(self.config_data)
 
     def _extract_final_message(self, response: Dict[str, Any]) -> str:
         """
@@ -94,9 +97,13 @@ class AnalysisPhase:
             # Import here to avoid circular dependency
             from troubleshooting.graph import create_troubleshooting_graph_with_context
             
+            # Check if streaming is enabled in config
+            streaming_enabled = self.config_data.get('llm', {}).get('streaming', False)
+            
             # Create troubleshooting graph with pre-collected context
             graph = create_troubleshooting_graph_with_context(
-                self.collected_info, phase="phase1", config_data=self.config_data
+                self.collected_info, phase="phase1", config_data=self.config_data,
+                streaming=streaming_enabled
             )
             
             # Extract and format historical experience data from collected_info

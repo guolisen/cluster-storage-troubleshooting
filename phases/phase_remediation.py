@@ -51,6 +51,9 @@ class RemediationPhase:
             self.mcp_tools = self.mcp_adapter.get_tools_for_phase('phase2')
             if self.mcp_tools:
                 self.logger.info(f"Loaded {len(self.mcp_tools)} MCP tools for Phase2")
+                
+        # Initialize LLM factory
+        self.llm_factory = LLMFactory(self.config_data)
     
     async def run_remediation_with_graph(self, query: str, graph: StateGraph, timeout_seconds: int = 1800) -> str:
         """
@@ -195,9 +198,13 @@ Your response must include:
                     {"role": "assistant", "content": "Fix Plan:\n" + phase1_final_response}
                 ]
             
+            # Check if streaming is enabled in config
+            streaming_enabled = self.config_data.get('llm', {}).get('streaming', False)
+            
             # Create troubleshooting graph for remediation
             graph = create_troubleshooting_graph_with_context(
-                self.collected_info, phase="phase2", config_data=self.config_data
+                self.collected_info, phase="phase2", config_data=self.config_data,
+                streaming=streaming_enabled
             )
             
             # Extract and format historical experience data from collected_info

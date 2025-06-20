@@ -57,7 +57,15 @@ class LLMPlanGenerator:
         try:
             # Create LLM using the factory
             llm_factory = LLMFactory(self.config_data)
-            return llm_factory.create_llm()
+            
+            # Check if streaming is enabled in config
+            streaming_enabled = self.config_data.get('llm', {}).get('streaming', False)
+            
+            # Create LLM with streaming if enabled
+            return llm_factory.create_llm(
+                streaming=streaming_enabled,
+                phase_name="plan_phase"
+            )
         except Exception as e:
             error_msg = handle_exception("_initialize_llm", e, self.logger)
             return None
@@ -260,6 +268,7 @@ Step 2: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [ex
             Tuple[str, List[Dict[str, str]]]: (Refined Investigation Plan, Updated message list)
         """
         self.logger.info("Calling LLM to generate investigation plan")
+        self.logger.info("This may take a few moments...")
         response = self.llm.invoke(messages)
         
         # Extract and format the plan

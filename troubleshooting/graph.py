@@ -124,7 +124,8 @@ def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any) -> 
     except Exception as e:
         logger.error(f"Error in after_call_tools_hook: {e}")
 
-def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "phase1", config_data: Dict[str, Any] = None):
+def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], phase: str = "phase1", 
+                                            config_data: Dict[str, Any] = None, streaming: bool = False):
     """
     Create a LangGraph ReAct graph for troubleshooting with pre-collected context
     and enhanced end conditions
@@ -133,6 +134,7 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
         collected_info: Pre-collected diagnostic information from Phase 0
         phase: Current troubleshooting phase ("phase1" for investigation, "phase2" for action)
         config_data: Configuration data
+        streaming: Whether to enable streaming for the LLM
         
     Returns:
         StateGraph: LangGraph StateGraph
@@ -142,7 +144,7 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
     
     # Initialize language model using LLMFactory
     llm_factory = LLMFactory(config_data)
-    model = llm_factory.create_llm()
+    model = llm_factory.create_llm(streaming=streaming, phase_name=phase)
     
     # Define function to call the model with pre-collected context
     def call_model(state: MessagesState):

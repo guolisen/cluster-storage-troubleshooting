@@ -3,6 +3,13 @@ llm:
   # Provider selection: "openai", "google", or "ollama"
   provider: "openai"
   
+  # Streaming Configuration
+  streaming: false  # Enable or disable streaming globally
+  streaming_phases:  # Enable or disable streaming for specific phases
+    plan_phase: true
+    phase1: true
+    phase2: true
+  
   # OpenAI Configuration
   openai:
     #model: "gpt-4-turbo-preview"
@@ -132,7 +139,7 @@ mcp_servers:
     command: npx
     args: ["-y", "tavily-mcp@0.1.4"]
     env:
-      TAVILY_API_KEY: "tvly-dev"
+      TAVILY_API_KEY: "tvly-dev-"
     tools:
       plan_phase: true
       phase1: true

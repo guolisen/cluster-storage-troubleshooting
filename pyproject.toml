@@ -28,6 +28,7 @@ dependencies = [
     "kubernetes",
     "langchain>=0.3.25",
     "langchain-google-genai>=2.1.5",
+    "langchain-mcp-adapters>=0.1.7",
     "langchain-ollama>=0.3.3",
     "langchain-openai>=0.3.17",
     "langgraph",

@@ -60,8 +60,10 @@ troubleshoot:
     user: "root"
     key_path: "~/.ssh/id_ed25519"
     nodes:
-      - "my-cluster-control-plane"
-      - "my-cluster-worker"
+      - "25gg0r3.cluster.local"
+      - "58kg0r3.cluster.local"
+      - "77gg0r3.cluster.local"
+      - "d4gg0r3.cluster.local"
     retries: 3
     retry_backoff_seconds: 5
 

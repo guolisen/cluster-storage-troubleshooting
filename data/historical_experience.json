@@ -411,5 +411,31 @@
     "resolution": [
       "Report this finding to user, need user to do fsck to fix filesystem"
     ]
+  },
+  {
+    "observation": "volume i/o error, Command failed with exit code 2: ls: cannot access the volume path: Input/output error",
+    "thinking": [
+      "whether the xfs filesystem is broken?",
+      "whether the hard drive is just online again?",
+      "whether the xfs filesystem is in degraded?"
+    ],
+    "investigation": [
+      {
+        "step": "check dmesg and journalctl logs",
+        "reasoning": "find whether the volume filesystem is in degraded, or in error state"
+      },
+      {
+        "step": "'get the mount path on node host",
+        "reasoning": "the fsck need the volume path as the parameter"
+      },
+      {
+        "step": "use xfs_repair_check tool to check the volume filesystem",
+        "reasoning": "check the volume by fsck"
+      }
+    ],
+    "diagnosis": "check the xfs_repair_check result to decide whether the filesystem has problem.",
+    "resolution": [
+      "Report this finding to user, need delete the disk corresponding pod to reset pod"
+    ]
   }
 ]

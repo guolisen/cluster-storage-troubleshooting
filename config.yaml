@@ -101,6 +101,57 @@ logging:
 historical_experience:
   file_path: "data/historical_experience.json"
 
+# Tool Execution Configuration
+tools:
+  parallel:
+    - kg_get_entity_info
+    - kg_get_related_entities
+    - kg_get_all_issues
+    - kg_find_path
+    - kg_get_summary
+    - kg_analyze_issues
+    - kg_print_graph
+    - kubectl_get
+    - kubectl_describe
+    - kubectl_logs
+    - kubectl_get_drive
+    - kubectl_get_csibmnode
+    - kubectl_get_availablecapacity
+    - kubectl_get_logicalvolumegroup
+    - kubectl_get_storageclass
+    - kubectl_get_csidrivers
+    - smartctl_check
+    - check_disk_health
+    - scan_disk_error_logs
+    - df_command
+    - lsblk_command
+    - mount_command
+    - dmesg_command
+    - journalctl_command
+    - get_system_hardware_info
+  serial:
+    - kubectl_exec
+    - kubectl_ls_pod_volume
+    - kubectl_apply
+    - kubectl_delete
+    - fsck_check
+    - xfs_repair_check
+    - fio_performance_test
+    - detect_disk_jitter
+    - run_disk_readonly_test
+    - test_disk_io_performance
+    - analyze_disk_space_usage
+    - run_volume_io_test
+    - validate_volume_mount
+    - test_volume_permissions
+    - run_volume_stress_test
+    - verify_volume_mount
+    - test_volume_io_performance
+    - monitor_volume_latency
+    - check_pod_volume_filesystem
+    - analyze_volume_space_usage
+    - check_volume_data_integrity
+
 # Chat Mode Configuration
 chat_mode:
   enabled: true  # Enable or disable chat mode

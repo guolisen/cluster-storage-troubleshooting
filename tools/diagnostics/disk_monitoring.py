@@ -35,7 +35,8 @@ def detect_disk_jitter(duration_minutes: int = 5, check_interval_seconds: int = 
     try:
         from tools.kubernetes.csi_baremetal import kubectl_get_drive
         from tools.diagnostics.hardware import ssh_execute
-        
+        # todo
+        duration_minutes = 1
         # Calculate iterations based on duration and interval
         iterations = int((duration_minutes * 60) / check_interval_seconds)
         

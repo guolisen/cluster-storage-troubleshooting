@@ -5,13 +5,15 @@ LangGraph Graph Building Components for Kubernetes Volume I/O Error Troubleshoot
 This module contains functions for creating and configuring LangGraph state graphs
 used in the analysis and remediation phases of Kubernetes volume troubleshooting.
 Enhanced with specific end conditions for better control over graph termination.
+Refactored to support parallel and serial tool execution for improved performance.
 """
 
 import json
 import logging
 import os
 import re
-from typing import Dict, Any, List, TypedDict, Optional, Union, Callable
+import yaml
+from typing import Dict, Any, List, TypedDict, Optional, Union, Callable, Set, Tuple
 from tools.core.mcp_adapter import get_mcp_adapter
 
 # Configure logging (file only, no console output)
@@ -24,7 +26,7 @@ from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import tools_condition
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage
 from phases.llm_factory import LLMFactory
-from troubleshooting.serial_tool_node import SerialToolNode, BeforeCallToolsHook, AfterCallToolsHook
+from troubleshooting.execute_tool_node import ExecuteToolNode, BeforeCallToolsHook, AfterCallToolsHook
 from rich.console import Console
 from rich.panel import Panel
 
@@ -43,13 +45,39 @@ class EnhancedMessagesState(TypedDict):
 console = Console()
 file_console = Console(file=open('troubleshoot.log', 'a'))
 
+def load_tool_config() -> Tuple[Set[str], Set[str]]:
+    """
+    Load tool configuration from config.yaml to determine which tools
+    should be executed in parallel and which should be executed serially.
+    
+    Returns:
+        Tuple[Set[str], Set[str]]: Sets of parallel and serial tool names
+    """
+    try:
+        with open('config.yaml', 'r') as f:
+            config_data = yaml.safe_load(f)
+            
+        tool_config = config_data.get("tools", {})
+        parallel_tools = set(tool_config.get("parallel", []))
+        serial_tools = set(tool_config.get("serial", []))
+        
+        # Log the configuration
+        logger.info(f"Loaded tool configuration: {len(parallel_tools)} parallel tools, {len(serial_tools)} serial tools")
+        
+        return parallel_tools, serial_tools
+    except Exception as e:
+        logger.error(f"Error loading tool configuration: {e}")
+        # Return empty sets as fallback (all tools will be treated as serial)
+        return set(), set()
+
 # Define hook functions for SerialToolNode
-def before_call_tools_hook(tool_name: str, args: Dict[str, Any]) -> None:
+def before_call_tools_hook(tool_name: str, args: Dict[str, Any], call_type: str = "Serial") -> None:
     """Hook function called before a tool is executed.
     
     Args:
         tool_name: Name of the tool being called
         args: Arguments passed to the tool
+        call_type: Type of call execution ("Parallel" or "Serial")
     """
     try:
         # Format arguments for better readability
@@ -59,7 +87,7 @@ def before_call_tools_hook(tool_name: str, args: Dict[str, Any]) -> None:
         if formatted_args != "None":
             # Print to console and log file
             tool_panel = Panel(
-                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
+                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n\n"
                 f"[bold yellow]Arguments:[/bold yellow]\n[blue]{formatted_args}[/blue]",
                 title="[bold magenta]Thinking Step",
                 border_style="magenta",
@@ -69,7 +97,7 @@ def before_call_tools_hook(tool_name: str, args: Dict[str, Any]) -> None:
         else:
             # Simple version for tools without arguments
             tool_panel = Panel(
-                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
+                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n\n"
                 f"[bold yellow]Arguments:[/bold yellow] None",
                 title="[bold magenta]Thinking Step",
                 border_style="magenta",
@@ -78,22 +106,23 @@ def before_call_tools_hook(tool_name: str, args: Dict[str, Any]) -> None:
             console.print(tool_panel)
 
         # Also log to file console
-        file_console.print(f"Executing tool: {tool_name}")
+        file_console.print(f"Executing tool: {tool_name} ({call_type})")
         file_console.print(f"Parameters: {formatted_args}")
         
         # Log to standard logger
-        logger.info(f"Executing tool: {tool_name}")
+        logger.info(f"Executing tool: {tool_name} ({call_type})")
         logger.info(f"Parameters: {formatted_args}")
     except Exception as e:
         logger.error(f"Error in before_call_tools_hook: {e}")
 
-def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any) -> None:
+def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any, call_type: str = "Serial") -> None:
     """Hook function called after a tool is executed.
     
     Args:
         tool_name: Name of the tool that was called
         args: Arguments that were passed to the tool
         result: Result returned by the tool
+        call_type: Type of call execution ("Parallel" or "Serial")
     """
     try:
         # Format result for better readability
@@ -106,7 +135,7 @@ def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any) -> 
         
         # Print tool result to console
         tool_panel = Panel(
-            f"[bold cyan]Tool completed:[/bold cyan] [green]{tool_name}[/green]\n"
+            f"[bold cyan]Tool completed:[/bold cyan] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n"
             f"[bold cyan]Result:[/bold cyan]\n[yellow]{formatted_result}[/yellow]",
             title="[bold magenta]Call tools",
             border_style="magenta",
@@ -115,11 +144,11 @@ def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any) -> 
         console.print(tool_panel)
 
         # Also log to file console
-        file_console.print(f"Tool completed: {tool_name}")
+        file_console.print(f"Tool completed: {tool_name} ({call_type})")
         file_console.print(f"Result: {formatted_result}")
         
         # Log to standard logger
-        logger.info(f"Tool completed: {tool_name}")
+        logger.info(f"Tool completed: {tool_name} ({call_type})")
         logger.info(f"Result: {formatted_result}")
     except Exception as e:
         logger.error(f"Error in after_call_tools_hook: {e}")
@@ -848,16 +877,27 @@ Adding the analysis and summary for each call tools steps
     from tools import define_remediation_tools
     tools = define_remediation_tools()
     
-    logging.info("Adding node: tools (SerialToolNode for sequential execution)")
-    # Create SerialToolNode instance
-    serial_tool_node = SerialToolNode(tools)
+    # Load tool configuration
+    logging.info("Loading tool configuration")
+    parallel_tools, serial_tools = load_tool_config()
     
-    # Register hook functions
-    serial_tool_node.register_before_call_hook(before_call_tools_hook)
-    serial_tool_node.register_after_call_hook(after_call_tools_hook)
+    # If a tool is not explicitly categorized, default to serial
+    all_tool_names = {tool.name for tool in tools}
+    uncategorized_tools = all_tool_names - parallel_tools - serial_tools
+    if uncategorized_tools:
+        logging.info(f"Found {len(uncategorized_tools)} uncategorized tools, defaulting to serial")
+        serial_tools.update(uncategorized_tools)
     
-    # Add node to the graph
-    builder.add_node("tools", serial_tool_node)
+    # Create ExecuteToolNode for both parallel and serial execution
+    logging.info(f"Adding node: execute_tools (ExecuteToolNode for execution of {len(parallel_tools)} parallel and {len(serial_tools)} serial tools)")
+    execute_tool_node = ExecuteToolNode(tools, parallel_tools, serial_tools, name="execute_tools")
+    
+    # Register hook functions for ExecuteToolNode
+    execute_tool_node.register_before_call_hook(before_call_tools_hook)
+    execute_tool_node.register_after_call_hook(after_call_tools_hook)
+    
+    # Add ExecuteToolNode to the graph
+    builder.add_node("execute_tools", execute_tool_node)
     
     logging.info("Adding node: check_end")
     builder.add_node("check_end", check_end_conditions)
@@ -867,8 +907,8 @@ Adding the analysis and summary for each call tools steps
         "call_model",
         tools_condition,
         {
-            "tools": "tools",
-            "none": "check_end",  # Instead of going directly to END, go to check_end
+            "tools": "execute_tools",   # Route to execute_tools node
+            "none": "check_end",        # If no tools, go to check_end
             "end": "check_end",
             "__end__": "check_end"
         }
@@ -885,8 +925,9 @@ Adding the analysis and summary for each call tools steps
         }
     )
     
-    logging.info("Adding edge: tools -> call_model")
-    builder.add_edge("tools", "call_model")
+    # Add edge from execute_tools to call_model
+    logging.info("Adding edge: execute_tools -> call_model")
+    builder.add_edge("execute_tools", "call_model")
     
     logging.info("Adding edge: START -> call_model")
     builder.add_edge(START, "call_model")

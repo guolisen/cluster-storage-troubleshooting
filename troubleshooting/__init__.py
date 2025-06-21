@@ -6,11 +6,10 @@ for comprehensive root cause analysis and fix plan generation in the CSI Baremet
 driver troubleshooting system.
 """
 
-# Import will be available once dependencies are resolved
-from troubleshooting.graph import (
-    create_troubleshooting_graph_with_context,
-)
+# Don't import at module level to avoid circular imports
+# Functions can be imported directly from troubleshooting.graph when needed
 
 __all__ = [
+    # Functions available from troubleshooting.graph
     "create_troubleshooting_graph_with_context",
 ]

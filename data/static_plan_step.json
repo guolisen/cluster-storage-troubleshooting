@@ -1,10 +1,10 @@
 [
   {
-    "description": "try fsck test for the volume path",
+    "description": "if the filesystem is xfs, try fsck test for the volume path",
     "tool": "xfs_repair_check",
     "expected": "use xfs_repair_check to do fsck for volume, the fsck will know whether has issues on volumes",
     "priority": "high",
-  "priority_score": 200
+    "priority_score": 70
   },
   {
     "description": "Verify that a pod volume is correctly mounted and accessible",
@@ -109,6 +109,6 @@
     "tool": "tavily-search",
     "expected": "get the information which lack in LLM from internet",
     "priority": "high",
-  "priority_score": 200
+  "priority_score": 300
   }
 ]

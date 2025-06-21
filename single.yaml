@@ -30,15 +30,15 @@ spec:
         stor-operator.dell.com/need-wait: all
         app: test-nginx
     spec:
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-            - matchExpressions:
-              - key: kubernetes.io/hostname
-                operator: In
-                values:
-                - "77gg0r3.cluster.local"
+      #affinity:
+      #  nodeAffinity:
+      #    requiredDuringSchedulingIgnoredDuringExecution:
+      #      nodeSelectorTerms:
+      #      - matchExpressions:
+      #        - key: kubernetes.io/hostname
+      #          operator: In
+      #          values:
+      #          - "77gg0r3.cluster.local"
       securityContext:
         fsGroup: 65534
       containers:
@@ -48,6 +48,7 @@ spec:
         #image: dockerrepo:30500/nginx:1.25.3
         #image: k8s.gcr.io/nginx-slim:0.8
         #image: guolisen/hotplug-test:1.2
+        image: guolisen/xfsprogs-image:1.0
         command:
           - /bin/sh
           - "-c"
@@ -83,5 +84,5 @@ spec:
       resources:
         requests:
           storage: 30M
-      storageClassName: csi-baremetal-sc-ssd
+      storageClassName: standard
 

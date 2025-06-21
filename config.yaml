@@ -60,10 +60,8 @@ troubleshoot:
     user: "root"
     key_path: "~/.ssh/id_ed25519"
     nodes:
-      - "25gg0r3.cluster.local"
-      - "58kg0r3.cluster.local"
-      - "77gg0r3.cluster.local"
-      - "d4gg0r3.cluster.local"
+      - "my-cluster-control-plane"
+      - "my-cluster-worker"
     retries: 3
     retry_backoff_seconds: 5
 
@@ -154,7 +152,7 @@ tools:
 
 # Chat Mode Configuration
 chat_mode:
-  enabled: true  # Enable or disable chat mode
+  enabled: false  # Enable or disable chat mode
   entry_points:
     #- "plan_phase"  # After Plan Phase
     - "phase1"      # After Phase1

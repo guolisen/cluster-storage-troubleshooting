@@ -29,6 +29,9 @@ from phases import (
     run_analysis_phase_with_plan,
     run_remediation_phase
 )
+import tempfile
+import json
+import os
 from phases.chat_mode import ChatMode
 from tools.core.mcp_adapter import initialize_mcp_adapter, get_mcp_adapter
 from rich.logging import RichHandler
@@ -113,6 +116,7 @@ CONFIG_DATA = None
 INTERACTIVE_MODE = False
 SSH_CLIENTS = {}
 KNOWLEDGE_GRAPH = None
+RESULTS_DIR = os.path.join(tempfile.gettempdir(), "k8s-troubleshooting-results")
 
 #os.environ['LANGCHAIN_TRACING_V2'] = "true"   
 #os.environ['LANGCHAIN_ENDPOINT'] = "https://api.smith.langchain.com"   
@@ -127,6 +131,47 @@ def load_config():
     except Exception as e:
         logging.error(f"Failed to load configuration: {e}")
         sys.exit(1)
+
+def setup_results_dir():
+    """Set up the directory for storing troubleshooting results"""
+    try:
+        if not os.path.exists(RESULTS_DIR):
+            os.makedirs(RESULTS_DIR)
+            logging.debug(f"Created results directory: {RESULTS_DIR}")
+    except Exception as e:
+        logging.error(f"Failed to create results directory: {e}")
+
+def write_investigation_result(pod_name, namespace, volume_path, result_summary):
+    """
+    Write investigation result to a file for the monitor to pick up
+    
+    Args:
+        pod_name: Name of the pod
+        namespace: Namespace of the pod
+        volume_path: Path of the volume
+        result_summary: Summary of the investigation result
+    """
+    try:
+        # Create a unique filename based on pod details
+        filename = f"{namespace}_{pod_name}_{volume_path.replace('/', '_')}.json"
+        filepath = os.path.join(RESULTS_DIR, filename)
+        
+        # Create a result object
+        result_data = {
+            "pod_name": pod_name,
+            "namespace": namespace,
+            "volume_path": volume_path,
+            "timestamp": time.time(),
+            "result_summary": result_summary
+        }
+        
+        # Write to file
+        with open(filepath, 'w') as f:
+            json.dump(result_data, f)
+            
+        logging.info(f"Investigation result written to {filepath}")
+    except Exception as e:
+        logging.error(f"Failed to write investigation result: {e}")
 
 def setup_logging(config_data):
     """Configure logging based on configuration with rich formatting"""
@@ -205,7 +250,7 @@ async def run_information_collection_phase_wrapper(pod_name: str, namespace: str
 
 async def run_analysis_phase_wrapper(pod_name: str, namespace: str, volume_path: str, 
                                   collected_info: Dict[str, Any], investigation_plan: str,
-                                  message_list: List[Dict[str, str]] = None) -> Tuple[str, bool, List[Dict[str, str]]]:
+                                  message_list: List[Dict[str, str]] = None) -> Tuple[str, bool, str, List[Dict[str, str]]]:
     """
     Wrapper for Phase 1: ReAct Investigation from phases module
     
@@ -398,7 +443,7 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
         # Skip chat mode if disabled or phase1 entry point not enabled
         if not chat_mode_enabled or "phase1" not in chat_mode_entry_points:
             # Run Phase1 analysis without chat mode
-            phase1_final_response, skip_phase2, phase1_message_list = await run_analysis_phase_wrapper(
+            phase1_final_response, skip_phase2, summary, phase1_message_list = await run_analysis_phase_wrapper(
                 pod_name, namespace, volume_path, collected_info, investigation_plan
             )
             
@@ -410,7 +455,14 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
                 border_style="blue",
                 padding=(1, 2)
             ))
-            
+
+            console.print(Panel(
+                f"[bold white]{summary}",
+                title="[bold magenta]Event Summary",
+                border_style="magenta",
+                padding=(1, 2)
+            ))
+
             results["phases"]["phase_1_analysis"] = {
                 "status": "completed",
                 "final_response": str(phase1_final_response),
@@ -421,7 +473,7 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
             # Use chat mode for Phase1
             while True:
                 # Run Phase1 analysis
-                phase1_final_response, skip_phase2, phase1_message_list = await run_analysis_phase_wrapper(
+                phase1_final_response, skip_phase2, summary, phase1_message_list = await run_analysis_phase_wrapper(
                     pod_name, namespace, volume_path, collected_info, investigation_plan, phase1_message_list
                 )
                 
@@ -432,7 +484,13 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
                     border_style="blue",
                     padding=(1, 2)
                 ))
-                
+
+                console.print(Panel(
+                    f"[bold white]{summary}",
+                    title="[bold magenta]Event Summary",
+                    border_style="magenta",
+                    padding=(1, 2)
+                ))
                 # Enter chat mode after Phase1
                 phase1_message_list, exit_flag = chat_mode.chat_after_phase1(
                     phase1_message_list, phase1_final_response
@@ -456,6 +514,7 @@ Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, incl
         
         # Only proceed to Phase 2 if not skipped
         remediation_result = None
+        skip_phase2 = True
         if not skip_phase2:
             phase_2_start = time.time()
             
@@ -609,8 +668,9 @@ async def main():
         # Load configuration
         CONFIG_DATA = load_config()
 
-        # Setup logging
+        # Setup logging and results directory
         setup_logging(CONFIG_DATA)
+        setup_results_dir()
         
         if args.verbose:
             logging.getLogger().setLevel(logging.DEBUG)

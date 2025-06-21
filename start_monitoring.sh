@@ -13,4 +13,4 @@ if [ ! -f "config.yaml" ]; then
 fi
 
 # Start the monitoring script
-python3 monitor.py
+python3 monitoring/monitor.py

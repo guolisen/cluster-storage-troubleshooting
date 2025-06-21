@@ -294,7 +294,7 @@ def send_k8s_event(namespace: str, resource_name: str, resource_kind: str, messa
 
 async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_path: str, 
                                      collected_info: Dict[str, Any], investigation_plan: str,
-                                     config_data: Dict[str, Any], message_list: List[Dict[str, str]] = None) -> Tuple[str, bool, List[Dict[str, str]]]:
+                                     config_data: Dict[str, Any], message_list: List[Dict[str, str]] = None) -> Tuple[str, bool, str, List[Dict[str, str]]]:
     """
     Run Phase 1: ReAct Investigation with pre-collected information as base knowledge
     
@@ -340,7 +340,7 @@ async def run_analysis_phase_with_plan(pod_name: str, namespace: str, volume_pat
         
         return error_msg, False, message_list
 
-def process_analysis_result(result: str, message_list: List[Dict[str, str]], pod_name: str, namespace: str, config_data: Dict[str, Any]) -> Tuple[str, bool, List[Dict[str, str]]]:
+def process_analysis_result(result: str, message_list: List[Dict[str, str]], pod_name: str, namespace: str, config_data: Dict[str, Any]) -> Tuple[str, bool, str, List[Dict[str, str]]]:
     """
     Process the analysis result to check for SKIP_PHASE2 marker and send Kubernetes event
     
@@ -370,8 +370,10 @@ def process_analysis_result(result: str, message_list: List[Dict[str, str]], pod
 
         # Generate summary of investigation results
         summary = summarize_investigation_results(result, llm)
-        logging.info(f"Event Summary: {summary}")
-
+        if not summary:
+            summary = "No summary generated from investigation results."
+        logging.info(f"Investigation summary generated: {summary}")
+    
         # Send Kubernetes event
         event_sent = send_k8s_event(namespace, pod_name, "Pod", summary)
         
@@ -382,4 +384,4 @@ def process_analysis_result(result: str, message_list: List[Dict[str, str]], pod
     except Exception as e:
         logging.error(f"Error during event creation: {e}")
     
-    return result, skip_phase2, message_list
+    return result, skip_phase2, summary, message_list

@@ -26,8 +26,7 @@ from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import tools_condition
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage
 from phases.llm_factory import LLMFactory
-from troubleshooting.serial_tool_node import SerialToolNode, BeforeCallToolsHook, AfterCallToolsHook
-from troubleshooting.parallel_tool_node import ParallelToolNode
+from troubleshooting.execute_tool_node import ExecuteToolNode, BeforeCallToolsHook, AfterCallToolsHook
 from rich.console import Console
 from rich.panel import Panel
 
@@ -887,27 +886,16 @@ Adding the analysis and summary for each call tools steps
         logging.info(f"Found {len(uncategorized_tools)} uncategorized tools, defaulting to serial")
         serial_tools.update(uncategorized_tools)
     
-    # Create ParallelToolNode for concurrent execution
-    logging.info(f"Adding node: parallel_tools (ParallelToolNode for concurrent execution of {len(parallel_tools)} tools)")
-    parallel_tool_node = ParallelToolNode(tools, parallel_tools, name="parallel_tools")
+    # Create ExecuteToolNode for both parallel and serial execution
+    logging.info(f"Adding node: execute_tools (ExecuteToolNode for execution of {len(parallel_tools)} parallel and {len(serial_tools)} serial tools)")
+    execute_tool_node = ExecuteToolNode(tools, parallel_tools, serial_tools, name="execute_tools")
     
-    # Register hook functions for ParallelToolNode
-    parallel_tool_node.register_before_call_hook(before_call_tools_hook)
-    parallel_tool_node.register_after_call_hook(after_call_tools_hook)
+    # Register hook functions for ExecuteToolNode
+    execute_tool_node.register_before_call_hook(before_call_tools_hook)
+    execute_tool_node.register_after_call_hook(after_call_tools_hook)
     
-    # Add ParallelToolNode to the graph
-    builder.add_node("parallel_tools", parallel_tool_node)
-    
-    # Create SerialToolNode for sequential execution
-    logging.info(f"Adding node: serial_tools (SerialToolNode for sequential execution of {len(serial_tools)} tools)")
-    serial_tool_node = SerialToolNode(tools, serial_tools, name="serial_tools")
-    
-    # Register hook functions for SerialToolNode
-    serial_tool_node.register_before_call_hook(before_call_tools_hook)
-    serial_tool_node.register_after_call_hook(after_call_tools_hook)
-    
-    # Add SerialToolNode to the graph
-    builder.add_node("serial_tools", serial_tool_node)
+    # Add ExecuteToolNode to the graph
+    builder.add_node("execute_tools", execute_tool_node)
     
     logging.info("Adding node: check_end")
     builder.add_node("check_end", check_end_conditions)
@@ -917,7 +905,7 @@ Adding the analysis and summary for each call tools steps
         "call_model",
         tools_condition,
         {
-            "tools": "parallel_tools",  # Route to parallel tools first
+            "tools": "execute_tools",   # Route to execute_tools node
             "none": "check_end",        # If no tools, go to check_end
             "end": "check_end",
             "__end__": "check_end"
@@ -935,13 +923,9 @@ Adding the analysis and summary for each call tools steps
         }
     )
     
-    # Add edge from parallel_tools to serial_tools
-    logging.info("Adding edge: parallel_tools -> serial_tools")
-    builder.add_edge("parallel_tools", "serial_tools")
-    
-    # Add edge from serial_tools to call_model
-    logging.info("Adding edge: serial_tools -> call_model")
-    builder.add_edge("serial_tools", "call_model")
+    # Add edge from execute_tools to call_model
+    logging.info("Adding edge: execute_tools -> call_model")
+    builder.add_edge("execute_tools", "call_model")
     
     logging.info("Adding edge: START -> call_model")
     builder.add_edge(START, "call_model")

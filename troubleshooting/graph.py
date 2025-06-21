@@ -71,12 +71,13 @@ def load_tool_config() -> Tuple[Set[str], Set[str]]:
         return set(), set()
 
 # Define hook functions for SerialToolNode
-def before_call_tools_hook(tool_name: str, args: Dict[str, Any]) -> None:
+def before_call_tools_hook(tool_name: str, args: Dict[str, Any], call_type: str = "Serial") -> None:
     """Hook function called before a tool is executed.
     
     Args:
         tool_name: Name of the tool being called
         args: Arguments passed to the tool
+        call_type: Type of call execution ("Parallel" or "Serial")
     """
     try:
         # Format arguments for better readability
@@ -86,7 +87,7 @@ def before_call_tools_hook(tool_name: str, args: Dict[str, Any]) -> None:
         if formatted_args != "None":
             # Print to console and log file
             tool_panel = Panel(
-                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
+                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n\n"
                 f"[bold yellow]Arguments:[/bold yellow]\n[blue]{formatted_args}[/blue]",
                 title="[bold magenta]Thinking Step",
                 border_style="magenta",
@@ -96,7 +97,7 @@ def before_call_tools_hook(tool_name: str, args: Dict[str, Any]) -> None:
         else:
             # Simple version for tools without arguments
             tool_panel = Panel(
-                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green]\n\n"
+                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n\n"
                 f"[bold yellow]Arguments:[/bold yellow] None",
                 title="[bold magenta]Thinking Step",
                 border_style="magenta",
@@ -105,22 +106,23 @@ def before_call_tools_hook(tool_name: str, args: Dict[str, Any]) -> None:
             console.print(tool_panel)
 
         # Also log to file console
-        file_console.print(f"Executing tool: {tool_name}")
+        file_console.print(f"Executing tool: {tool_name} ({call_type})")
         file_console.print(f"Parameters: {formatted_args}")
         
         # Log to standard logger
-        logger.info(f"Executing tool: {tool_name}")
+        logger.info(f"Executing tool: {tool_name} ({call_type})")
         logger.info(f"Parameters: {formatted_args}")
     except Exception as e:
         logger.error(f"Error in before_call_tools_hook: {e}")
 
-def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any) -> None:
+def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any, call_type: str = "Serial") -> None:
     """Hook function called after a tool is executed.
     
     Args:
         tool_name: Name of the tool that was called
         args: Arguments that were passed to the tool
         result: Result returned by the tool
+        call_type: Type of call execution ("Parallel" or "Serial")
     """
     try:
         # Format result for better readability
@@ -133,7 +135,7 @@ def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any) -> 
         
         # Print tool result to console
         tool_panel = Panel(
-            f"[bold cyan]Tool completed:[/bold cyan] [green]{tool_name}[/green]\n"
+            f"[bold cyan]Tool completed:[/bold cyan] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n"
             f"[bold cyan]Result:[/bold cyan]\n[yellow]{formatted_result}[/yellow]",
             title="[bold magenta]Call tools",
             border_style="magenta",
@@ -142,11 +144,11 @@ def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any) -> 
         console.print(tool_panel)
 
         # Also log to file console
-        file_console.print(f"Tool completed: {tool_name}")
+        file_console.print(f"Tool completed: {tool_name} ({call_type})")
         file_console.print(f"Result: {formatted_result}")
         
         # Log to standard logger
-        logger.info(f"Tool completed: {tool_name}")
+        logger.info(f"Tool completed: {tool_name} ({call_type})")
         logger.info(f"Result: {formatted_result}")
     except Exception as e:
         logger.error(f"Error in after_call_tools_hook: {e}")

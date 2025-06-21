@@ -53,8 +53,8 @@ from langgraph.prebuilt.tool_node import (
 )
 
 # Hook type definitions
-BeforeCallToolsHook = Callable[[str, Dict[str, Any]], None]
-AfterCallToolsHook = Callable[[str, Dict[str, Any], Any], None]
+BeforeCallToolsHook = Callable[[str, Dict[str, Any], str], None]
+AfterCallToolsHook = Callable[[str, Dict[str, Any], Any, str], None]
 
 # Configure logging
 logger = logging.getLogger('execute_tool_node')
@@ -275,8 +275,8 @@ class ExecuteToolNode(RunnableCallable):
                     # Get the individual config for this tool call
                     tool_config = config_list[i] if i < len(config_list) else config_list[-1]
                     
-                    # Submit the tool call to the executor
-                    future = executor.submit(self._run_one, tool_call, input_type, tool_config)
+                    # Submit the tool call to the executor with "Parallel" call type
+                    future = executor.submit(self._run_one, tool_call, input_type, tool_config, "Parallel")
                     future_to_tool[future] = (tool_call, tool_config)
                 
                 # Process completed futures as they finish
@@ -330,8 +330,8 @@ class ExecuteToolNode(RunnableCallable):
             # Get the individual config for this tool call
             tool_config = config_list[i] if i < len(config_list) else config_list[-1]
             
-            # Run the tool
-            output = self._run_one(tool_call, input_type, tool_config)
+            # Run the tool with "Serial" call type
+            output = self._run_one(tool_call, input_type, tool_config, "Serial")
             outputs.append(output)
             
         return outputs
@@ -365,8 +365,8 @@ class ExecuteToolNode(RunnableCallable):
                 # Get the individual config for this tool call
                 tool_config = config_list[i] if i < len(config_list) else config_list[-1]
                 
-                # Create a task for each tool call
-                task = asyncio.create_task(self._arun_one(tool_call, input_type, tool_config))
+                # Create a task for each tool call with "Parallel" call type
+                task = asyncio.create_task(self._arun_one(tool_call, input_type, tool_config, "Parallel"))
                 tasks.append(task)
             
             # Wait for all tasks to complete
@@ -422,8 +422,8 @@ class ExecuteToolNode(RunnableCallable):
             # Get the individual config for this tool call
             tool_config = config_list[i] if i < len(config_list) else config_list[-1]
             
-            # Run the tool
-            output = await self._arun_one(tool_call, input_type, tool_config)
+            # Run the tool with "Serial" call type
+            output = await self._arun_one(tool_call, input_type, tool_config, "Serial")
             outputs.append(output)
             
         return outputs
@@ -477,6 +477,7 @@ class ExecuteToolNode(RunnableCallable):
         call: ToolCall,
         input_type: Literal["list", "dict", "tool_calls"],
         config: RunnableConfig,
+        call_type: str = "Serial",
     ) -> ToolMessage:
         if invalid_tool_message := self._validate_tool_call(call):
             return invalid_tool_message
@@ -488,7 +489,7 @@ class ExecuteToolNode(RunnableCallable):
         # Call before_call_hook if registered
         if self.before_call_hook:
             try:
-                self.before_call_hook(tool_name, tool_args)
+                self.before_call_hook(tool_name, tool_args, call_type)
             except Exception as hook_error:
                 # Log the error but continue with tool execution
                 logger.error(f"Error in before_call_hook: {hook_error}")
@@ -500,7 +501,7 @@ class ExecuteToolNode(RunnableCallable):
             # Call after_call_hook if registered
             if self.after_call_hook:
                 try:
-                    self.after_call_hook(tool_name, tool_args, response)
+                    self.after_call_hook(tool_name, tool_args, response, call_type)
                 except Exception as hook_error:
                     # Log the error but continue with normal flow
                     logger.error(f"Error in after_call_hook: {hook_error}")
@@ -541,7 +542,7 @@ class ExecuteToolNode(RunnableCallable):
             # Call after_call_hook with error result if registered
             if self.after_call_hook:
                 try:
-                    self.after_call_hook(tool_name, tool_args, error_message)
+                    self.after_call_hook(tool_name, tool_args, error_message, call_type)
                 except Exception as hook_error:
                     # Log the error but continue with normal flow
                     logger.error(f"Error in after_call_hook: {hook_error}")
@@ -553,6 +554,7 @@ class ExecuteToolNode(RunnableCallable):
         call: ToolCall,
         input_type: Literal["list", "dict", "tool_calls"],
         config: RunnableConfig,
+        call_type: str = "Serial",
     ) -> ToolMessage:
         if invalid_tool_message := self._validate_tool_call(call):
             return invalid_tool_message
@@ -564,7 +566,7 @@ class ExecuteToolNode(RunnableCallable):
         # Call before_call_hook if registered
         if self.before_call_hook:
             try:
-                self.before_call_hook(tool_name, tool_args)
+                self.before_call_hook(tool_name, tool_args, call_type)
             except Exception as hook_error:
                 # Log the error but continue with tool execution
                 logger.error(f"Error in before_call_hook: {hook_error}")
@@ -576,7 +578,7 @@ class ExecuteToolNode(RunnableCallable):
             # Call after_call_hook if registered
             if self.after_call_hook:
                 try:
-                    self.after_call_hook(tool_name, tool_args, response)
+                    self.after_call_hook(tool_name, tool_args, response, call_type)
                 except Exception as hook_error:
                     # Log the error but continue with normal flow
                     logger.error(f"Error in after_call_hook: {hook_error}")
@@ -612,7 +614,7 @@ class ExecuteToolNode(RunnableCallable):
             # Call after_call_hook with error result if registered
             if self.after_call_hook:
                 try:
-                    self.after_call_hook(tool_name, tool_args, error_message)
+                    self.after_call_hook(tool_name, tool_args, error_message, call_type)
                 except Exception as hook_error:
                     # Log the error but continue with normal flow
                     logger.error(f"Error in after_call_hook: {hook_error}")

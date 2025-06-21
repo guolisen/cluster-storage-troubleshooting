@@ -13,8 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from langgraph.graph import StateGraph
 from tools.core.mcp_adapter import get_mcp_adapter
-
-from troubleshooting.graph import create_troubleshooting_graph_with_context
+from phases.llm_factory import LLMFactory
 from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
 from phases.utils import format_historical_experiences_from_collected_info, handle_exception
 
@@ -202,6 +201,8 @@ Your response must include:
             streaming_enabled = self.config_data.get('llm', {}).get('streaming', False)
             
             # Create troubleshooting graph for remediation
+            # Import here to avoid circular imports
+            from troubleshooting.graph import create_troubleshooting_graph_with_context
             graph = create_troubleshooting_graph_with_context(
                 self.collected_info, phase="phase2", config_data=self.config_data,
                 streaming=streaming_enabled

@@ -5,13 +5,15 @@ LangGraph Graph Building Components for Kubernetes Volume I/O Error Troubleshoot
 This module contains functions for creating and configuring LangGraph state graphs
 used in the analysis and remediation phases of Kubernetes volume troubleshooting.
 Enhanced with specific end conditions for better control over graph termination.
+Refactored to support parallel and serial tool execution for improved performance.
 """
 
 import json
 import logging
 import os
 import re
-from typing import Dict, Any, List, TypedDict, Optional, Union, Callable
+import yaml
+from typing import Dict, Any, List, TypedDict, Optional, Union, Callable, Set, Tuple
 from tools.core.mcp_adapter import get_mcp_adapter
 
 # Configure logging (file only, no console output)
@@ -25,6 +27,7 @@ from langgraph.prebuilt import tools_condition
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage
 from phases.llm_factory import LLMFactory
 from troubleshooting.serial_tool_node import SerialToolNode, BeforeCallToolsHook, AfterCallToolsHook
+from troubleshooting.parallel_tool_node import ParallelToolNode
 from rich.console import Console
 from rich.panel import Panel
 
@@ -42,6 +45,31 @@ class EnhancedMessagesState(TypedDict):
 # Create console for rich output
 console = Console()
 file_console = Console(file=open('troubleshoot.log', 'a'))
+
+def load_tool_config() -> Tuple[Set[str], Set[str]]:
+    """
+    Load tool configuration from config.yaml to determine which tools
+    should be executed in parallel and which should be executed serially.
+    
+    Returns:
+        Tuple[Set[str], Set[str]]: Sets of parallel and serial tool names
+    """
+    try:
+        with open('config.yaml', 'r') as f:
+            config_data = yaml.safe_load(f)
+            
+        tool_config = config_data.get("tools", {})
+        parallel_tools = set(tool_config.get("parallel", []))
+        serial_tools = set(tool_config.get("serial", []))
+        
+        # Log the configuration
+        logger.info(f"Loaded tool configuration: {len(parallel_tools)} parallel tools, {len(serial_tools)} serial tools")
+        
+        return parallel_tools, serial_tools
+    except Exception as e:
+        logger.error(f"Error loading tool configuration: {e}")
+        # Return empty sets as fallback (all tools will be treated as serial)
+        return set(), set()
 
 # Define hook functions for SerialToolNode
 def before_call_tools_hook(tool_name: str, args: Dict[str, Any]) -> None:
@@ -848,16 +876,38 @@ Adding the analysis and summary for each call tools steps
     from tools import define_remediation_tools
     tools = define_remediation_tools()
     
-    logging.info("Adding node: tools (SerialToolNode for sequential execution)")
-    # Create SerialToolNode instance
-    serial_tool_node = SerialToolNode(tools)
+    # Load tool configuration
+    logging.info("Loading tool configuration")
+    parallel_tools, serial_tools = load_tool_config()
     
-    # Register hook functions
+    # If a tool is not explicitly categorized, default to serial
+    all_tool_names = {tool.name for tool in tools}
+    uncategorized_tools = all_tool_names - parallel_tools - serial_tools
+    if uncategorized_tools:
+        logging.info(f"Found {len(uncategorized_tools)} uncategorized tools, defaulting to serial")
+        serial_tools.update(uncategorized_tools)
+    
+    # Create ParallelToolNode for concurrent execution
+    logging.info(f"Adding node: parallel_tools (ParallelToolNode for concurrent execution of {len(parallel_tools)} tools)")
+    parallel_tool_node = ParallelToolNode(tools, parallel_tools, name="parallel_tools")
+    
+    # Register hook functions for ParallelToolNode
+    parallel_tool_node.register_before_call_hook(before_call_tools_hook)
+    parallel_tool_node.register_after_call_hook(after_call_tools_hook)
+    
+    # Add ParallelToolNode to the graph
+    builder.add_node("parallel_tools", parallel_tool_node)
+    
+    # Create SerialToolNode for sequential execution
+    logging.info(f"Adding node: serial_tools (SerialToolNode for sequential execution of {len(serial_tools)} tools)")
+    serial_tool_node = SerialToolNode(tools, serial_tools, name="serial_tools")
+    
+    # Register hook functions for SerialToolNode
     serial_tool_node.register_before_call_hook(before_call_tools_hook)
     serial_tool_node.register_after_call_hook(after_call_tools_hook)
     
-    # Add node to the graph
-    builder.add_node("tools", serial_tool_node)
+    # Add SerialToolNode to the graph
+    builder.add_node("serial_tools", serial_tool_node)
     
     logging.info("Adding node: check_end")
     builder.add_node("check_end", check_end_conditions)
@@ -867,8 +917,8 @@ Adding the analysis and summary for each call tools steps
         "call_model",
         tools_condition,
         {
-            "tools": "tools",
-            "none": "check_end",  # Instead of going directly to END, go to check_end
+            "tools": "parallel_tools",  # Route to parallel tools first
+            "none": "check_end",        # If no tools, go to check_end
             "end": "check_end",
             "__end__": "check_end"
         }
@@ -885,8 +935,13 @@ Adding the analysis and summary for each call tools steps
         }
     )
     
-    logging.info("Adding edge: tools -> call_model")
-    builder.add_edge("tools", "call_model")
+    # Add edge from parallel_tools to serial_tools
+    logging.info("Adding edge: parallel_tools -> serial_tools")
+    builder.add_edge("parallel_tools", "serial_tools")
+    
+    # Add edge from serial_tools to call_model
+    logging.info("Adding edge: serial_tools -> call_model")
+    builder.add_edge("serial_tools", "call_model")
     
     logging.info("Adding edge: START -> call_model")
     builder.add_edge(START, "call_model")

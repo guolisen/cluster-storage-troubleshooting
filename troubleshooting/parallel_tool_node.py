@@ -16,6 +16,7 @@ from typing import (
     cast,
     get_type_hints,
 )
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 
 from langchain_core.messages import (
@@ -55,33 +56,28 @@ BeforeCallToolsHook = Callable[[str, Dict[str, Any]], None]
 AfterCallToolsHook = Callable[[str, Dict[str, Any], Any], None]
 
 # Configure logging
-logger = logging.getLogger('serial_tool_node')
+logger = logging.getLogger('parallel_tool_node')
 logger.setLevel(logging.INFO)
 
-class SerialToolNode(RunnableCallable):
-    """A node that runs the tools labeled as serial in sequential order.
+class ParallelToolNode(RunnableCallable):
+    """A node that runs the tools labeled as parallel concurrently.
 
-    Unlike the ParallelToolNode that executes tools concurrently, SerialToolNode
-    executes them sequentially in the order they appear in the tool_calls list.
-    This ensures tools are executed in a specific sequence, allowing later tools
-    to potentially depend on the output of earlier tools.
+    Unlike the SerialToolNode that executes tools sequentially, ParallelToolNode
+    executes tools concurrently using ThreadPoolExecutor. This allows for faster
+    execution of independent tools that don't rely on each other's outputs.
 
-    It filters tool calls to only process those labeled as serial in the config,
-    and ignores any tool calls that have already been processed by the ParallelToolNode.
-
-    It can be used either in StateGraph with a "messages" state key (or a custom key passed via SerialToolNode's 'messages_key').
-    The output will be a list of ToolMessages, one for each tool call, in the same order as the tools were called.
-
-    Tool calls can also be passed directly as a list of `ToolCall` dicts.
+    It filters tool calls to only process those labeled as parallel in the config,
+    and passes any remaining tool calls to the next node in the graph.
 
     Args:
-        tools: A sequence of tools that can be invoked by the SerialToolNode.
-        serial_tools: A set of tool names that should be executed serially.
-        name: The name of the SerialToolNode in the graph. Defaults to "serial_tools".
+        tools: A sequence of tools that can be invoked by the ParallelToolNode.
+        parallel_tools: A set of tool names that should be executed in parallel.
+        name: The name of the ParallelToolNode in the graph. Defaults to "parallel_tools".
+        max_workers: Maximum number of worker threads to use for parallel execution.
+            Defaults to None (uses ThreadPoolExecutor default).
         tags: Optional tags to associate with the node. Defaults to None.
         handle_tool_errors: How to handle tool errors raised by tools inside the node. Defaults to True.
             Must be one of the following:
-
             - True: all errors will be caught and
                 a ToolMessage with a default error message (TOOL_CALL_ERROR_TEMPLATE) will be returned.
             - str: all errors will be caught and
@@ -92,42 +88,19 @@ class SerialToolNode(RunnableCallable):
                 a ToolMessage with the string value of the result of the 'handle_tool_errors' callable will be returned.
             - False: none of the errors raised by the tools will be caught
         messages_key: The state key in the input that contains the list of messages.
-            The same key will be used for the output from the SerialToolNode.
+            The same key will be used for the output from the ParallelToolNode.
             Defaults to "messages".
-
-    The `SerialToolNode` is roughly analogous to:
-
-    ```python
-    tools_by_name = {tool.name: tool for tool in tools}
-    def serial_tool_node(state: dict):
-        result = []
-        # Filter for only serial tools
-        serial_tool_calls = [call for call in state["tool_calls"] if call["name"] in serial_tools]
-        for tool_call in serial_tool_calls:
-            tool = tools_by_name[tool_call["name"]]
-            observation = tool.invoke(tool_call["args"])
-            result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
-        return {"messages": result}
-    ```
-
-    Important:
-        - The input state can be one of the following:
-            - A dict with a messages key containing a list of messages.
-            - A list of messages.
-            - A list of tool calls.
-        - If operating on a message list, the last message must be an `AIMessage` with
-            `tool_calls` populated.
-        - Tools are executed in the exact order they appear in the tool_calls list.
     """
 
-    name: str = "SerialToolNode"
+    name: str = "ParallelToolNode"
 
     def __init__(
         self,
         tools: Sequence[Union[BaseTool, Callable]],
-        serial_tools: set,
+        parallel_tools: set,
         *,
-        name: str = "serial_tools",
+        name: str = "parallel_tools",
+        max_workers: Optional[int] = None,
         tags: Optional[list[str]] = None,
         handle_tool_errors: Union[
             bool, str, Callable[..., str], tuple[type[Exception], ...]
@@ -140,7 +113,8 @@ class SerialToolNode(RunnableCallable):
         self.tool_to_store_arg: dict[str, Optional[str]] = {}
         self.handle_tool_errors = handle_tool_errors
         self.messages_key = messages_key
-        self.serial_tools = serial_tools
+        self.parallel_tools = parallel_tools
+        self.max_workers = max_workers
         # Initialize hook attributes
         self.before_call_hook: Optional[BeforeCallToolsHook] = None
         self.after_call_hook: Optional[AfterCallToolsHook] = None
@@ -181,26 +155,50 @@ class SerialToolNode(RunnableCallable):
     ) -> Any:
         tool_calls, input_type = self._parse_input(input, store)
         
-        # Filter tool calls to only include serial tools
-        serial_tool_calls = [call for call in tool_calls if call["name"] in self.serial_tools]
+        # Filter tool calls to only include parallel tools
+        parallel_tool_calls = [call for call in tool_calls if call["name"] in self.parallel_tools]
+        remaining_tool_calls = [call for call in tool_calls if call["name"] not in self.parallel_tools]
         
-        if not serial_tool_calls:
-            # If no serial tools to execute, return empty list
-            return {"messages": []} if input_type == "dict" else []
+        if not parallel_tool_calls:
+            # If no parallel tools to execute, return the original tool calls for the next node
+            return {"messages": [], "tool_calls": remaining_tool_calls}
         
-        config_list = get_config_list(config, len(serial_tool_calls))
+        config_list = get_config_list(config, len(parallel_tool_calls))
         outputs = []
         
-        # Process tools sequentially
-        for i, tool_call in enumerate(serial_tool_calls):
-            # Get the individual config for this tool call
-            tool_config = config_list[i] if i < len(config_list) else config_list[-1]
+        # Process tools in parallel using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Create a dictionary to map futures to their corresponding tool calls and configs
+            future_to_tool = {}
             
-            # Run the tool
-            output = self._run_one(tool_call, input_type, tool_config)
-            outputs.append(output)
+            # Submit all tool calls to the executor
+            for i, tool_call in enumerate(parallel_tool_calls):
+                # Get the individual config for this tool call
+                tool_config = config_list[i] if i < len(config_list) else config_list[-1]
+                
+                # Submit the tool call to the executor
+                future = executor.submit(self._run_one, tool_call, input_type, tool_config)
+                future_to_tool[future] = (tool_call, tool_config)
+            
+            # Process completed futures as they finish
+            for future in as_completed(future_to_tool):
+                try:
+                    output = future.result()
+                    outputs.append(output)
+                except Exception as exc:
+                    # If an exception occurs in the thread, log it and create an error message
+                    tool_call, _ = future_to_tool[future]
+                    logger.error(f"Tool {tool_call['name']} generated an exception: {exc}")
+                    error_message = ToolMessage(
+                        content=f"Error executing tool {tool_call['name']}: {str(exc)}",
+                        name=tool_call["name"],
+                        tool_call_id=tool_call["id"],
+                        status="error",
+                    )
+                    outputs.append(error_message)
 
-        return self._combine_tool_outputs(outputs, input_type)
+        # Return the outputs from parallel tools and pass remaining tool calls to the next node
+        return {"messages": outputs, "tool_calls": remaining_tool_calls}
 
     async def _afunc(
         self,
@@ -215,70 +213,63 @@ class SerialToolNode(RunnableCallable):
     ) -> Any:
         tool_calls, input_type = self._parse_input(input, store)
         
-        # Filter tool calls to only include serial tools
-        serial_tool_calls = [call for call in tool_calls if call["name"] in self.serial_tools]
+        # Filter tool calls to only include parallel tools
+        parallel_tool_calls = [call for call in tool_calls if call["name"] in self.parallel_tools]
+        remaining_tool_calls = [call for call in tool_calls if call["name"] not in self.parallel_tools]
         
-        if not serial_tool_calls:
-            # If no serial tools to execute, return empty list
-            return {"messages": []} if input_type == "dict" else []
+        if not parallel_tool_calls:
+            # If no parallel tools to execute, return the original tool calls for the next node
+            return {"messages": [], "tool_calls": remaining_tool_calls}
         
-        config_list = get_config_list(config, len(serial_tool_calls))
+        config_list = get_config_list(config, len(parallel_tool_calls))
         outputs = []
         
-        # Process tools sequentially
-        for i, tool_call in enumerate(serial_tool_calls):
+        # Process tools in parallel using asyncio.gather
+        tasks = []
+        for i, tool_call in enumerate(parallel_tool_calls):
             # Get the individual config for this tool call
             tool_config = config_list[i] if i < len(config_list) else config_list[-1]
             
-            # Run the tool
-            output = await self._arun_one(tool_call, input_type, tool_config)
-            outputs.append(output)
-
-        return self._combine_tool_outputs(outputs, input_type)
-
-    def _combine_tool_outputs(
-        self,
-        outputs: list[ToolMessage],
-        input_type: Literal["list", "dict", "tool_calls"],
-    ) -> list[Union[Command, list[ToolMessage], dict[str, list[ToolMessage]]]]:
-        # preserve existing behavior for non-command tool outputs for backwards
-        # compatibility
-        if not any(isinstance(output, Command) for output in outputs):
-            # TypedDict, pydantic, dataclass, etc. should all be able to load from dict
-            return outputs if input_type == "list" else {self.messages_key: outputs}
-
-        # LangGraph will automatically handle list of Command and non-command node
-        # updates
-        combined_outputs: list[
-            Command | list[ToolMessage] | dict[str, list[ToolMessage]]
-        ] = []
-
-        # combine all parent commands with goto into a single parent command
-        parent_command: Optional[Command] = None
-        for output in outputs:
-            if isinstance(output, Command):
-                if (
-                    output.graph is Command.PARENT
-                    and isinstance(output.goto, list)
-                    and all(isinstance(send, Send) for send in output.goto)
-                ):
-                    if parent_command:
-                        parent_command = replace(
-                            parent_command,
-                            goto=cast(list[Send], parent_command.goto) + output.goto,
-                        )
-                    else:
-                        parent_command = Command(graph=Command.PARENT, goto=output.goto)
-                else:
-                    combined_outputs.append(output)
-            else:
-                combined_outputs.append(
-                    [output] if input_type == "list" else {self.messages_key: [output]}
+            # Create a task for each tool call
+            task = asyncio.create_task(self._arun_one(tool_call, input_type, tool_config))
+            tasks.append(task)
+        
+        # Wait for all tasks to complete
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                # If an exception occurred, create an error message
+                tool_call = parallel_tool_calls[i]
+                logger.error(f"Tool {tool_call['name']} generated an exception: {result}")
+                error_message = ToolMessage(
+                    content=f"Error executing tool {tool_call['name']}: {str(result)}",
+                    name=tool_call["name"],
+                    tool_call_id=tool_call["id"],
+                    status="error",
                 )
+                outputs.append(error_message)
+            else:
+                outputs.append(result)
+ 
+         outputs.append(input[self.messages_key][-1])  # Append the last message to outputs
 
-        if parent_command:
-            combined_outputs.append(parent_command)
-        return combined_outputs
+        # remove the last message from input if it is an AIMessage
+        if isinstance(input, list) and input and isinstance(input[-1], AIMessage):
+            input = input[:-1]
+        elif isinstance(input, dict) and self.messages_key in input:
+            input[self.messages_key] = input[self.messages_key][:-1]
+        elif isinstance(input, BaseModel) and hasattr(input, self.messages_key):
+            input = replace(input, **{self.messages_key: getattr(input, self.messages_key)[:-1]})
+        elif isinstance(input, BaseModel) and hasattr(input, "tool_calls"):
+            input = replace(input, tool_calls=input.tool_calls[:-1])
+        else:
+            # If input is not a list or dict with messages, we assume it's a BaseModel-like state
+            input = deepcopy(input)
+
+        # Return the outputs from parallel tools and pass remaining tool calls to the next node
+        return {"messages": outputs, "tool_calls": remaining_tool_calls}
 
     def _run_one(
         self,
@@ -286,15 +277,6 @@ class SerialToolNode(RunnableCallable):
         input_type: Literal["list", "dict", "tool_calls"],
         config: RunnableConfig,
     ) -> ToolMessage:
-        # Skip if not a serial tool
-        if call["name"] not in self.serial_tools:
-            logger.info(f"Skipping non-serial tool: {call['name']}")
-            return ToolMessage(
-                content=f"Tool {call['name']} skipped (not a serial tool)",
-                name=call["name"],
-                tool_call_id=call["id"],
-                status="skipped",
-            )
         if invalid_tool_message := self._validate_tool_call(call):
             return invalid_tool_message
 
@@ -308,7 +290,7 @@ class SerialToolNode(RunnableCallable):
                 self.before_call_hook(tool_name, tool_args)
             except Exception as hook_error:
                 # Log the error but continue with tool execution
-                print(f"Error in before_call_hook: {hook_error}")
+                logger.error(f"Error in before_call_hook: {hook_error}")
 
         try:
             input = {**call, **{"type": "tool_call"}}
@@ -320,16 +302,11 @@ class SerialToolNode(RunnableCallable):
                     self.after_call_hook(tool_name, tool_args, response)
                 except Exception as hook_error:
                     # Log the error but continue with normal flow
-                    print(f"Error in after_call_hook: {hook_error}")
+                    logger.error(f"Error in after_call_hook: {hook_error}")
 
             return response
 
         # GraphInterrupt is a special exception that will always be raised.
-        # It can be triggered in the following scenarios:
-        # (1) a NodeInterrupt is raised inside a tool
-        # (2) a NodeInterrupt is raised inside a graph node for a graph called as a tool
-        # (3) a GraphInterrupt is raised when a subgraph is interrupted inside a graph called as a tool
-        # (2 and 3 can happen in a "supervisor w/ tools" multi-agent architecture)
         except GraphBubbleUp as e:
             raise e
         except Exception as e:
@@ -361,21 +338,9 @@ class SerialToolNode(RunnableCallable):
                     self.after_call_hook(tool_name, tool_args, error_message)
                 except Exception as hook_error:
                     # Log the error but continue with normal flow
-                    print(f"Error in after_call_hook: {hook_error}")
+                    logger.error(f"Error in after_call_hook: {hook_error}")
                     
             return error_message
-
-        if isinstance(response, Command):
-            return self._validate_tool_command(response, call, input_type)
-        elif isinstance(response, ToolMessage):
-            response.content = cast(
-                Union[str, list], msg_content_output(response.content)
-            )
-            return response
-        else:
-            raise TypeError(
-                f"Tool {call['name']} returned unexpected type: {type(response)}"
-            )
 
     async def _arun_one(
         self,
@@ -383,15 +348,6 @@ class SerialToolNode(RunnableCallable):
         input_type: Literal["list", "dict", "tool_calls"],
         config: RunnableConfig,
     ) -> ToolMessage:
-        # Skip if not a serial tool
-        if call["name"] not in self.serial_tools:
-            logger.info(f"Skipping non-serial tool: {call['name']}")
-            return ToolMessage(
-                content=f"Tool {call['name']} skipped (not a serial tool)",
-                name=call["name"],
-                tool_call_id=call["id"],
-                status="skipped",
-            )
         if invalid_tool_message := self._validate_tool_call(call):
             return invalid_tool_message
 
@@ -405,7 +361,7 @@ class SerialToolNode(RunnableCallable):
                 self.before_call_hook(tool_name, tool_args)
             except Exception as hook_error:
                 # Log the error but continue with tool execution
-                print(f"Error in before_call_hook: {hook_error}")
+                logger.error(f"Error in before_call_hook: {hook_error}")
 
         try:
             input = {**call, **{"type": "tool_call"}}
@@ -417,16 +373,11 @@ class SerialToolNode(RunnableCallable):
                     self.after_call_hook(tool_name, tool_args, response)
                 except Exception as hook_error:
                     # Log the error but continue with normal flow
-                    print(f"Error in after_call_hook: {hook_error}")
+                    logger.error(f"Error in after_call_hook: {hook_error}")
 
             return response
 
         # GraphInterrupt is a special exception that will always be raised.
-        # It can be triggered in the following scenarios:
-        # (1) a NodeInterrupt is raised inside a tool
-        # (2) a NodeInterrupt is raised inside a graph node for a graph called as a tool
-        # (3) a GraphInterrupt is raised when a subgraph is interrupted inside a graph called as a tool
-        # (2 and 3 can happen in a "supervisor w/ tools" multi-agent architecture)
         except GraphBubbleUp as e:
             raise e
         except Exception as e:
@@ -458,21 +409,9 @@ class SerialToolNode(RunnableCallable):
                     self.after_call_hook(tool_name, tool_args, error_message)
                 except Exception as hook_error:
                     # Log the error but continue with normal flow
-                    print(f"Error in after_call_hook: {hook_error}")
+                    logger.error(f"Error in after_call_hook: {hook_error}")
                     
             return error_message
-
-        if isinstance(response, Command):
-            return self._validate_tool_command(response, call, input_type)
-        elif isinstance(response, ToolMessage):
-            response.content = cast(
-                Union[str, list], msg_content_output(response.content)
-            )
-            return response
-        else:
-            raise TypeError(
-                f"Tool {call['name']} returned unexpected type: {type(response)}"
-            )
 
     def _parse_input(
         self,
@@ -498,8 +437,14 @@ class SerialToolNode(RunnableCallable):
             # Assume dataclass-like state that can coerce from dict
             input_type = "dict"
             message = messages[-1]
+        elif tool_calls := input.get("tool_calls", []):
+            # Handle case where tool_calls are passed directly
+            input_type = "dict"
+            return [
+                self.inject_tool_args(call, input, store) for call in tool_calls
+            ], input_type
         else:
-            raise ValueError("No message found in input")
+            raise ValueError("No message or tool_calls found in input")
 
         if not isinstance(message, AIMessage):
             raise ValueError("Last message is not an AIMessage")
@@ -541,7 +486,7 @@ class SerialToolNode(RunnableCallable):
                 input = {self.messages_key: input}
             else:
                 err_msg = (
-                    f"Invalid input to SerialToolNode. Tool {tool_call['name']} requires "
+                    f"Invalid input to ParallelToolNode. Tool {tool_call['name']} requires "
                     f"graph state dict as input."
                 )
                 if any(state_field for state_field in state_args.values()):
@@ -617,59 +562,3 @@ class SerialToolNode(RunnableCallable):
         tool_call_with_state = self._inject_state(tool_call_copy, input)
         tool_call_with_store = self._inject_store(tool_call_with_state, store)
         return tool_call_with_store
-
-    def _validate_tool_command(
-        self,
-        command: Command,
-        call: ToolCall,
-        input_type: Literal["list", "dict", "tool_calls"],
-    ) -> Command:
-        if isinstance(command.update, dict):
-            # input type is dict when SerialToolNode is invoked with a dict input (e.g. {"messages": [AIMessage(..., tool_calls=[...])]})
-            if input_type not in ("dict", "tool_calls"):
-                raise ValueError(
-                    f"Tools can provide a dict in Command.update only when using dict with '{self.messages_key}' key as SerialToolNode input, "
-                    f"got: {command.update} for tool '{call['name']}'"
-                )
-
-            updated_command = deepcopy(command)
-            state_update = cast(dict[str, Any], updated_command.update) or {}
-            messages_update = state_update.get(self.messages_key, [])
-        elif isinstance(command.update, list):
-            # input type is list when SerialToolNode is invoked with a list input (e.g. [AIMessage(..., tool_calls=[...])])
-            if input_type != "list":
-                raise ValueError(
-                    f"Tools can provide a list of messages in Command.update only when using list of messages as SerialToolNode input, "
-                    f"got: {command.update} for tool '{call['name']}'"
-                )
-
-            updated_command = deepcopy(command)
-            messages_update = updated_command.update
-        else:
-            return command
-
-        # convert to message objects if updates are in a dict format
-        messages_update = convert_to_messages(messages_update)
-        has_matching_tool_message = False
-        for message in messages_update:
-            if not isinstance(message, ToolMessage):
-                continue
-
-            if message.tool_call_id == call["id"]:
-                message.name = call["name"]
-                has_matching_tool_message = True
-
-        # validate that we always have a ToolMessage matching the tool call in
-        # Command.update if command is sent to the CURRENT graph
-        if updated_command.graph is None and not has_matching_tool_message:
-            example_update = (
-                '`Command(update={"messages": [ToolMessage("Success", tool_call_id=tool_call_id), ...]}, ...)`'
-                if input_type == "dict"
-                else '`Command(update=[ToolMessage("Success", tool_call_id=tool_call_id), ...], ...)`'
-            )
-            raise ValueError(
-                f"Expected to have a matching ToolMessage in Command.update for tool '{call['name']}', got: {messages_update}. "
-                "Every tool call (LLM requesting to call a tool) in the message history MUST have a corresponding ToolMessage. "
-                f"You can fix it by modifying the tool to return {example_update}."
-            )
-        return updated_command

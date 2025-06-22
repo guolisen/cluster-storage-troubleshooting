@@ -520,30 +520,6 @@ The plan must be comprehensive, logically structured, and include all necessary 
         
         return "\n".join(formatted_entries)
     
-    def _format_draft_plan_as_fallback(self, draft_plan: List[Dict[str, Any]]) -> str:
-        """
-        Format the draft plan as a fallback when LLM refinement fails
-        
-        Args:
-            draft_plan: Draft plan from rule-based generator and static steps
-            
-        Returns:
-            str: Formatted Investigation Plan
-        """
-        try:
-            plan_lines = ["Investigation Plan:"]
-            
-            # Add the draft plan steps
-            for step in draft_plan:
-                step_line = self._format_step_line(step)
-                plan_lines.append(step_line)
-            
-            return "\n".join(plan_lines)
-            
-        except Exception as e:
-            error_msg = handle_exception("_format_draft_plan_as_fallback", e, self.logger)
-            return "Investigation Plan:\nError occurred during plan generation."
-    
     def _format_step_line(self, step: Dict[str, Any]) -> str:
         """
         Format a step into a string line

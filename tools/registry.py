@@ -171,7 +171,19 @@ def get_all_tools() -> List[Any]:
         monitor_volume_latency,
         check_pod_volume_filesystem,
         analyze_volume_space_usage,
-        check_volume_data_integrity
+        check_volume_data_integrity,
+
+        # Testing tools - Pod/Resource creation
+        create_test_pod,
+        create_test_pvc,
+        create_test_storage_class,
+
+        # Testing tools - Resource cleanup
+        cleanup_test_resources,
+        list_test_resources,
+        cleanup_specific_test_pod,
+        cleanup_orphaned_pvs,
+        force_cleanup_stuck_resources
     ]
 
 def get_knowledge_graph_tools() -> List[Any]:
@@ -327,38 +339,24 @@ def get_phase2_tools() -> List[Any]:
     Returns:
         List[Any]: List of Phase 2 tool callables
     """
-    return get_phase1_tools() + [
+    # Tools that are exclusively part of Phase 2 (action-oriented or destructive)
+    # and not already included in get_phase1_tools().
+    exclusive_phase2_tools = [
         # Additional Kubernetes action tools
         kubectl_apply,
         kubectl_delete,
         
         # Hardware action tools
-        fio_performance_test,
-        fsck_check,
+        fio_performance_test, # Can be destructive or intensive
+        fsck_check,           # Can be destructive
         
-        # New disk performance testing tools
-        run_disk_readonly_test,   # Read-only test
-        test_disk_io_performance, # I/O performance test
+        # Testing tools - Pod/Resource creation (currently commented out)
+        # create_test_pod,
+        # create_test_pvc,
+        # create_test_storage_class,
         
-        # Testing tools - Pod/Resource creation
-        #create_test_pod,
-        #create_test_pvc,
-        #create_test_storage_class,
-        
-        # Testing tools - Volume testing
-        run_volume_io_test,
-        validate_volume_mount,
-        test_volume_permissions,
-        run_volume_stress_test,
-        verify_volume_mount,
-        test_volume_io_performance,
-        monitor_volume_latency,
-        check_pod_volume_filesystem,
-        analyze_volume_space_usage,
-        check_volume_data_integrity,
-        
-        # Testing tools - Resource cleanup
-        #cleanup_test_resources,
+        # Testing tools - Resource cleanup (currently commented out)
+        # cleanup_test_resources,
         #list_test_resources,
         #cleanup_specific_test_pod,
         #cleanup_orphaned_pvs,
@@ -405,12 +403,14 @@ def get_testing_tools() -> List[Any]:
 def get_remediation_tools() -> List[Any]:
     """
     Get tools needed for remediation and analysis phases
-    This is the main function used by the troubleshooting system
+    This is the main function used by the troubleshooting system.
+    Phase 2 tools are generally suitable for this as they include investigation + action.
     
     Returns:
         List[Any]: List of tool callables for investigation and remediation
     """
-    return get_all_tools()
+    return get_phase2_tools()
 
-# Maintain backward compatibility
+# Maintain backward compatibility - pointing to get_phase2_tools is more appropriate
+# as it contains both investigation (Phase 1) and action tools.
 define_remediation_tools = get_remediation_tools

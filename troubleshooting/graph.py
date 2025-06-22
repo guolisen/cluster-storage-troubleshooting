@@ -11,9 +11,8 @@ Refactored to support parallel and serial tool execution for improved performanc
 import json
 import logging
 import os
-import re
 import yaml
-from typing import Dict, Any, List, TypedDict, Optional, Union, Callable, Set, Tuple
+from typing import Dict, Any, List, TypedDict, Optional, Union, Set, Tuple
 from tools.core.mcp_adapter import get_mcp_adapter
 
 # Configure logging (file only, no console output)
@@ -26,7 +25,9 @@ from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.prebuilt import tools_condition
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage
 from phases.llm_factory import LLMFactory
-from troubleshooting.execute_tool_node import ExecuteToolNode, BeforeCallToolsHook, AfterCallToolsHook
+from troubleshooting.execute_tool_node import ExecuteToolNode
+from troubleshooting.hook_manager import HookManager
+from troubleshooting.end_conditions import EndConditionFactory
 from rich.console import Console
 from rich.panel import Panel
 
@@ -641,229 +642,23 @@ Adding the analysis and summary for each call tools steps
 
         return {"messages": state["messages"] + [response]}
     
-    def check_explicit_end_markers_with_llm(content: str, model) -> bool:
-        """
-        Use LLM to check if content contains explicit or implicit end markers.
-        
-        Args:
-            content: The content to check for end markers
-            model: The LLM model to use for checking
-            
-        Returns:
-            bool: True if end markers detected, False otherwise
-        """
-        # Create a focused prompt for the LLM
-        system_prompt = """
-        You are an AI assistant tasked with determining if a text contains explicit or implicit markers 
-        indicating the end of a process or conversation. Your task is to analyze the given text and 
-        determine if it contains phrases or markers that suggest completion or termination.
-        
-        Examples of explicit end markers include:
-        - "[END_GRAPH]", "[END]", "End of graph", "GRAPH END"
-        - "This concludes the analysis"
-        - "Final report"
-        - "Investigation complete"
-        - "FIX PLAN", "Fix Plan"
-        - " Would you like to"
-        - A question from AI that indicates the end of the process, such as " Would you like to proceed with planning the disk replacement or further investigate filesystem integrity?"
-        - If just a call tools result, then return 'NO'
+        # Removed the LLM-based end condition checking functions as they've been moved to end_conditions.py
 
-        Examples of implicit end markers include:
-        - A summary followed by recommendations with no further questions
-        - A conclusion paragraph that wraps up all findings
-        - A complete analysis with all required sections present
-        - A question from AI that indicates the end of the process, such as "Is there anything else I can help you with?" or "Do you have any further questions?"
-        
-        Respond with "YES" if you detect end markers, or "NO" if you don't.
-        """
-        
-        user_prompt = f"""
-        Analyze the following text and determine if it contains explicit or implicit end markers:
-        
-        {content}  # Limit content length to avoid token limits
-        
-        Does this text contain markers indicating it's the end of the process? Respond with only YES or NO.
-        """
-        
-        try:
-            # Create messages for the LLM
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_prompt)
-            ]
-            
-            # Call the LLM
-            response = model.invoke(messages)
-            
-            # Check if the response indicates end markers
-            response_text = response.content.strip().upper()
-            
-            # Log the LLM's response
-            logging.info(f"LLM end marker detection response: {response_text}")
-            
-            # Return True if the LLM detected end markers
-            return "YES" in response_text
-        except Exception as e:
-            # Log any errors and fall back to the original behavior
-            logging.error(f"Error in LLM end marker detection: {e}")
-            
-            # Fall back to simple string matching
-            return any(marker in content for marker in ["[END_GRAPH]", "[END]", "End of graph", "GRAPH END"])
-
-    def check_completion_indicators_with_llm(content: str, phase: str, model) -> bool:
-        """
-        Use LLM to check if content indicates task completion based on phase requirements.
-        
-        Args:
-            content: The content to check for completion indicators
-            phase: The current phase (phase1 or phase2)
-            model: The LLM model to use for checking
-            
-        Returns:
-            bool: True if completion indicators detected, False otherwise
-        """
-        # Define phase-specific required sections
-        phase1_sections = [
-            "Summary of Findings:",
-            "Special Case Detected",
-            "Detailed Analysis:",
-            "Relationship Analysis:",
-            "Investigation Process:",
-            "Potential Root Causes:",
-            "Root Cause:",
-            "Fix Plan:",
-            "Summary",
-            "Recommendations"
-        ]
-        
-        phase2_sections = [
-            "Actions Taken:",
-            "Test Results:",
-            "Resolution Status:",
-            "Remaining Issues:",
-            "Recommendations:"
-            "Summary of Findings:",
-            "Special Case Detected",
-            "Detailed Analysis:",
-            "Relationship Analysis:",
-            "Investigation Process:",
-            "Potential Root Causes:",
-            "Root Cause:",
-            "Fix Plan:",
-            "Summary",
-            "Recommendations"
-        ]
-        
-        # Select the appropriate sections based on the phase
-        required_sections = phase1_sections if phase == "phase1" else phase2_sections
-        
-        # Create a focused prompt for the LLM
-        system_prompt = f"""
-        You are an AI assistant tasked with determining if a text contains sufficient information 
-        to indicate that a troubleshooting process is complete. Your task is to analyze the given text 
-        and determine if it contains the required sections and information for a {phase} report.
-        
-        For {phase}, the following sections are expected in a complete report:
-        {', '.join(required_sections)}
-        
-        A complete report should have some of these sections and provide comprehensive information 
-        in each section. The report should feel complete and not leave major questions unanswered.
-        If just a call tools result, then return 'NO'.
-        
-        Respond with "YES" if you believe the text represents a complete report, or "NO" if it seems incomplete.
-        """
-        
-        user_prompt = f"""
-        Analyze the following text and determine if it represents a complete {phase} report:
-        
-        {content}  # Limit content length to avoid token limits
-        
-        Does this text contain sufficient information to be considered a complete report? Respond with only YES or NO.
-        """
-        
-        try:
-            # Create messages for the LLM
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_prompt)
-            ]
-            
-            # Call the LLM
-            response = model.invoke(messages)
-            
-            # Check if the response indicates completion
-            response_text = response.content.strip().upper()
-            
-            # Log the LLM's response
-            logging.info(f"LLM completion detection response for {phase}: {response_text}")
-            
-            # Return True if the LLM detected completion
-            return "YES" in response_text
-        except Exception as e:
-            # Log any errors and fall back to the original behavior
-            logging.error(f"Error in LLM completion detection: {e}")
-            
-            # Fall back to counting sections
-            sections_found = sum(1 for section in required_sections if section in content)
-            threshold = 3 if phase == "phase1" else 2
-            return sections_found >= threshold
-
-# Define the end condition check function
+    # Create an end condition checker using the factory
+    end_condition_checker = EndConditionFactory.create_checker(
+        "llm" if config_data.get("llm_end_condition_check", True) else "simple",
+        model=model,
+        phase=phase,
+        max_iterations=config_data.get("max_iterations", 30)
+    )
+    
+    # Define the end condition check function that delegates to the checker
     def check_end_conditions(state: MessagesState) -> Dict[str, str]:
         """
-        Check if specific end conditions are met using LLM assistance when available
+        Delegate end condition checking to the appropriate strategy
         Returns {"result": "end"} if the graph should end, {"result": "continue"} if it should continue
         """
-        messages = state["messages"]
-        if not messages:
-            return {"result": "continue"}
-            
-        last_message = messages[-1]
-        
-        # Situation 1: Check if the last message is a tool response
-        # Check if we've reached max iterations
-        max_iterations = config_data.get("max_iterations", 30)
-        ai_messages = [m for m in messages if getattr(m, "type", "") == "ai"]
-        if len(ai_messages) > max_iterations:
-            logging.info(f"Ending graph: reached max iterations ({max_iterations})")
-            return {"result": "end"}
-            
-        # Skip content checks if the last message isn't from the AI
-        if getattr(last_message, "type", "") != "ai":
-            return {"result": "continue"}
-            
-        content = getattr(last_message, "content", "")
-        if not content:
-            return {"result": "continue"}
-
-        # Situation 2: Check if has explicit end markers in the content using LLM
-        if check_explicit_end_markers_with_llm(content, model):
-            logging.info("Ending graph: LLM detected explicit end markers")
-            return {"result": "end"}
-        
-        # Situation 3: Check for specific phrases indicating completion using LLM
-        if check_completion_indicators_with_llm(content, phase, model):
-            logging.info("Ending graph: LLM detected completion indicators")
-            return {"result": "end"}
-        
-        # Situation 4: Check for convergence (model repeating itself)
-        if len(ai_messages) > 3:
-            # Compare the last message with the third-to-last message (skipping the tool response in between)
-            last_content = content
-            third_to_last_content = getattr(ai_messages[-3], "content", "")
-            
-            # Simple similarity check - if they start with the same paragraph
-            if last_content and third_to_last_content:
-                # Get first 100 chars of each message
-                last_start = last_content[:100] if len(last_content) > 100 else last_content
-                third_start = third_to_last_content[:100] if len(third_to_last_content) > 100 else third_to_last_content
-                
-                if last_start == third_start:
-                    logging.info("Ending graph: detected convergence (model repeating itself)")
-                    return {"result": "end"}
-        
-        # Default: continue execution
-        return {"result": "continue"}
+        return end_condition_checker.check_conditions(state)
 
     # Build state graph
     logging.info("Building state graph with enhanced end conditions")
@@ -888,13 +683,20 @@ Adding the analysis and summary for each call tools steps
         logging.info(f"Found {len(uncategorized_tools)} uncategorized tools, defaulting to serial")
         serial_tools.update(uncategorized_tools)
     
-    # Create ExecuteToolNode for both parallel and serial execution
+    # Create a hook manager for console output
+    hook_manager = HookManager(console=console, file_console=file_console)
+    
+    # Register hook functions from this module with the hook manager
+    hook_manager.register_before_call_hook(before_call_tools_hook)
+    hook_manager.register_after_call_hook(after_call_tools_hook)
+    
+    # Create ExecuteToolNode with the configured tools
     logging.info(f"Adding node: execute_tools (ExecuteToolNode for execution of {len(parallel_tools)} parallel and {len(serial_tools)} serial tools)")
     execute_tool_node = ExecuteToolNode(tools, parallel_tools, serial_tools, name="execute_tools")
     
-    # Register hook functions for ExecuteToolNode
-    execute_tool_node.register_before_call_hook(before_call_tools_hook)
-    execute_tool_node.register_after_call_hook(after_call_tools_hook)
+    # Register hook manager with the ExecuteToolNode
+    execute_tool_node.register_before_call_hook(hook_manager.run_before_hook)
+    execute_tool_node.register_after_call_hook(hook_manager.run_after_hook)
     
     # Add ExecuteToolNode to the graph
     builder.add_node("execute_tools", execute_tool_node)

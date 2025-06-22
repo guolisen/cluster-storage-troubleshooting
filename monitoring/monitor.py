@@ -130,16 +130,28 @@ def remove_volume_io_error_annotation(kube_client, pod_name, namespace):
             logging.debug(f"No 'volume-io-error' annotation found on pod {namespace}/{pod_name}")
             return True
         
-        # Remove the annotation
-        pod.metadata.annotations.pop('volume-io-error')
+        # Create a JSON patch to explicitly remove the annotation
+        patch_body = {
+            "metadata": {
+                "annotations": {
+                    "volume-io-error": None  # Setting to None explicitly removes the key
+                }
+            }
+        }
         
-        # Update the pod
+        # Update the pod with explicit removal
         kube_client.patch_namespaced_pod(
             name=pod_name,
             namespace=namespace,
-            body={"metadata": {"annotations": pod.metadata.annotations}}
+            body=patch_body
         )
         
+        # Verify the annotation was actually removed
+        updated_pod = kube_client.read_namespaced_pod(name=pod_name, namespace=namespace)
+        if updated_pod.metadata.annotations and 'volume-io-error' in updated_pod.metadata.annotations:
+            logging.warning(f"Failed to remove 'volume-io-error' annotation from pod {namespace}/{pod_name} - annotation still exists after patch")
+            return False
+            
         logging.info(f"Successfully removed 'volume-io-error' annotation from pod {namespace}/{pod_name}")
         return True
     except ApiException as e:

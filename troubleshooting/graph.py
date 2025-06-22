@@ -89,7 +89,7 @@ def before_call_tools_hook(tool_name: str, args: Dict[str, Any], call_type: str 
             tool_panel = Panel(
                 f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n\n"
                 f"[bold yellow]Arguments:[/bold yellow]\n[blue]{formatted_args}[/blue]",
-                title="[bold magenta]Thinking Step",
+                title="[bold magenta]Start to Call Tools",
                 border_style="magenta",
                 safe_box=True
             )
@@ -99,7 +99,7 @@ def before_call_tools_hook(tool_name: str, args: Dict[str, Any], call_type: str 
             tool_panel = Panel(
                 f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n\n"
                 f"[bold yellow]Arguments:[/bold yellow] None",
-                title="[bold magenta]Thinking Step",
+                title="[bold magenta]Start to Call Tools",
                 border_style="magenta",
                 safe_box=True
             )
@@ -137,7 +137,7 @@ def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any, cal
         tool_panel = Panel(
             f"[bold cyan]Tool completed:[/bold cyan] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n"
             f"[bold cyan]Result:[/bold cyan]\n[yellow]{formatted_result}[/yellow]",
-            title="[bold magenta]Call tools",
+            title="[bold magenta]Call tools Result",
             border_style="magenta",
             safe_box=True
         )

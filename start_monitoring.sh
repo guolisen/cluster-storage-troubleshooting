@@ -12,5 +12,7 @@ if [ ! -f "config.yaml" ]; then
     exit 1
 fi
 
+export PYTHONPATH=$(pwd)
+
 # Start the monitoring script
 python3 monitoring/monitor.py

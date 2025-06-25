@@ -92,8 +92,8 @@ class MCPAdapter:
                 
                 # Create MCP client for this server
                 self.logger.info(f"Initializing MCP server: {server_name} ({server_type})")
-                server_config = {server_name: server_config_dict}
-                self.mcp_clients[server_name] = MultiServerMCPClient(server_config)
+                server_config_client = {server_name: server_config_dict}
+                self.mcp_clients[server_name] = MultiServerMCPClient(server_config_client)
                 
                 # Get tools from this server 
                 tools = await self.mcp_clients[server_name].get_tools()

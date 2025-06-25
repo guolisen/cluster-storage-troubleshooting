@@ -49,6 +49,7 @@ plan_phase:
   use_llm: true  
   timeout_seconds: 1800
   static_plan_step_path: "data/static_plan_step.json"
+  use_react: true  # Enable ReAct graph for plan phase
 
 # Troubleshooting Configuration
 troubleshoot:

@@ -13,6 +13,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from knowledge_graph import KnowledgeGraph
 from phases.investigation_planner import InvestigationPlanner
 from phases.utils import validate_knowledge_graph, generate_basic_fallback_plan, handle_exception
+from phases.plan_phase_react import run_plan_phase_react, PlanPhaseReActGraph
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +21,16 @@ class PlanPhase:
     """
     Orchestrates the Plan Phase of the troubleshooting process
     
-    The Plan Phase follows a three-step process to generate an Investigation Plan:
-    1. Rule-based preliminary steps - Generate critical initial investigation steps
-    2. Static plan steps integration - Add mandatory steps from static_plan_step.json
-    3. LLM refinement - Refine and supplement the plan using LLM without tool invocation
+    The Plan Phase can use one of two approaches to generate an Investigation Plan:
+    1. Traditional approach (default):
+       - Rule-based preliminary steps - Generate critical initial investigation steps
+       - Static plan steps integration - Add mandatory steps from static_plan_step.json
+       - LLM refinement - Refine and supplement the plan using LLM without tool invocation
+    
+    2. ReAct graph approach (when use_react=True):
+       - Implements a ReAct (Reasoning and Acting) graph using LangGraph
+       - Exclusively uses MCP tools for function calling to gather information
+       - Follows the standard ReAct pattern: reasoning, acting, observing in a loop
     
     This phase uses the Knowledge Graph from Phase 0, historical experience data, and
     the complete Phase1 tool registry to produce a comprehensive Investigation Plan.
@@ -39,6 +46,10 @@ class PlanPhase:
         self.config_data = config_data or {}
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.investigation_planner = None
+        
+        # Check if ReAct graph should be used
+        self.use_react = self.config_data.get('plan_phase', {}).get('use_react', False)
+        self.logger.info(f"Plan Phase initialized with {'ReAct' if self.use_react else 'traditional'} approach")
     
     def execute(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
                volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -58,10 +69,15 @@ class PlanPhase:
         self.logger.info(f"Executing Plan Phase for {namespace}/{pod_name} volume {volume_path}")
         
         try:
-            # Generate the investigation plan
-            return self._generate_investigation_plan(
-                knowledge_graph, pod_name, namespace, volume_path, message_list
-            )
+            # Generate the investigation plan using either ReAct graph or traditional approach
+            if self.use_react:
+                return self._generate_investigation_plan_react(
+                    knowledge_graph, pod_name, namespace, volume_path, message_list
+                )
+            else:
+                return self._generate_investigation_plan(
+                    knowledge_graph, pod_name, namespace, volume_path, message_list
+                )
             
         except Exception as e:
             error_msg = handle_exception("execute", e, self.logger)
@@ -72,7 +88,7 @@ class PlanPhase:
     def _generate_investigation_plan(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
                                    volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:
         """
-        Generate an investigation plan using the Investigation Planner
+        Generate an investigation plan using the traditional Investigation Planner
         
         Args:
             knowledge_graph: KnowledgeGraph instance from Phase 0
@@ -94,6 +110,54 @@ class PlanPhase:
         
         # Parse the plan into a structured format for Phase 1
         structured_plan = self._parse_investigation_plan(investigation_plan)
+        
+        # Return results
+        return {
+            "status": "success",
+            "investigation_plan": investigation_plan,
+            "structured_plan": structured_plan,
+            "pod_name": pod_name,
+            "namespace": namespace,
+            "volume_path": volume_path,
+            "message_list": message_list
+        }
+    
+    async def _generate_investigation_plan_react(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
+                                              volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:
+        """
+        Generate an investigation plan using the ReAct graph
+        
+        Args:
+            knowledge_graph: KnowledgeGraph instance from Phase 0
+            pod_name: Name of the pod with the error
+            namespace: Namespace of the pod
+            volume_path: Path of the volume with I/O error
+            message_list: Optional message list for chat mode
+            
+        Returns:
+            Dict[str, Any]: Results of the plan generation
+        """
+        self.logger.info(f"Generating investigation plan using ReAct graph for {namespace}/{pod_name} volume {volume_path}")
+        
+        # Prepare collected info with knowledge graph
+        collected_info = {'knowledge_graph': knowledge_graph}
+        
+        # Run the ReAct graph
+        investigation_plan, updated_message_list = await run_plan_phase_react(
+            pod_name, namespace, volume_path, collected_info, self.config_data
+        )
+        
+        # Parse the plan into a structured format for Phase 1
+        structured_plan = self._parse_investigation_plan(investigation_plan)
+        
+        # Merge message lists if both exist
+        if message_list and updated_message_list:
+            # Keep user messages from original list and add new messages
+            for msg in updated_message_list:
+                if msg["role"] != "user" or msg not in message_list:
+                    message_list.append(msg)
+        elif updated_message_list:
+            message_list = updated_message_list
         
         # Return results
         return {
@@ -343,7 +407,18 @@ async def run_plan_phase(pod_name, namespace, volume_path, collected_info, confi
         
         # Initialize and execute Plan Phase
         plan_phase = PlanPhase(config_data)
-        results = plan_phase.execute(knowledge_graph, pod_name, namespace, volume_path, message_list)
+        
+        # Execute the plan phase
+        if plan_phase.use_react:
+            # For ReAct approach, we need to await the async execution
+            logger.info("Using ReAct graph approach for plan generation")
+            results = await plan_phase._generate_investigation_plan_react(
+                knowledge_graph, pod_name, namespace, volume_path, message_list
+            )
+        else:
+            # For traditional approach, use synchronous execution
+            logger.info("Using traditional approach for plan generation")
+            results = plan_phase.execute(knowledge_graph, pod_name, namespace, volume_path, message_list)
         
         # Log the results
         logger.info(f"Plan Phase completed with status: {results['status']}")

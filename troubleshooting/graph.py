@@ -232,7 +232,7 @@ def create_troubleshooting_graph_with_context(collected_info: Dict[str, Any], ph
     # Build the graph
     graph = _build_graph(call_model, check_end_conditions, execute_tool_node)
     
-    logging.info("Graph compilation complete")
+    logging.info("Graph compilation complete")    
     return graph
 
 def _initialize_llm(config_data: Dict[str, Any], streaming: bool, phase: str):

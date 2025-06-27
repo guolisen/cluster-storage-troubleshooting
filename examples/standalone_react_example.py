@@ -13,6 +13,7 @@ import json
 import sys
 import os
 from typing import Dict, List, Any
+from langchain_core.messages import SystemMessage, HumanMessage
 
 # Add parent directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -62,10 +63,64 @@ async def run_standalone_react_example():
     logger.info("Building ReAct graph")
     graph = react_graph.build_graph()
     
+    # Prepare initial messages
+    logger.info("Preparing initial messages")
+    # Create system message with instructions for ReAct
+    system_prompt = """You are an AI assistant tasked with generating an Investigation Plan for troubleshooting Kubernetes volume I/O errors.
+You are operating in a ReAct (Reasoning and Acting) framework where you can:
+1. REASON about the problem and identify knowledge gaps
+2. ACT by calling external tools to gather information
+3. OBSERVE the results and update your understanding
+4. Continue this loop until you have enough information to create a comprehensive plan
+
+Your goal is to create a detailed Investigation Plan that identifies potential problems and provides specific steps to diagnose and resolve volume read/write errors.
+
+When you identify a knowledge gap, use the appropriate MCP tool to gather the information you need. Don't guess or make assumptions when you can use a tool to get accurate information.
+
+When you've completed the Investigation Plan, include the marker [END_GRAPH] at the end of your message.
+"""
+    
+    # Create user message with context
+    kg_summary = knowledge_graph.get_summary() if knowledge_graph else {}
+    issues = knowledge_graph.get_all_issues() if knowledge_graph else []
+    
+    kg_context = f"""
+Knowledge Graph Summary:
+{json.dumps(kg_summary, indent=2)}
+
+Issues:
+{json.dumps(issues, indent=2)}
+"""
+    
+    user_prompt = f"""# INVESTIGATION PLAN GENERATION TASK
+## TARGET: Volume read/write errors in pod {pod_name} (namespace: {namespace}, volume path: {volume_path})
+
+I need you to create a comprehensive Investigation Plan for troubleshooting this volume I/O error.
+
+## BACKGROUND INFORMATION
+
+### KNOWLEDGE GRAPH CONTEXT
+{kg_context}
+
+## TASK
+1. Analyze the available information to understand the context
+2. Identify any knowledge gaps that need to be filled
+3. Use MCP tools to gather additional information as needed
+4. Create a comprehensive Investigation Plan with specific steps to diagnose and resolve the volume I/O error
+
+Please start by analyzing the available information and identifying any knowledge gaps.
+"""
+    
+    # Create message list
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_prompt)
+    ]
+    
     # Prepare initial state
     logger.info("Preparing initial state")
     initial_state = {
-        "messages": react_graph.prepare_initial_messages(knowledge_graph, pod_name, namespace, volume_path),
+        "messages": messages,
         "iteration_count": 0,
         "tool_call_count": 0,
         "knowledge_gathered": {},

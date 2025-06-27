@@ -54,7 +54,7 @@ class InvestigationPlanner:
         self.rule_based_plan_generator = RuleBasedPlanGenerator(knowledge_graph)
         self.static_plan_step_reader = StaticPlanStepReader(config_data)
     
-    def generate_investigation_plan(self, pod_name: str, namespace: str, volume_path: str, 
+    async def generate_investigation_plan(self, pod_name: str, namespace: str, volume_path: str, 
                                   message_list: List[Dict[str, str]] = None,
                                   use_react: bool = True) -> Tuple[str, List[Dict[str, str]]]:
         """
@@ -74,7 +74,7 @@ class InvestigationPlanner:
         
         try:
             # Generate the plan using the three-step process
-            formatted_plan, updated_message_list = self._generate_plan_with_three_step_process(
+            formatted_plan, updated_message_list = await self._generate_plan_with_three_step_process(
                 pod_name, namespace, volume_path, message_list, use_react
             )
             return formatted_plan, updated_message_list
@@ -88,7 +88,7 @@ class InvestigationPlanner:
             
             return fallback_plan, updated_message_list
     
-    def _generate_plan_with_three_step_process(self, pod_name: str, namespace: str, volume_path: str, 
+    async def _generate_plan_with_three_step_process(self, pod_name: str, namespace: str, volume_path: str, 
                                              message_list: List[Dict[str, str]] = None,
                                              use_react: bool = True) -> Tuple[str, List[Dict[str, str]]]:
         """
@@ -125,17 +125,17 @@ class InvestigationPlanner:
         
         if use_llm and self.llm_plan_generator.llm is not None:
             # Refine with LLM
-            return self._refine_plan_with_llm(draft_plan, pod_name, namespace, volume_path, 
-                                            kg_context, message_list, use_react)
+            return await self._refine_plan_with_llm(draft_plan, pod_name, namespace, volume_path, 
+                                                 kg_context, message_list, use_react)
         else:
             # Format draft plan directly
             return self._format_draft_plan_with_message_list(draft_plan, pod_name, namespace, 
                                                           volume_path, message_list)
     
-    def _refine_plan_with_llm(self, draft_plan: List[Dict[str, Any]], pod_name: str, namespace: str, 
-                            volume_path: str, kg_context: Dict[str, Any], 
-                            message_list: List[Dict[str, str]] = None,
-                            use_react: bool = True) -> Tuple[str, List[Dict[str, str]]]:
+    async def _refine_plan_with_llm(self, draft_plan: List[Dict[str, Any]], pod_name: str, namespace: str, 
+                                  volume_path: str, kg_context: Dict[str, Any], 
+                                  message_list: List[Dict[str, str]] = None,
+                                  use_react: bool = True) -> Tuple[str, List[Dict[str, str]]]:
         """
         Refine the plan using LLM
         
@@ -157,7 +157,7 @@ class InvestigationPlanner:
         phase1_tools = self.tool_registry_builder.prepare_tool_registry()
         
         # Generate final plan using LLM refinement
-        return self.llm_plan_generator.refine_plan(
+        return await self.llm_plan_generator.refine_plan(
             draft_plan, pod_name, namespace, volume_path, kg_context, phase1_tools, message_list, use_react
         )
     

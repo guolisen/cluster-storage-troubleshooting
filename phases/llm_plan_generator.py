@@ -8,12 +8,14 @@ This module contains utilities for generating investigation plans using LLMs.
 import logging
 import json
 import inspect
+import asyncio
 from typing import Dict, List, Any, Optional, Tuple
 from phases.llm_factory import LLMFactory
 from phases.utils import handle_exception, format_json_safely
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 from tools.core.mcp_adapter import get_mcp_adapter
+from phases.plan_phase_react import PlanPhaseReActGraph, run_plan_phase_react
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,12 @@ class LLMPlanGenerator:
             self.mcp_tools = self.mcp_adapter.get_tools_for_phase('plan_phase')
             if self.mcp_tools:
                 self.logger.info(f"Loaded {len(self.mcp_tools)} MCP tools for Plan Phase")
+                
+        # Initialize ReAct graph if needed
+        self.react_graph = None
+        if self.config_data.get('plan_phase', {}).get('use_react', False):
+            self.logger.info("Initializing Plan Phase ReAct Graph")
+            self.react_graph = PlanPhaseReActGraph(self.config_data)
     
     def _initialize_llm(self) -> Optional[BaseChatModel]:
         """
@@ -61,16 +69,21 @@ class LLMPlanGenerator:
             # Check if streaming is enabled in config
             streaming_enabled = self.config_data.get('llm', {}).get('streaming', False)
             
+            # Check if React mode is enabled
+            use_react = self.config_data.get('plan_phase', {}).get('use_react', False)
+            
             # Create LLM with streaming if enabled
-            return llm_factory.create_llm(
+            llm = llm_factory.create_llm(
                 streaming=streaming_enabled,
                 phase_name="plan_phase"
             )
+            
+            return llm
         except Exception as e:
             error_msg = handle_exception("_initialize_llm", e, self.logger)
             return None
     
-    def refine_plan(self, draft_plan: List[Dict[str, Any]], pod_name: str, namespace: str, 
+    async def refine_plan(self, draft_plan: List[Dict[str, Any]], pod_name: str, namespace: str, 
                    volume_path: str, kg_context: Dict[str, Any], phase1_tools: List[Dict[str, Any]],
                    message_list: List[Dict[str, str]] = None, use_react: bool = True) -> Tuple[str, List[Dict[str, str]]]:
         """
@@ -100,7 +113,7 @@ class LLMPlanGenerator:
             messages = self._prepare_messages(system_prompt, user_message, message_list)
             
             # Call LLM and process response
-            return self._call_llm_and_process_response(
+            return await self._call_llm_and_process_response(
                 messages, pod_name, namespace, volume_path, message_list, user_message, use_react
             )
             
@@ -182,6 +195,8 @@ These tools will be used in next phases (reference only, do not invoke):
 These MCP tools can be used for cloud-specific diagnostics:
 {mcp_tools_str}
 
+When you identify a knowledge gap, use the appropriate MCP tool to gather the information you need. Don't guess or make assumptions when you can use a tool to get accurate information.
+
 ## PLANNING INSTRUCTIONS
 
 ### PRIMARY OBJECTIVE
@@ -200,7 +215,7 @@ Create a comprehensive investigation plan that identifies potential problems and
 6. Ensure all steps reference only tools from the Phase1 tool registry
 
 ## IMPORTANT CONSTRAINTS
-1. Do NOT invoke any tools - only reference them in your plan
+1. Search related information by MCP tools as referenced in the AVAILABLE TOOLS section at first
 2. Include static steps from the draft plan without modification
 3. Use historical experience data to inform additional steps and refinements
 4. Ensure all tool references follow the format shown in the AVAILABLE TOOLS
@@ -267,7 +282,7 @@ Please start by analyzing the available information and identifying any knowledg
                 HumanMessage(content=user_message)
             ]
     
-    def _call_llm_and_process_response(self, messages: List[Dict[str, str]], 
+    async def _call_llm_and_process_response(self, messages: List[Dict[str, str]], 
                                      pod_name: str, namespace: str, volume_path: str,
                                      message_list: List[Dict[str, str]] = None,
                                      user_message: str = "", 
@@ -291,9 +306,40 @@ Please start by analyzing the available information and identifying any knowledg
         self.logger.info("This may take a few moments...")
         
         # Call model with appropriate approach based on mode
+        if use_react and self.mcp_tools and self.react_graph:
+            # React mode with PlanPhaseReActGraph
+            self.logger.info(f"Using PlanPhaseReActGraph with {len(self.mcp_tools)} MCP tools")
+            
+            try:
+                # Run the Plan Phase ReAct graph
+                plan_text, updated_messages = await run_plan_phase_react(
+                    pod_name=pod_name,
+                    namespace=namespace,
+                    volume_path=volume_path,
+                    messages=messages,  # Pass the messages directly
+                    config_data=self.config_data
+                )
+                
+                # Update message list with the result
+                updated_message_list = self._update_message_list_from_react(message_list, updated_messages)
+                
+                # Ensure the plan has the required format
+                if "Investigation Plan:" not in plan_text:
+                    plan_text = self._format_raw_plan(plan_text, pod_name, namespace, volume_path)
+                
+                self.logger.info("Successfully generated LLM-based investigation plan using PlanPhaseReActGraph")
+                return plan_text, updated_message_list
+                
+            except Exception as e:
+                error_msg = handle_exception("_call_llm_and_process_response (PlanPhaseReActGraph)", e, self.logger)
+                self.logger.warning(f"Failed to use PlanPhaseReActGraph: {error_msg}, falling back to legacy mode")
+                # Fall back to legacy mode if React graph fails
+                use_react = False
+        
+        # Legacy mode (either by choice or as fallback)
         if use_react and self.mcp_tools:
-            # React mode with MCP tools
-            self.logger.info(f"Using React mode with {len(self.mcp_tools)} MCP tools")
+            # Simple React mode with bound tools
+            self.logger.info(f"Using simple React mode with {len(self.mcp_tools)} MCP tools")
             response = self.llm.bind_tools(self.mcp_tools).invoke(messages)
         else:
             # Legacy mode or React mode without MCP tools
@@ -392,13 +438,13 @@ TASK:
 1. Review the draft plan containing preliminary steps from rule-based analysis and mandatory static steps
 2. Analyze the Knowledge Graph and historical experience data
 3. Refine the plan by:
-   - Respecting existing steps (do not remove or modify static steps)
+   - Respecting existing steps (do not remove or modify static steps as much as possible)
    - Adding necessary additional steps using only the provided Phase1 tools
    - Reordering steps if needed for logical flow
    - Adding fallback steps for error handling
 
 CONSTRAINTS:
-- You must NOT invoke any tools - only reference them in your plan
+- When you identify a knowledge gap, use the appropriate MCP tool to gather the information you need. Don't guess or make assumptions when you can use a tool to get accurate information.
 - You must only reference tools available in the Phase1 tool registry
 - All tool references must match the exact name and parameter format shown in the tools registry
 - Include at least one disk-related check step and one volume-related check step.
@@ -419,13 +465,12 @@ The plan must be comprehensive, logically structured, and include all necessary 
         # Add React-specific additions if in React mode
         if use_react:
             # Get available MCP tools information
-            #mcp_tools_info = ""
-            #if hasattr(self, 'mcp_tools') and self.mcp_tools:
-            #    mcp_tools_info = "\n".join([
-            #        f"- {tool.name}: {tool.description}" for tool in self.mcp_tools
-            #    ])
-            #Available MCP tools:
-            #{mcp_tools_info}
+            mcp_tools_info = ""
+            if hasattr(self, 'mcp_tools') and self.mcp_tools:
+                mcp_tools_info = "\n".join([
+                    f"- {tool.name}: {tool.description}" for tool in self.mcp_tools
+                ])
+
 
             react_additions = f"""
 You are operating in a ReAct (Reasoning and Acting) framework where you can:
@@ -433,6 +478,9 @@ You are operating in a ReAct (Reasoning and Acting) framework where you can:
 2. ACT by calling external tools to gather information
 3. OBSERVE the results and update your understanding
 4. Continue this loop until you have enough information to create a comprehensive plan
+
+Available MCP tools:
+{mcp_tools_info}
 
 When you identify a knowledge gap, use the appropriate MCP tool to gather the information you need. Don't guess or make assumptions when you can use a tool to get accurate information.
 
@@ -613,3 +661,93 @@ When you've completed the Investigation Plan, include the marker [END_GRAPH] at 
         """
         from phases.utils import generate_basic_fallback_plan
         return generate_basic_fallback_plan(pod_name, namespace, volume_path)
+    
+    def _extract_kg_context_from_message(self, message_content: str) -> Dict[str, Any]:
+        """
+        Extract knowledge graph context from a message
+        
+        Args:
+            message_content: Content of a message containing knowledge graph context
+            
+        Returns:
+            Dict[str, Any]: Extracted knowledge graph context
+        """
+        try:
+            # Find the knowledge graph context section
+            start_marker = "KNOWLEDGE GRAPH CONTEXT"
+            end_markers = ["HISTORICAL EXPERIENCE", "DRAFT PLAN", "TOOLS ALREADY USED"]
+            
+            if start_marker not in message_content:
+                self.logger.warning("Knowledge Graph Context section not found in message")
+                return {}
+            
+            # Get start position
+            start_pos = message_content.find(start_marker)
+            start_pos = message_content.find('\n', start_pos) + 1  # Move to next line
+            
+            # Find the end position using end markers
+            end_pos = len(message_content)
+            for marker in end_markers:
+                marker_pos = message_content.find(marker, start_pos)
+                if marker_pos != -1 and marker_pos < end_pos:
+                    end_pos = marker_pos
+            
+            # Extract and parse the knowledge graph context
+            kg_context_str = message_content[start_pos:end_pos].strip()
+            
+            # Try to parse as JSON
+            try:
+                # Look for JSON-like content
+                json_start = kg_context_str.find('{')
+                json_end = kg_context_str.rfind('}') + 1
+                
+                if json_start != -1 and json_end > json_start:
+                    kg_json_str = kg_context_str[json_start:json_end]
+                    return json.loads(kg_json_str)
+                
+                # Fall back to treating whole content as knowledge graph context
+                return {"knowledge_graph_content": kg_context_str}
+                
+            except json.JSONDecodeError:
+                # Not valid JSON, return as raw text
+                return {"knowledge_graph_content": kg_context_str}
+                
+        except Exception as e:
+            error_msg = handle_exception("_extract_kg_context_from_message", e, self.logger)
+            self.logger.warning(f"Failed to extract Knowledge Graph context: {error_msg}")
+            return {}
+    
+    def _update_message_list_from_react(self, original_message_list: List[Dict[str, str]], 
+                                      react_messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """
+        Update message list from React graph results
+        
+        Args:
+            original_message_list: Original message list
+            react_messages: Messages from React graph
+            
+        Returns:
+            List[Dict[str, str]]: Updated message list
+        """
+        if not original_message_list:
+            # If no original message list, return react messages directly
+            return react_messages
+        
+        # Get the first message from original list (system prompt)
+        system_message = original_message_list[0]
+        
+        # Get the last message from react messages (final plan)
+        final_message = react_messages[-1] if react_messages else {"role": "assistant", "content": "No plan generated"}
+        
+        # Create new message list with system prompt and final plan
+        new_message_list = [system_message]
+        
+        # If there are at least 2 messages in the original list, add the user message
+        if len(original_message_list) > 1:
+            user_message = original_message_list[1]
+            new_message_list.append(user_message)
+        
+        # Add the final message
+        new_message_list.append(final_message)
+        
+        return new_message_list

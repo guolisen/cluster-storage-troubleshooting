@@ -51,8 +51,8 @@ class PlanPhase:
         self.use_react = self.config_data.get('plan_phase', {}).get('use_react', False)
         self.logger.info(f"Plan Phase initialized with {'ReAct' if self.use_react else 'traditional'} approach")
     
-    def execute(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
-               volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:
+    async def execute(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
+                    volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:
         """
         Execute the Plan Phase
         
@@ -71,7 +71,7 @@ class PlanPhase:
         try:
             # Generate the investigation plan using the unified approach
             # The React/Legacy mode distinction is now handled in LLMPlanGenerator
-            return self._generate_investigation_plan(
+            return await self._generate_investigation_plan(
                 knowledge_graph, pod_name, namespace, volume_path, message_list, self.use_react
             )
             
@@ -81,9 +81,9 @@ class PlanPhase:
                 error_msg, pod_name, namespace, volume_path, message_list
             )
     
-    def _generate_investigation_plan(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
-                                   volume_path: str, message_list: List[Dict[str, str]] = None,
-                                   use_react: bool = False) -> Dict[str, Any]:
+    async def _generate_investigation_plan(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
+                                        volume_path: str, message_list: List[Dict[str, str]] = None,
+                                        use_react: bool = False) -> Dict[str, Any]:
         """
         Generate an investigation plan using the Investigation Planner
         
@@ -102,7 +102,7 @@ class PlanPhase:
         self.investigation_planner = InvestigationPlanner(knowledge_graph, self.config_data)
         
         # Generate Investigation Plan with use_react flag
-        investigation_plan, message_list = self.investigation_planner.generate_investigation_plan(
+        investigation_plan, message_list = await self.investigation_planner.generate_investigation_plan(
             pod_name, namespace, volume_path, message_list, use_react
         )
         
@@ -365,7 +365,7 @@ async def run_plan_phase(pod_name, namespace, volume_path, collected_info, confi
         # The React/Legacy mode distinction is now handled in LLMPlanGenerator
         use_react = config_data.get('plan_phase', {}).get('use_react', False)
         logger.info(f"Using {'React' if use_react else 'traditional'} approach for plan generation")
-        results = plan_phase.execute(knowledge_graph, pod_name, namespace, volume_path, message_list)
+        results = await plan_phase.execute(knowledge_graph, pod_name, namespace, volume_path, message_list)
         
         # Log the results
         logger.info(f"Plan Phase completed with status: {results['status']}")

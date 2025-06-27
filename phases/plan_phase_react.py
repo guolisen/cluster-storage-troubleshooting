@@ -13,6 +13,8 @@ import json
 import asyncio
 from typing import Dict, List, Any, TypedDict, Optional, Union, Tuple, Set
 from enum import Enum
+from rich.console import Console
+from rich.panel import Panel
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import tools_condition, ToolNode
@@ -29,6 +31,84 @@ from troubleshooting.strategies import ExecutionType
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+# Define hook functions for PlanPhaseReActGraph
+def before_call_tools_hook(tool_name: str, args: Dict[str, Any], call_type: str = "Parallel") -> None:
+    """Hook function called before a tool is executed in Plan Phase ReAct.
+    
+    Args:
+        tool_name: Name of the tool being called
+        args: Arguments passed to the tool
+        call_type: Type of call execution ("Parallel" or "Serial")
+    """
+    try:
+        # Format arguments for better readability
+        formatted_args = json.dumps(args, indent=2) if args else "None"
+        
+        # Format the tool usage in a nice way
+        if formatted_args != "None":
+            # Print to console
+            tool_panel = Panel(
+                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n\n"
+                f"[bold yellow]Arguments:[/bold yellow]\n[blue]{formatted_args}[/blue]",
+                title="[bold magenta]Plan Phase ReAct Tool",
+                border_style="magenta",
+                safe_box=True
+            )
+            console = Console()
+            console.print(tool_panel)
+        else:
+            # Simple version for tools without arguments
+            tool_panel = Panel(
+                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n\n"
+                f"[bold yellow]Arguments:[/bold yellow] None",
+                title="[bold magenta]Plan Phase ReAct Tool",
+                border_style="magenta",
+                safe_box=True
+            )
+            console = Console()
+            console.print(tool_panel)
+
+        # Log to standard logger
+        logger.info(f"Plan Phase ReAct executing tool: {tool_name} ({call_type})")
+        logger.info(f"Parameters: {formatted_args}")
+    except Exception as e:
+        logger.error(f"Error in before_call_tools_hook: {e}")
+
+def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any, call_type: str = "Parallel") -> None:
+    """Hook function called after a tool is executed in Plan Phase ReAct.
+    
+    Args:
+        tool_name: Name of the tool that was called
+        args: Arguments that were passed to the tool
+        result: Result returned by the tool
+        call_type: Type of call execution ("Parallel" or "Serial")
+    """
+    try:
+        # Format result for better readability
+        if isinstance(result, ToolMessage):
+            result_content = result.content
+            result_status = result.status if hasattr(result, 'status') else 'success'
+            formatted_result = f"Status: {result_status}\nContent: {result_content[:1000]}"
+        else:
+            formatted_result = str(result)[:1000]
+        
+        # Print tool result to console
+        tool_panel = Panel(
+            f"[bold cyan]Tool completed:[/bold cyan] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n"
+            f"[bold cyan]Result:[/bold cyan]\n[yellow]{formatted_result}[/yellow]",
+            title="[bold magenta]Plan Phase ReAct Result",
+            border_style="magenta",
+            safe_box=True
+        )
+        console = Console()
+        console.print(tool_panel)
+
+        # Log to standard logger
+        logger.info(f"Plan Phase ReAct tool completed: {tool_name} ({call_type})")
+        logger.info(f"Result: {formatted_result}")
+    except Exception as e:
+        logger.error(f"Error in after_call_tools_hook: {e}")
 
 class PlanPhaseState(TypedDict):
     """State for the Plan Phase ReAct graph"""
@@ -228,7 +308,7 @@ class PlanPhaseReActGraph:
             
             # Log the response
             self.logger.info(f"Model response: {response.content[:100]}...")
-            
+            print (f"Model response: {response.content[:]}...")
             return state
         except Exception as e:
             error_msg = handle_exception("call_model", e, self.logger)
@@ -268,14 +348,31 @@ class PlanPhaseReActGraph:
         self.logger.info(f"Configuring ExecuteToolNode with {len(parallel_tools)} parallel tools")
         
         # Create and return ExecuteToolNode with all tools set to parallel execution
-        return ExecuteToolNode(
+        execute_tool_node = ExecuteToolNode(
             tools=self.mcp_tools,
             parallel_tools=parallel_tools,
             serial_tools=serial_tools,
             handle_tool_errors=True,
             messages_key="messages"
         )
-    
+        
+        # Create a hook manager for console output
+        from troubleshooting.hook_manager import HookManager
+        
+        console = Console()
+        file_console = Console(file=open('plan_phase_react.log', 'a'))
+        hook_manager = HookManager(console=console, file_console=file_console)
+        
+        # Register custom hook functions with the hook manager
+        hook_manager.register_before_call_hook(before_call_tools_hook)
+        hook_manager.register_after_call_hook(after_call_tools_hook)
+        
+        # Register hook manager with the ExecuteToolNode
+        execute_tool_node.register_before_call_hook(hook_manager.run_before_hook)
+        execute_tool_node.register_after_call_hook(hook_manager.run_after_hook)
+        
+        return execute_tool_node
+
     def check_end_conditions(self, state: PlanPhaseState) -> Dict[str, str]:
         """
         Check if plan generation is complete
@@ -286,6 +383,8 @@ class PlanPhaseReActGraph:
         Returns:
             Dict[str, str]: Result indicating whether to end or continue
         """
+        self.logger.info("Checking end conditions for Plan Phase ReAct graph")
+
         # If plan is already marked as complete, end the graph
         if state["plan_complete"]:
             self.logger.info("Plan marked as complete, ending graph")
@@ -424,18 +523,11 @@ When you've completed the Investigation Plan, include the marker [END_GRAPH] at 
         Returns:
             str: User prompt with context
         """
-        # Extract knowledge graph context
-        kg_context = self._extract_kg_context(knowledge_graph)
-        
+
         return f"""# INVESTIGATION PLAN GENERATION TASK
 ## TARGET: Volume read/write errors in pod {pod_name} (namespace: {namespace}, volume path: {volume_path})
 
 I need you to create a comprehensive Investigation Plan for troubleshooting this volume I/O error.
-
-## BACKGROUND INFORMATION
-
-### KNOWLEDGE GRAPH CONTEXT
-{kg_context}
 
 ## TASK
 1. Analyze the available information to understand the context
@@ -445,39 +537,6 @@ I need you to create a comprehensive Investigation Plan for troubleshooting this
 
 Please start by analyzing the available information and identifying any knowledge gaps.
 """
-    
-    def _extract_kg_context(self, knowledge_graph: KnowledgeGraph) -> str:
-        """
-        Extract context from Knowledge Graph
-        
-        Args:
-            knowledge_graph: KnowledgeGraph instance
-            
-        Returns:
-            str: Formatted knowledge graph context
-        """
-        if not knowledge_graph:
-            return "No Knowledge Graph available."
-        
-        try:
-            # Get summary of knowledge graph
-            kg_summary = knowledge_graph.get_summary()
-            
-            # Get all issues
-            issues = knowledge_graph.get_all_issues()
-            
-            # Format the context
-            context = f"""
-Knowledge Graph Summary:
-{json.dumps(kg_summary, indent=2)}
-
-Issues:
-{json.dumps(issues, indent=2)}
-"""
-            return context
-        except Exception as e:
-            error_msg = handle_exception("_extract_kg_context", e, self.logger)
-            return f"Error extracting Knowledge Graph context: {error_msg}"
     
     def extract_plan_from_state(self, state: PlanPhaseState) -> str:
         """
@@ -517,7 +576,8 @@ Issues:
         return content.strip()
 
 async def run_plan_phase_react(pod_name: str, namespace: str, volume_path: str, 
-                             collected_info: Dict[str, Any], config_data: Dict[str, Any] = None) -> Tuple[str, List[Dict[str, str]]]:
+                             messages: List[BaseMessage] = None, 
+                             config_data: Dict[str, Any] = None) -> Tuple[str, List[Dict[str, str]]]:
     """
     Run the Plan Phase using ReAct graph
     
@@ -525,7 +585,7 @@ async def run_plan_phase_react(pod_name: str, namespace: str, volume_path: str,
         pod_name: Name of the pod with the error
         namespace: Namespace of the pod
         volume_path: Path of the volume with I/O error
-        collected_info: Dictionary containing collected information from Phase 0, including knowledge_graph
+        messages: List of messages (system prompt, user message) to use for the ReAct graph
         config_data: Configuration data for the system (optional)
         
     Returns:
@@ -535,22 +595,13 @@ async def run_plan_phase_react(pod_name: str, namespace: str, volume_path: str,
     logger.info(f"Running Plan Phase ReAct for {namespace}/{pod_name} volume {volume_path}")
     
     try:
-        # Extract knowledge_graph from collected_info
-        knowledge_graph = collected_info.get('knowledge_graph')
-        
-        # Validate knowledge_graph is present
-        if knowledge_graph is None:
-            error_msg = "Knowledge Graph not found in collected_info"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
         # Initialize and build the ReAct graph
         react_graph = PlanPhaseReActGraph(config_data)
         graph = react_graph.build_graph()
         
-        # Prepare initial state
+        # Prepare initial state with provided messages
         initial_state = {
-            "messages": react_graph.prepare_initial_messages(knowledge_graph, pod_name, namespace, volume_path),
+            "messages": messages if messages else [],
             "iteration_count": 0,
             "tool_call_count": 0,
             "knowledge_gathered": {},
@@ -558,7 +609,7 @@ async def run_plan_phase_react(pod_name: str, namespace: str, volume_path: str,
             "pod_name": pod_name,
             "namespace": namespace,
             "volume_path": volume_path,
-            "knowledge_graph": knowledge_graph
+            "knowledge_graph": None  # Knowledge graph information is now in messages
         }
         
         # Run the graph

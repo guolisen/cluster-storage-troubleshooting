@@ -15,7 +15,7 @@ from typing import Dict, List, Any, TypedDict, Optional, Union, Tuple, Set
 from enum import Enum
 
 from langgraph.graph import StateGraph, START, END
-from langgraph.prebuilt import tools_condition
+from langgraph.prebuilt import tools_condition, ToolNode
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
@@ -24,6 +24,8 @@ from phases.llm_factory import LLMFactory
 from phases.utils import handle_exception, format_json_safely, generate_basic_fallback_plan
 from tools.core.mcp_adapter import get_mcp_adapter
 from knowledge_graph import KnowledgeGraph
+from troubleshooting.execute_tool_node import ExecuteToolNode
+from troubleshooting.strategies import ExecutionType
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -143,8 +145,10 @@ class PlanPhaseReActGraph:
         self.logger.info("Adding node: call_model")
         builder.add_node("call_model", self.call_model)
         
+        # Initialize ExecuteToolNode with all MCP tools set to parallel execution
+        execute_tools_node = self._initialize_execute_tool_node()
         self.logger.info("Adding node: execute_tools")
-        builder.add_node("execute_tools", self.execute_tools)
+        builder.add_node("execute_tools", execute_tools_node)
         
         self.logger.info("Adding node: check_end")
         builder.add_node("check_end", self.check_end_conditions)
@@ -238,86 +242,39 @@ class PlanPhaseReActGraph:
             
             return state
     
-    def execute_tools(self, state: PlanPhaseState) -> PlanPhaseState:
+    def _initialize_execute_tool_node(self) -> ExecuteToolNode:
         """
-        Execute MCP tools based on LLM decisions
+        Initialize ExecuteToolNode with all MCP tools set to parallel execution
         
-        Args:
-            state: Current state of the graph
-            
         Returns:
-            PlanPhaseState: Updated state after tool execution
+            ExecuteToolNode: Configured ExecuteToolNode instance
         """
-        # Get the last message
-        last_message = state["messages"][-1]
+        if not self.mcp_tools:
+            self.logger.warning("No MCP tools available for ExecuteToolNode")
+            # Return empty ExecuteToolNode if no tools available
+            return ExecuteToolNode(
+                tools=[],
+                parallel_tools=set(),
+                serial_tools=set()
+            )
         
-        # Extract tool calls
-        tool_calls = last_message.tool_calls
+        # Get all tool names
+        tool_names = {tool.name for tool in self.mcp_tools}
         
-        if not tool_calls:
-            self.logger.warning("No tool calls found in last message")
-            return state
+        # Configure all MCP tools to run in parallel by default
+        parallel_tools = tool_names
+        serial_tools = set()
         
-        self.logger.info(f"Executing {len(tool_calls)} tool calls")
+        self.logger.info(f"Configuring ExecuteToolNode with {len(parallel_tools)} parallel tools")
         
-        # Process each tool call
-        for tool_call in tool_calls:
-            # Increment tool call count
-            state["tool_call_count"] += 1
-            
-            tool_name = tool_call["name"]
-            tool_args = tool_call["args"]
-            tool_id = tool_call["id"]
-            
-            self.logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
-            
-            try:
-                # Find the tool
-                tool = next((t for t in self.mcp_tools if t.name == tool_name), None)
-                
-                if not tool:
-                    error_msg = f"Tool not found: {tool_name}"
-                    self.logger.error(error_msg)
-                    
-                    # Add error message to state
-                    tool_message = ToolMessage(
-                        content=f"Error: {error_msg}",
-                        name=tool_name,
-                        tool_call_id=tool_id
-                    )
-                    state["messages"].append(tool_message)
-                    continue
-                
-                # Execute the tool
-                result = tool.invoke(tool_args)
-                
-                # Add result to state
-                tool_message = ToolMessage(
-                    content=str(result),
-                    name=tool_name,
-                    tool_call_id=tool_id
-                )
-                state["messages"].append(tool_message)
-                
-                # Store knowledge in state
-                state["knowledge_gathered"][tool_name] = {
-                    "args": tool_args,
-                    "result": result
-                }
-                
-                self.logger.info(f"Tool {tool_name} executed successfully")
-            except Exception as e:
-                error_msg = handle_exception(f"execute_tool_{tool_name}", e, self.logger)
-                
-                # Add error message to state
-                tool_message = ToolMessage(
-                    content=f"Error executing tool {tool_name}: {error_msg}",
-                    name=tool_name,
-                    tool_call_id=tool_id
-                )
-                state["messages"].append(tool_message)
-        
-        return state
+        # Create and return ExecuteToolNode with all tools set to parallel execution
+        return ExecuteToolNode(
+            tools=self.mcp_tools,
+            parallel_tools=parallel_tools,
+            serial_tools=serial_tools,
+            handle_tool_errors=True,
+            messages_key="messages"
+        )
     
     def check_end_conditions(self, state: PlanPhaseState) -> Dict[str, str]:
         """

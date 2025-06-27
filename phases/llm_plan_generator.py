@@ -72,7 +72,7 @@ class LLMPlanGenerator:
     
     def refine_plan(self, draft_plan: List[Dict[str, Any]], pod_name: str, namespace: str, 
                    volume_path: str, kg_context: Dict[str, Any], phase1_tools: List[Dict[str, Any]],
-                   message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
+                   message_list: List[Dict[str, str]] = None, use_react: bool = True) -> Tuple[str, List[Dict[str, str]]]:
         """
         Refine a draft investigation plan using LLM
         
@@ -84,15 +84,16 @@ class LLMPlanGenerator:
             kg_context: Knowledge Graph context with historical experience
             phase1_tools: Complete Phase1 tool registry with names, descriptions, parameters, and invocation methods
             message_list: Optional message list for chat mode
+            use_react: Whether to use React mode (default: True)
             
         Returns:
             Tuple[str, List[Dict[str, str]]]: (Refined Investigation Plan, Updated message list)
         """
         try:
             # Prepare data for LLM
-            system_prompt = self._generate_refinement_system_prompt()
+            system_prompt = self._generate_refinement_system_prompt(use_react)
             user_message = self._prepare_user_message(
-                draft_plan, pod_name, namespace, volume_path, kg_context, phase1_tools
+                draft_plan, pod_name, namespace, volume_path, kg_context, phase1_tools, use_react
             )
             
             # Prepare message list for LLM
@@ -100,7 +101,7 @@ class LLMPlanGenerator:
             
             # Call LLM and process response
             return self._call_llm_and_process_response(
-                messages, pod_name, namespace, volume_path, message_list, user_message
+                messages, pod_name, namespace, volume_path, message_list, user_message, use_react
             )
             
         except Exception as e:
@@ -111,7 +112,7 @@ class LLMPlanGenerator:
     
     def _prepare_user_message(self, draft_plan: List[Dict[str, Any]], pod_name: str, 
                             namespace: str, volume_path: str, kg_context: Dict[str, Any], 
-                            phase1_tools: List[Dict[str, Any]]) -> str:
+                            phase1_tools: List[Dict[str, Any]], use_react: bool = True) -> str:
         """
         Prepare user message for LLM with formatted data
         
@@ -122,6 +123,7 @@ class LLMPlanGenerator:
             volume_path: Path of the volume with I/O error
             kg_context: Knowledge Graph context with historical experience
             phase1_tools: Complete Phase1 tool registry
+            use_react: Whether to use React mode (default: True)
             
         Returns:
             str: Formatted user message
@@ -149,8 +151,8 @@ class LLMPlanGenerator:
         
         used_tools_str = ", ".join(used_tools)
         
-        # Prepare user message for refinement task
-        return f"""# INVESTIGATION PLAN GENERATION
+        # Base user message content for both modes
+        base_message = f"""# INVESTIGATION PLAN GENERATION
 ## TARGET: Volume read/write errors in pod {pod_name} (namespace: {namespace}, volume path: {volume_path})
 
 This plan will guide troubleshooting in subsequent phases. Each step will execute specific tools according to this plan.
@@ -216,6 +218,22 @@ Step 1: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [ex
 Step 2: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [expected]
 ...
 """
+        
+        # Add mode-specific instructions
+        if use_react:
+            # React mode instructions
+            react_additions = """
+## TASK
+1. Analyze the available information to understand the context
+2. Identify any knowledge gaps that need to be filled
+3. Use MCP tools to gather additional information as needed
+4. Create a comprehensive Investigation Plan with specific steps to diagnose and resolve the volume I/O error
+
+Please start by analyzing the available information and identifying any knowledge gaps.
+"""
+            return base_message + react_additions
+        else:
+            return base_message
     
     def _prepare_messages(self, system_prompt: str, user_message: str, 
                         message_list: List[Dict[str, str]] = None) -> List[Dict[str, str]]:
@@ -252,7 +270,8 @@ Step 2: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [ex
     def _call_llm_and_process_response(self, messages: List[Dict[str, str]], 
                                      pod_name: str, namespace: str, volume_path: str,
                                      message_list: List[Dict[str, str]] = None,
-                                     user_message: str = "") -> Tuple[str, List[Dict[str, str]]]:
+                                     user_message: str = "", 
+                                     use_react: bool = True) -> Tuple[str, List[Dict[str, str]]]:
         """
         Call LLM and process the response
         
@@ -263,13 +282,22 @@ Step 2: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [ex
             volume_path: Path of the volume with I/O error
             message_list: Optional message list for chat mode
             user_message: User message for fallback
+            use_react: Whether to use React mode (default: True)
             
         Returns:
             Tuple[str, List[Dict[str, str]]]: (Refined Investigation Plan, Updated message list)
         """
-        self.logger.info("Calling LLM to generate investigation plan")
+        self.logger.info(f"Calling LLM to generate investigation plan using {'React' if use_react else 'Legacy'} mode")
         self.logger.info("This may take a few moments...")
-        response = self.llm.invoke(messages)
+        
+        # Call model with appropriate approach based on mode
+        if use_react and self.mcp_tools:
+            # React mode with MCP tools
+            self.logger.info(f"Using React mode with {len(self.mcp_tools)} MCP tools")
+            response = self.llm.bind_tools(self.mcp_tools).invoke(messages)
+        else:
+            # Legacy mode or React mode without MCP tools
+            response = self.llm.invoke(messages)
         
         # Extract and format the plan
         plan_text = response.content
@@ -347,14 +375,18 @@ Step 2: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [ex
         
         return fallback_plan, message_list
     
-    def _generate_refinement_system_prompt(self) -> str:
+    def _generate_refinement_system_prompt(self, use_react: bool = False) -> str:
         """
         Generate system prompt for LLM focused on plan refinement with static guiding principles
         
+        Args:
+            use_react: Whether to use React mode (default: False)
+            
         Returns:
             str: System prompt for LLM
         """
-        return """You are an expert Kubernetes storage troubleshooter. Your task is to refine a draft Investigation Plan for troubleshooting volume read/write errors in Kubernetes.
+        # Base system prompt for both modes
+        base_prompt = """You are an expert Kubernetes storage troubleshooter. Your task is to refine a draft Investigation Plan for troubleshooting volume read/write errors in Kubernetes.
 
 TASK:
 1. Review the draft plan containing preliminary steps from rule-based analysis and mandatory static steps
@@ -383,6 +415,33 @@ Step FX: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [e
 
 The plan must be comprehensive, logically structured, and include all necessary steps to investigate the volume I/O errors.
 """
+
+        # Add React-specific additions if in React mode
+        if use_react:
+            # Get available MCP tools information
+            #mcp_tools_info = ""
+            #if hasattr(self, 'mcp_tools') and self.mcp_tools:
+            #    mcp_tools_info = "\n".join([
+            #        f"- {tool.name}: {tool.description}" for tool in self.mcp_tools
+            #    ])
+            #Available MCP tools:
+            #{mcp_tools_info}
+
+            react_additions = f"""
+You are operating in a ReAct (Reasoning and Acting) framework where you can:
+1. REASON about the problem and identify knowledge gaps
+2. ACT by calling external tools to gather information
+3. OBSERVE the results and update your understanding
+4. Continue this loop until you have enough information to create a comprehensive plan
+
+When you identify a knowledge gap, use the appropriate MCP tool to gather the information you need. Don't guess or make assumptions when you can use a tool to get accurate information.
+
+When you've completed the Investigation Plan, include the marker [END_GRAPH] at the end of your message.
+"""
+            return base_prompt + react_additions
+        
+        # Return base prompt for Legacy mode
+        return base_prompt
     
     def _format_raw_plan(self, raw_plan: str, pod_name: str, namespace: str, volume_path: str) -> str:
         """

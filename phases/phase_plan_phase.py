@@ -66,18 +66,14 @@ class PlanPhase:
         Returns:
             Dict[str, Any]: Results of the Plan Phase, including the Investigation Plan and updated message list
         """
-        self.logger.info(f"Executing Plan Phase for {namespace}/{pod_name} volume {volume_path}")
+        self.logger.info(f"Executing Plan Phase for {namespace}/{pod_name} volume {volume_path} using {'React' if self.use_react else 'Legacy'} mode")
         
         try:
-            # Generate the investigation plan using either ReAct graph or traditional approach
-            if self.use_react:
-                return self._generate_investigation_plan_react(
-                    knowledge_graph, pod_name, namespace, volume_path, message_list
-                )
-            else:
-                return self._generate_investigation_plan(
-                    knowledge_graph, pod_name, namespace, volume_path, message_list
-                )
+            # Generate the investigation plan using the unified approach
+            # The React/Legacy mode distinction is now handled in LLMPlanGenerator
+            return self._generate_investigation_plan(
+                knowledge_graph, pod_name, namespace, volume_path, message_list, self.use_react
+            )
             
         except Exception as e:
             error_msg = handle_exception("execute", e, self.logger)
@@ -86,9 +82,10 @@ class PlanPhase:
             )
     
     def _generate_investigation_plan(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
-                                   volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:
+                                   volume_path: str, message_list: List[Dict[str, str]] = None,
+                                   use_react: bool = False) -> Dict[str, Any]:
         """
-        Generate an investigation plan using the traditional Investigation Planner
+        Generate an investigation plan using the Investigation Planner
         
         Args:
             knowledge_graph: KnowledgeGraph instance from Phase 0
@@ -96,6 +93,7 @@ class PlanPhase:
             namespace: Namespace of the pod
             volume_path: Path of the volume with I/O error
             message_list: Optional message list for chat mode
+            use_react: Whether to use React mode (default: False)
             
         Returns:
             Dict[str, Any]: Results of the plan generation
@@ -103,9 +101,9 @@ class PlanPhase:
         # Initialize Investigation Planner
         self.investigation_planner = InvestigationPlanner(knowledge_graph, self.config_data)
         
-        # Generate Investigation Plan
+        # Generate Investigation Plan with use_react flag
         investigation_plan, message_list = self.investigation_planner.generate_investigation_plan(
-            pod_name, namespace, volume_path, message_list
+            pod_name, namespace, volume_path, message_list, use_react
         )
         
         # Parse the plan into a structured format for Phase 1
@@ -122,53 +120,8 @@ class PlanPhase:
             "message_list": message_list
         }
     
-    async def _generate_investigation_plan_react(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
-                                              volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:
-        """
-        Generate an investigation plan using the ReAct graph
-        
-        Args:
-            knowledge_graph: KnowledgeGraph instance from Phase 0
-            pod_name: Name of the pod with the error
-            namespace: Namespace of the pod
-            volume_path: Path of the volume with I/O error
-            message_list: Optional message list for chat mode
-            
-        Returns:
-            Dict[str, Any]: Results of the plan generation
-        """
-        self.logger.info(f"Generating investigation plan using ReAct graph for {namespace}/{pod_name} volume {volume_path}")
-        
-        # Prepare collected info with knowledge graph
-        collected_info = {'knowledge_graph': knowledge_graph}
-        
-        # Run the ReAct graph
-        investigation_plan, updated_message_list = await run_plan_phase_react(
-            pod_name, namespace, volume_path, collected_info, self.config_data
-        )
-        
-        # Parse the plan into a structured format for Phase 1
-        structured_plan = self._parse_investigation_plan(investigation_plan)
-        
-        # Merge message lists if both exist
-        if message_list and updated_message_list:
-            # Keep user messages from original list and add new messages
-            for msg in updated_message_list:
-                if msg["role"] != "user" or msg not in message_list:
-                    message_list.append(msg)
-        elif updated_message_list:
-            message_list = updated_message_list
-        
-        # Return results
-        return {
-            "status": "success",
-            "investigation_plan": investigation_plan,
-            "structured_plan": structured_plan,
-            "pod_name": pod_name,
-            "namespace": namespace,
-            "volume_path": volume_path,
-            "message_list": message_list
-        }
+    # The _generate_investigation_plan_react method has been removed
+    # React mode is now handled directly in the LLMPlanGenerator class
     
     def _handle_plan_generation_error(self, error_msg: str, pod_name: str, namespace: str, 
                                     volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -408,17 +361,11 @@ async def run_plan_phase(pod_name, namespace, volume_path, collected_info, confi
         # Initialize and execute Plan Phase
         plan_phase = PlanPhase(config_data)
         
-        # Execute the plan phase
-        if plan_phase.use_react:
-            # For ReAct approach, we need to await the async execution
-            logger.info("Using ReAct graph approach for plan generation")
-            results = await plan_phase._generate_investigation_plan_react(
-                knowledge_graph, pod_name, namespace, volume_path, message_list
-            )
-        else:
-            # For traditional approach, use synchronous execution
-            logger.info("Using traditional approach for plan generation")
-            results = plan_phase.execute(knowledge_graph, pod_name, namespace, volume_path, message_list)
+        # Execute the plan phase using the unified approach
+        # The React/Legacy mode distinction is now handled in LLMPlanGenerator
+        use_react = config_data.get('plan_phase', {}).get('use_react', False)
+        logger.info(f"Using {'React' if use_react else 'traditional'} approach for plan generation")
+        results = plan_phase.execute(knowledge_graph, pod_name, namespace, volume_path, message_list)
         
         # Log the results
         logger.info(f"Plan Phase completed with status: {results['status']}")

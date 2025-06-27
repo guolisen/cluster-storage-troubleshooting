@@ -55,7 +55,8 @@ class InvestigationPlanner:
         self.static_plan_step_reader = StaticPlanStepReader(config_data)
     
     def generate_investigation_plan(self, pod_name: str, namespace: str, volume_path: str, 
-                                  message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
+                                  message_list: List[Dict[str, str]] = None,
+                                  use_react: bool = True) -> Tuple[str, List[Dict[str, str]]]:
         """
         Generate a comprehensive Investigation Plan using the three-step process
         
@@ -64,16 +65,17 @@ class InvestigationPlanner:
             namespace: Namespace of the pod  
             volume_path: Path of the volume with I/O error
             message_list: Optional message list for chat mode
+            use_react: Whether to use React mode (default: True)
             
         Returns:
             Tuple[str, List[Dict[str, str]]]: (Formatted Investigation Plan with step-by-step actions, Updated message list)
         """
-        self.logger.info(f"Generating investigation plan for {namespace} {pod_name} volume {volume_path}")
+        self.logger.info(f"Generating investigation plan for {namespace} {pod_name} volume {volume_path} using {'React' if use_react else 'Legacy'} mode")
         
         try:
             # Generate the plan using the three-step process
             formatted_plan, updated_message_list = self._generate_plan_with_three_step_process(
-                pod_name, namespace, volume_path, message_list
+                pod_name, namespace, volume_path, message_list, use_react
             )
             return formatted_plan, updated_message_list
             
@@ -87,7 +89,8 @@ class InvestigationPlanner:
             return fallback_plan, updated_message_list
     
     def _generate_plan_with_three_step_process(self, pod_name: str, namespace: str, volume_path: str, 
-                                             message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
+                                             message_list: List[Dict[str, str]] = None,
+                                             use_react: bool = True) -> Tuple[str, List[Dict[str, str]]]:
         """
         Generate a plan using the three-step process
         
@@ -96,6 +99,7 @@ class InvestigationPlanner:
             namespace: Namespace of the pod  
             volume_path: Path of the volume with I/O error
             message_list: Optional message list for chat mode
+            use_react: Whether to use React mode (default: True)
             
         Returns:
             Tuple[str, List[Dict[str, str]]]: (Formatted Investigation Plan, Updated message list)
@@ -122,7 +126,7 @@ class InvestigationPlanner:
         if use_llm and self.llm_plan_generator.llm is not None:
             # Refine with LLM
             return self._refine_plan_with_llm(draft_plan, pod_name, namespace, volume_path, 
-                                            kg_context, message_list)
+                                            kg_context, message_list, use_react)
         else:
             # Format draft plan directly
             return self._format_draft_plan_with_message_list(draft_plan, pod_name, namespace, 
@@ -130,7 +134,8 @@ class InvestigationPlanner:
     
     def _refine_plan_with_llm(self, draft_plan: List[Dict[str, Any]], pod_name: str, namespace: str, 
                             volume_path: str, kg_context: Dict[str, Any], 
-                            message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
+                            message_list: List[Dict[str, str]] = None,
+                            use_react: bool = True) -> Tuple[str, List[Dict[str, str]]]:
         """
         Refine the plan using LLM
         
@@ -141,6 +146,7 @@ class InvestigationPlanner:
             volume_path: Path of the volume with I/O error
             kg_context: Knowledge Graph context
             message_list: Optional message list for chat mode
+            use_react: Whether to use React mode (default: True)
             
         Returns:
             Tuple[str, List[Dict[str, str]]]: (Refined Investigation Plan, Updated message list)
@@ -152,7 +158,7 @@ class InvestigationPlanner:
         
         # Generate final plan using LLM refinement
         return self.llm_plan_generator.refine_plan(
-            draft_plan, pod_name, namespace, volume_path, kg_context, phase1_tools, message_list
+            draft_plan, pod_name, namespace, volume_path, kg_context, phase1_tools, message_list, use_react
         )
     
     def _format_draft_plan_with_message_list(self, draft_plan: List[Dict[str, Any]], pod_name: str, 

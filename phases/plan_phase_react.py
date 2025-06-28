@@ -137,7 +137,7 @@ class PlanPhaseReActGraph:
     uses MCP tools for function calling when the plan phase encounters knowledge gaps.
     """
     
-    def __init__(self, config_data: Dict[str, Any] = None):
+    def __init__(self, config_data: Dict[str, Any] = None, messages: List[BaseMessage] = None):
         """
         Initialize the Plan Phase ReAct Graph
         
@@ -155,6 +155,8 @@ class PlanPhaseReActGraph:
         
         # Maximum iterations to prevent infinite loops
         self.max_iterations = self.config_data.get("max_iterations", 15)
+
+        self.init_message = messages
     
     def _initialize_llm(self):
         """
@@ -296,6 +298,9 @@ class PlanPhaseReActGraph:
         self.logger.info(f"Calling model (iteration {state['iteration_count']})")
         
         try:
+            # Prepare messages if this is the first iteration or if messages need to be initialized
+            state = self._prepare_messages(state)
+            
             # Call the model with tools
             response = None
             if len(self.mcp_tools) != 0:
@@ -308,7 +313,7 @@ class PlanPhaseReActGraph:
             
             # Log the response
             self.logger.info(f"Model response: {response.content[:100]}...")
-            print (f"Model response: {response.content[:]}...")
+            #print (f"Model response: {response.content[:]}...")
             return state
         except Exception as e:
             error_msg = handle_exception("call_model", e, self.logger)
@@ -373,6 +378,37 @@ class PlanPhaseReActGraph:
         
         return execute_tool_node
 
+    def _prepare_messages(self, state: PlanPhaseState) -> PlanPhaseState:
+        """
+        Prepare messages for the LLM with system prompt and context
+        
+        Similar to graph.py's _prepare_messages() but using LLMPlanGenerator's approach for
+        preparing system prompt and human query.
+        
+        Args:
+            state: Current state with messages
+            
+        Returns:
+            PlanPhaseState: Updated state with prepared messages
+        """
+        
+        user_messages = []
+        if state["messages"]:
+            if isinstance(state["messages"], list):
+                for msg in state["messages"]:
+                    if not isinstance(msg, SystemMessage) and not isinstance(msg, HumanMessage):
+                        user_messages.append(msg)
+                
+                # Create new message list with system message, context message, and existing user messages
+                state["messages"] = self.init_message + user_messages
+            else:
+                state["messages"] = [self.init_message, state["messages"]]
+        else:
+            state["messages"] = self.init_message
+
+        self.logger.info("Prepared initial messages with system prompt and user query")
+        return state
+        
     def check_end_conditions(self, state: PlanPhaseState) -> Dict[str, str]:
         """
         Check if plan generation is complete
@@ -410,8 +446,14 @@ class PlanPhaseReActGraph:
         if not content:
             return {"result": "continue"}
         
+        llm_end_markers = self._check_explicit_end_markers(content)
+        if llm_end_markers:
+            self.logger.info("Detected end markers from LLM, ending graph")
+            state["plan_complete"] = True
+            return {"result": "end"}
+
         # Check for explicit end markers in the content
-        end_markers = ["[END_GRAPH]", "[END]", "End of graph", "GRAPH END", "Investigation Plan:", "Fix Plan:"]
+        end_markers = ["[END_GRAPH]", "[END]", "End of graph", "GRAPH END", "Investigation Plan:", "Fix Plan:", "Step by Step"]
         if any(marker in content for marker in end_markers):
             self.logger.info(f"Detected end marker in content, ending graph")
             state["plan_complete"] = True
@@ -443,7 +485,75 @@ class PlanPhaseReActGraph:
         
         # Default: continue execution
         return {"result": "continue"}
-    
+
+    def _check_explicit_end_markers(self, content: str) -> bool:
+        """Use LLM to check if content contains explicit or implicit end markers.
+        
+        Args:
+            content: The content to check for end markers
+            
+        Returns:
+            bool: True if end markers detected, False otherwise
+        """
+        # Create a focused prompt for the LLM
+        system_prompt = """
+        You are an AI assistant tasked with determining if a text contains explicit or implicit markers 
+        indicating the end of a process or conversation. Your task is to analyze the given text and 
+        determine if it contains phrases or markers that suggest completion or termination.
+        
+        Examples of explicit end markers include:
+        - "[END_GRAPH]", "[END]", "End of graph", "GRAPH END"
+        - "This concludes the analysis"
+        - "Final report"
+        - "Step by Step"
+        - "Step XXX: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [expected]"
+        - "Investigation complete"
+        - " Would you like to"
+        - A question from AI that indicates the end of the process, such as " Would you like to proceed with planning the disk replacement or further investigate filesystem integrity?"
+        - If just a call tools result, then return 'NO'
+
+        Examples of implicit end markers include:
+        - A summary followed by recommendations with no further questions
+        - A conclusion paragraph that wraps up all findings
+        - A complete analysis with all required sections present
+        - A question from AI that indicates the end of the process, such as "Is there anything else I can help you with?" or "Do you have any further questions?"
+        
+        Respond with "YES" if you detect end markers, or "NO" if you don't.
+        """
+        
+        user_prompt = f"""
+        Analyze the following text and determine if it contains explicit or implicit end markers:
+        
+        {content}  # Limit content length to avoid token limits
+        
+        Does this text contain markers indicating it's the end of the process? Respond with only YES or NO.
+        """
+        
+        try:
+            # Create messages for the LLM
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt)
+            ]
+            
+            # Call the LLM
+            response = self.llm.invoke(messages)
+            
+            # Check if the response indicates end markers
+            response_text = response.content.strip().upper()
+            
+            # Log the LLM's response
+            logger.info(f"LLM end marker detection response: {response_text}")
+            
+            # Return True if the LLM detected end markers
+            return "YES" in response_text
+        except Exception as e:
+            # Log any errors and fall back to the original behavior
+            logger.error(f"Error in LLM end marker detection: {e}")
+            
+            # Fall back to simple string matching
+            return any(marker in content for marker in ["[END_GRAPH]", "[END]", "End of graph", "GRAPH END", "Fix Plan", "FIX PLAN"])
+
     def prepare_initial_messages(self, knowledge_graph: KnowledgeGraph, pod_name: str, 
                                namespace: str, volume_path: str) -> List[BaseMessage]:
         """
@@ -596,9 +706,9 @@ async def run_plan_phase_react(pod_name: str, namespace: str, volume_path: str,
     
     try:
         # Initialize and build the ReAct graph
-        react_graph = PlanPhaseReActGraph(config_data)
-        graph = react_graph.build_graph()
-        
+        react_graph = PlanPhaseReActGraph(config_data, messages if messages else [])
+        graph = react_graph.build_graph() 
+
         # Prepare initial state with provided messages
         initial_state = {
             "messages": messages if messages else [],

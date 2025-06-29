@@ -7,6 +7,7 @@ and delegates hook management to a dedicated HookManager.
 """
 
 import asyncio
+import inspect
 from copy import copy
 from dataclasses import replace
 from typing import (
@@ -322,6 +323,44 @@ class ExecuteToolNode(RunnableCallable):
             combined_outputs.append(parent_command)
         return combined_outputs
 
+    def _is_async_only_tool(self, tool_name: str) -> bool:
+        """Check if a tool only supports async invocation.
+        
+        Args:
+            tool_name: Name of the tool to check
+            
+        Returns:
+            True if the tool only supports async invocation, False otherwise
+        """
+        tool = self.tools_by_name[tool_name]
+        
+        # Check #1: Class-based detection for MCP tools and known async-only tool classes
+        tool_class_str = str(tool.__class__).lower()
+        if "mcp" in tool_class_str or "structuredtool" in tool_class_str:
+            logger.info(f"Tool {tool_name} detected as async-only based on class: {tool.__class__}")
+            return True
+            
+        # Check #2: Module-based detection
+        if hasattr(tool, "__module__") and ("mcp" in tool.__module__.lower() or "langchain_mcp" in tool.__module__.lower()):
+            logger.info(f"Tool {tool_name} detected as async-only based on module: {tool.__module__}")
+            return True
+        
+        # Check #3: _run vs _arun methods presence
+        if (not hasattr(tool, "_run") or not callable(getattr(tool, "_run", None))) and hasattr(tool, "_arun") and callable(getattr(tool, "_arun")):
+            logger.info(f"Tool {tool_name} detected as async-only (has _arun but no _run method)")
+            return True
+            
+        # Check #4: Try to see if it has custom methods or attributes that indicate async-only
+        async_only_indicators = [
+            hasattr(tool, "async_invoke_only") and tool.async_invoke_only is True,
+            hasattr(tool, "sync_invoke_supported") and tool.sync_invoke_supported is False
+        ]
+        if any(async_only_indicators):
+            logger.info(f"Tool {tool_name} has explicit async-only indicators")
+            return True
+            
+        return False
+
     def _run_one(
         self,
         call: ToolCall,
@@ -350,9 +389,47 @@ class ExecuteToolNode(RunnableCallable):
         # Call before hook
         self.hook_manager.run_before_hook(tool_name, tool_args, call_type)
 
+        # Get the tool
+        tool = self.tools_by_name[tool_name]
+        input_data = {**call, **{"type": "tool_call"}}
+        
+        # First attempt: Try to determine if it's an async-only tool
+        use_async = self._is_async_only_tool(tool_name)
+
         try:
-            input = {**call, **{"type": "tool_call"}}
-            response = self.tools_by_name[tool_name].invoke(input, config)
+            # If we already know it's async-only, use the async method directly
+            if use_async:
+                logger.info(f"Tool {tool_name} identified as async-only, using async execution")
+                # Create a new event loop for this thread if needed
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                # Run the async method in the event loop
+                response = loop.run_until_complete(tool.ainvoke(input_data, config))
+            else:
+                # Try normal sync invocation first
+                try:
+                    response = tool.invoke(input_data, config)
+                except NotImplementedError as e:
+                    # If we get a NotImplementedError with the specific message about StructuredTool,
+                    # fall back to async invocation
+                    if "StructuredTool does not support sync invocation" in str(e):
+                        logger.info(f"Tool {tool_name} raised NotImplementedError for sync invocation, falling back to async")
+                        # Create a new event loop for this thread if needed
+                        try:
+                            loop = asyncio.get_event_loop()
+                        except RuntimeError:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                        
+                        # Run the async method in the event loop
+                        response = loop.run_until_complete(tool.ainvoke(input_data, config))
+                    else:
+                        # If it's a different NotImplementedError, re-raise it
+                        raise
 
             # Call after hook
             self.hook_manager.run_after_hook(tool_name, tool_args, response, call_type)
@@ -362,7 +439,28 @@ class ExecuteToolNode(RunnableCallable):
             # Special exception that will always be raised
             raise e
         except Exception as e:
-            # Handle errors based on configuration
+            # Special handling for structured tools that only support async invocation
+            if isinstance(e, NotImplementedError) and "StructuredTool does not support sync invocation" in str(e):
+                logger.warning(f"Tool {tool_name} only supports async invocation but wasn't detected. Retrying with async")
+                try:
+                    # Create a new event loop for this thread if needed
+                    try:
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    
+                    # Run the async method in the event loop
+                    response = loop.run_until_complete(tool.ainvoke(input_data, config))
+                    
+                    # Call after hook
+                    self.hook_manager.run_after_hook(tool_name, tool_args, response, call_type)
+                    return response
+                except Exception as async_e:
+                    # If async execution also fails, handle that error instead
+                    e = async_e
+            
+            # Standard error handling
             if isinstance(self.handle_tool_errors, tuple):
                 handled_types: tuple = self.handle_tool_errors
             elif callable(self.handle_tool_errors):

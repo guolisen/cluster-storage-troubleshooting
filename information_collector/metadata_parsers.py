@@ -233,19 +233,19 @@ class MetadataParsers(InformationCollectorBase):
     def _parse_vol_metadata(self, vol_name: str) -> Dict[str, Any]:
         """Parse volume metadata from tool outputs using yaml package"""
         metadata = {
-            'CSIStatus': 'UNKNOWN',
-            'Health': 'UNKNOWN',
+            'CSIStatus': 'CSI may not support Volume',
+            'Health': 'CSI may not support Volume',
             'Id': '',
             'Location': '',
-            'LocationType': 'UNKNOWN',
-            'Mode': 'UNKNOWN',
+            'LocationType': 'CSI may not support Volume',
+            'Mode': 'CSI may not support Volume',
             'NodeId': '',
-            'OperationalStatus': 'UNKNOWN',
+            'OperationalStatus': 'CSI may not support Volume',
             'Owners': [],
             'Size': 0,
             'StorageClass': '',
             'Type': '',
-            'Usage': 'UNKNOWN'
+            'Usage': 'CSI may not support Volume'
         }
     
         volumes_output = self.collected_data.get('csi_baremetal', {}).get('volumes', '')
@@ -275,19 +275,19 @@ class MetadataParsers(InformationCollectorBase):
                 if target_volume:
                     # Extract volume spec properties
                     spec = target_volume.get('spec', {})
-                    metadata['CSIStatus'] = spec.get('CSIStatus', 'UNKNOWN')
-                    metadata['Health'] = spec.get('Health', 'UNKNOWN')
+                    metadata['CSIStatus'] = spec.get('CSIStatus', 'CSI may not support Volume')
+                    metadata['Health'] = spec.get('Health', 'CSI may not support Volume')
                     metadata['Id'] = spec.get('Id', '')
                     metadata['Location'] = spec.get('Location', '')
-                    metadata['LocationType'] = spec.get('LocationType', 'UNKNOWN')
-                    metadata['Mode'] = spec.get('Mode', 'UNKNOWN')
+                    metadata['LocationType'] = spec.get('LocationType', 'CSI may not support Volume')
+                    metadata['Mode'] = spec.get('Mode', 'CSI may not support Volume')
                     metadata['NodeId'] = spec.get('NodeId', '')
-                    metadata['OperationalStatus'] = spec.get('OperationalStatus', 'UNKNOWN')
+                    metadata['OperationalStatus'] = spec.get('OperationalStatus', 'CSI may not support Volume')
                     metadata['Owners'] = spec.get('Owners', [])
                     metadata['Size'] = spec.get('Size', 0)
                     metadata['StorageClass'] = spec.get('StorageClass', '')
                     metadata['Type'] = spec.get('Type', '')
-                    metadata['Usage'] = spec.get('Usage', 'UNKNOWN')
+                    metadata['Usage'] = spec.get('Usage', 'CSI may not support Volume')
                 else:
                     logging.warning(f"Volume {vol_name} not found in parsed YAML data")
                     

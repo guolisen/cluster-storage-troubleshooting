@@ -12,12 +12,12 @@ import datetime
 from typing import Dict, List, Any, Optional, Tuple
 from rich.console import Console
 from rich.panel import Panel
-from langgraph.graph import StateGraph
 from kubernetes import client
 from phases.llm_factory import LLMFactory
 from langchain_core.messages import SystemMessage, HumanMessage
 from tools.core.mcp_adapter import get_mcp_adapter
 
+from llm_graph.graphs.phase1_llm_graph import Phase1LLMGraph
 from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
 from phases.utils import format_historical_experiences_from_collected_info, handle_exception
 
@@ -93,18 +93,9 @@ class AnalysisPhase:
         try:
             if message_list == None:
                 message_list = []
-
-            # Import here to avoid circular dependency
-            from troubleshooting.graph import create_troubleshooting_graph_with_context
             
-            # Check if streaming is enabled in config
-            streaming_enabled = self.config_data.get('llm', {}).get('streaming', False)
-            
-            # Create troubleshooting graph with pre-collected context
-            graph = create_troubleshooting_graph_with_context(
-                self.collected_info, phase="phase1", config_data=self.config_data,
-                streaming=streaming_enabled
-            )
+            # Initialize Phase1LLMGraph
+            phase1_graph = Phase1LLMGraph(self.config_data)
             
             # Extract and format historical experience data from collected_info
             historical_experiences_formatted = format_historical_experiences_from_collected_info(self.collected_info)
@@ -112,52 +103,35 @@ class AnalysisPhase:
             # Add investigation results to message list if not already present
             message_list.append({"role": "user", "content": "Investigation Results:\n" + investigation_plan})
             
-            # Updated query message with dynamic data for LangGraph workflow
-            query = f"""Phase 1 - ReAct Investigation: Execute the Investigation Plan to actively investigate the volume I/O error in pod {pod_name} in namespace {namespace} at volume path {volume_path}.
-
-INVESTIGATION PLAN TO FOLLOW:
-{investigation_plan}
-
-HISTORICAL EXPERIENCE:
-{historical_experiences_formatted}
-
-SPECIAL CASE DETECTION:
-After executing the Investigation Plan, you must determine if one of these special cases applies:
-
-CASE 1 - NO ISSUES DETECTED:
-If the Knowledge Graph and Investigation Plan execution confirm the system has no issues:
-- Output a structured summary in the following format:
-  ```
-  Summary Finding: No issues detected in the system.
-  Evidence: [Details from Knowledge Graph queries, e.g., no error logs found, all services operational]
-  Advice: [Recommendations, e.g., continue monitoring the system]
-  SKIP_PHASE2: YES
-  ```
-
-CASE 2 - MANUAL INTERVENTION REQUIRED:
-If the Knowledge Graph and Investigation Plan execution confirm the issue cannot be fixed automatically:
-- Output a structured summary in the following format:
-  ```
-  Summary Finding: Issue detected, but requires manual intervention.
-  Evidence: [Details from Knowledge Graph queries, e.g., specific error or configuration requiring human action]
-  Advice: [Detailed step-by-step instructions for manual resolution, e.g., specific commands or actions for the user]
-  SKIP_PHASE2: YES
-  ```
-
-CASE 3 - AUTOMATIC FIX POSSIBLE:
-If the issue can be resolved automatically:
-- Generate a fix plan based on the Investigation Plan's results
-- Output a comprehensive root cause analysis and fix plan
-- Do NOT include the SKIP_PHASE2 marker
-
-<<< Note >>>: Please following the Investigation Plan to run tools step by step, and run 8 steps at least.
-<<< Note >>>: Please provide the root cause and fix plan analysis within 30 tool calls.
-"""
+            # Create system message using the prompt manager
+            prompt_manager = phase1_graph.get_prompt_manager()
+            system_prompt = prompt_manager.get_system_prompt()
+            
+            # Create user message using the prompt manager
+            user_message = prompt_manager.format_user_query(
+                query="",
+                pod_name=pod_name,
+                namespace=namespace,
+                volume_path=volume_path,
+                investigation_plan=investigation_plan,
+                collected_info=self.collected_info
+            )
+            
+            # Prepare initial state for the graph
+            initial_state = {
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
+                ],
+                "investigation_plan": investigation_plan,
+                "pod_name": pod_name,
+                "namespace": namespace,
+                "volume_path": volume_path,
+                "collected_info": self.collected_info
+            }
+            
             # Set timeout
             timeout_seconds = self.config_data['troubleshoot']['timeout_seconds']
-            
-            # Run analysis using the tools module
-            formatted_query = {"messages": [{"role": "user", "content": query}]}
             
             # First show the analysis panel
             self.console.print(Panel(
@@ -169,7 +143,7 @@ If the issue can be resolved automatically:
             # Run graph with timeout
             try:
                 response = await asyncio.wait_for(
-                    graph.ainvoke(formatted_query, config={"recursion_limit": 100}),
+                    phase1_graph.execute(initial_state),
                     timeout=timeout_seconds
                 )
                 self.console.print("[green]Analysis complete![/green]")
@@ -181,7 +155,7 @@ If the issue can be resolved automatically:
                 raise
             
             # Extract analysis results
-            final_message = self._extract_final_message(response)
+            final_message = response.get("analysis_results", "Failed to generate analysis results")
             
             # Add fix plan to message list
             message_list.append({"role": "assistant", "content": final_message})

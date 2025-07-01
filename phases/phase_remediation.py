@@ -11,11 +11,11 @@ import asyncio
 from typing import Dict, List, Any, Optional, Tuple
 from rich.console import Console
 from rich.panel import Panel
-from langgraph.graph import StateGraph
 from tools.core.mcp_adapter import get_mcp_adapter
 from phases.llm_factory import LLMFactory
 from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
 from phases.utils import format_historical_experiences_from_collected_info, handle_exception
+from llm_graph.graphs.phase2_llm_graph import Phase2LLMGraph
 
 logger = logging.getLogger(__name__)
 
@@ -200,13 +200,9 @@ Your response must include:
             # Check if streaming is enabled in config
             streaming_enabled = self.config_data.get('llm', {}).get('streaming', False)
             
-            # Create troubleshooting graph for remediation
-            # Import here to avoid circular imports
-            from troubleshooting.graph import create_troubleshooting_graph_with_context
-            graph = create_troubleshooting_graph_with_context(
-                self.collected_info, phase="phase2", config_data=self.config_data,
-                streaming=streaming_enabled
-            )
+            # Create Phase2 LLM Graph for remediation
+            graph_instance = Phase2LLMGraph(self.config_data)
+            graph = graph_instance.initialize_graph()
             
             # Extract and format historical experience data from collected_info
             historical_experiences_formatted = format_historical_experiences_from_collected_info(self.collected_info)

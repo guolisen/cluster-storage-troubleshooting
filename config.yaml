@@ -174,7 +174,7 @@ mcp_servers:
       phase1: true
       phase2: false
   gaode:
-    enable: true  # Enable this MCP server
+    enable: false  # Enable this MCP server
     type: sse
     url: https://mcp.amap.com/sse?key=
     command: null
@@ -192,6 +192,39 @@ mcp_servers:
     args: ["-y", "tavily-mcp@0.1.4"]
     env:
       TAVILY_API_KEY: "tvly-dev-"
+    tools:
+      plan_phase: true
+      phase1: true
+      phase2: true
+  mcpServers:
+    enable: true
+    type: stdio
+    url: ""
+    command: docker
+    args:
+      - run
+      - -i
+      - --rm
+      - -e
+      - CONFLUENCE_URL
+      - -e
+      - CONFLUENCE_USERNAME
+      - -e
+      - CONFLUENCE_API_TOKEN
+      - -e
+      - JIRA_URL
+      - -e
+      - JIRA_USERNAME
+      - -e
+      - JIRA_API_TOKEN
+      - ghcr.io/sooperset/mcp-atlassian:latest
+    env:
+      CONFLUENCE_URL: https://your-company.atlassian.net/wiki
+      CONFLUENCE_USERNAME: your.email@company.com
+      CONFLUENCE_API_TOKEN: your_confluence_api_token
+      JIRA_URL: https://your-company.atlassian.net
+      JIRA_USERNAME: your.email@company.com
+      JIRA_API_TOKEN: your_jira_api_token
     tools:
       plan_phase: true
       phase1: true

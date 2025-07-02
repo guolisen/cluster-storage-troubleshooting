@@ -13,7 +13,6 @@ from typing import Dict, List, Any, Optional, Tuple
 from knowledge_graph import KnowledgeGraph
 from phases.investigation_planner import InvestigationPlanner
 from phases.utils import validate_knowledge_graph, generate_basic_fallback_plan, handle_exception
-from llm_graph.graphs.plan_llm_graph import PlanLLMGraph
 
 logger = logging.getLogger(__name__)
 
@@ -67,19 +66,14 @@ class PlanPhase:
         Returns:
             Dict[str, Any]: Results of the Plan Phase, including the Investigation Plan and updated message list
         """
-        self.logger.info(f"Executing Plan Phase for {namespace}/{pod_name} volume {volume_path} using {'React' if self.use_react else 'Legacy'} mode")
+        self.logger.info(f"Executing Plan Phase for {namespace}/{pod_name} volume {volume_path}")
         
         try:
-            if self.use_react:
-                # Use the new PlanLLMGraph implementation for React mode
-                return await self._generate_investigation_plan_with_graph(
-                    knowledge_graph, pod_name, namespace, volume_path, message_list
-                )
-            else:
-                # Use the traditional approach for Legacy mode
-                return await self._generate_investigation_plan(
-                    knowledge_graph, pod_name, namespace, volume_path, message_list, False
-                )
+            # Generate investigation plan using the Investigation Planner
+            # The use_react flag is passed to the planner to determine the approach
+            return await self._generate_investigation_plan(
+                knowledge_graph, pod_name, namespace, volume_path, message_list, self.use_react
+            )
             
         except Exception as e:
             error_msg = handle_exception("execute", e, self.logger)
@@ -126,62 +120,8 @@ class PlanPhase:
             "message_list": message_list
         }
         
-    async def _generate_investigation_plan_with_graph(self, knowledge_graph: KnowledgeGraph, pod_name: str, namespace: str, 
-                                                   volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:
-        """
-        Generate an investigation plan using the PlanLLMGraph (React mode)
-        
-        Args:
-            knowledge_graph: KnowledgeGraph instance from Phase 0
-            pod_name: Name of the pod with the error
-            namespace: Namespace of the pod
-            volume_path: Path of the volume with I/O error
-            message_list: Optional message list for chat mode
-            
-        Returns:
-            Dict[str, Any]: Results of the plan generation
-        """
-        self.logger.info("Generating investigation plan using PlanLLMGraph")
-        
-        try:
-            # Initialize PlanLLMGraph
-            plan_graph = PlanLLMGraph(self.config_data)
-            
-            # Prepare initial state
-            initial_state = {
-                "messages": message_list or [],
-                "pod_name": pod_name,
-                "namespace": namespace,
-                "volume_path": volume_path,
-                "knowledge_graph": knowledge_graph
-            }
-            
-            # Execute the graph
-            final_state = await plan_graph.execute(initial_state)
-            
-            # Extract the investigation plan
-            investigation_plan = final_state.get("investigation_plan", "")
-            
-            # Parse the plan into a structured format for Phase 1
-            structured_plan = self._parse_investigation_plan(investigation_plan)
-            
-            # Return results
-            return {
-                "status": "success",
-                "investigation_plan": investigation_plan,
-                "structured_plan": structured_plan,
-                "pod_name": pod_name,
-                "namespace": namespace,
-                "volume_path": volume_path,
-                "message_list": final_state.get("messages", message_list)
-            }
-        except Exception as e:
-            error_msg = handle_exception("_generate_investigation_plan_with_graph", e, self.logger)
-            return self._handle_plan_generation_error(
-                error_msg, pod_name, namespace, volume_path, message_list
-            )
-    
     # React mode is now handled by the PlanLLMGraph class in llm_graph/graphs/plan_llm_graph.py
+    # and is integrated into the LLMPlanGenerator._call_llm_and_process_response() method
     
     def _handle_plan_generation_error(self, error_msg: str, pod_name: str, namespace: str, 
                                     volume_path: str, message_list: List[Dict[str, str]] = None) -> Dict[str, Any]:

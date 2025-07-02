@@ -12,10 +12,9 @@ import asyncio
 from typing import Dict, List, Any, Optional, Tuple
 from phases.llm_factory import LLMFactory
 from phases.utils import handle_exception, format_json_safely
-from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage, AIMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 from tools.core.mcp_adapter import get_mcp_adapter
-from phases.plan_phase_react import PlanPhaseReActGraph, run_plan_phase_react
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +48,8 @@ class LLMPlanGenerator:
             if self.mcp_tools:
                 self.logger.info(f"Loaded {len(self.mcp_tools)} MCP tools for Plan Phase")
                 
-        # Initialize ReAct graph if needed
-        self.react_graph = None
-        if self.config_data.get('plan_phase', {}).get('use_react', False):
-            self.logger.info("Initializing Plan Phase ReAct Graph")
-            self.react_graph = PlanPhaseReActGraph(self.config_data)
+        # No need to initialize ReAct graph here anymore
+        # PlanLLMGraph will be created when needed in _call_llm_and_process_response
     
     def _initialize_llm(self) -> Optional[BaseChatModel]:
         """
@@ -306,19 +302,32 @@ Please start by analyzing the available information and identifying any knowledg
         self.logger.info("This may take a few moments...")
         
         # Call model with appropriate approach based on mode
-        if use_react and self.mcp_tools and self.react_graph:
-            # React mode with PlanPhaseReActGraph
-            self.logger.info(f"Using PlanPhaseReActGraph with {len(self.mcp_tools)} MCP tools")
+        if use_react and self.mcp_tools:
+            # React mode with PlanLLMGraph
+            self.logger.info(f"Using PlanLLMGraph with {len(self.mcp_tools)} MCP tools")
             
             try:
-                # Run the Plan Phase ReAct graph
-                plan_text, updated_messages = await run_plan_phase_react(
-                    pod_name=pod_name,
-                    namespace=namespace,
-                    volume_path=volume_path,
-                    messages=messages,  # Pass the messages directly
-                    config_data=self.config_data
-                )
+                # Initialize PlanLLMGraph
+                from llm_graph.graphs.plan_llm_graph import PlanLLMGraph
+                plan_graph = PlanLLMGraph(self.config_data, messages)
+                
+                # Prepare initial state
+                initial_state = {
+                    "messages": messages,
+                    "pod_name": pod_name,
+                    "namespace": namespace,
+                    "volume_path": volume_path,
+                    "knowledge_graph": None  # Knowledge graph information is now in messages
+                }
+                
+                # Execute the graph
+                final_state = await plan_graph.execute(initial_state)
+                
+                # Extract the investigation plan
+                plan_text = final_state.get("investigation_plan", "")
+                
+                # Convert messages to message list format
+                updated_messages = self._convert_messages_to_message_list(final_state.get("messages", []))
                 
                 # Update message list with the result
                 updated_message_list = self._update_message_list_from_react(message_list, updated_messages)
@@ -327,12 +336,12 @@ Please start by analyzing the available information and identifying any knowledg
                 if "Investigation Plan:" not in plan_text:
                     plan_text = self._format_raw_plan(plan_text, pod_name, namespace, volume_path)
                 
-                self.logger.info("Successfully generated LLM-based investigation plan using PlanPhaseReActGraph")
+                self.logger.info("Successfully generated LLM-based investigation plan using PlanLLMGraph")
                 return plan_text, updated_message_list
                 
             except Exception as e:
-                error_msg = handle_exception("_call_llm_and_process_response (PlanPhaseReActGraph)", e, self.logger)
-                self.logger.warning(f"Failed to use PlanPhaseReActGraph: {error_msg}, falling back to legacy mode")
+                error_msg = handle_exception("_call_llm_and_process_response (PlanLLMGraph)", e, self.logger)
+                self.logger.warning(f"Failed to use PlanLLMGraph: {error_msg}, falling back to legacy mode")
                 # Fall back to legacy mode if React graph fails
                 use_react = False
         
@@ -751,3 +760,31 @@ When you've completed the Investigation Plan, include the marker [END_GRAPH] at 
         new_message_list.append(final_message)
         
         return new_message_list
+    
+    def _convert_messages_to_message_list(self, messages: List[BaseMessage]) -> List[Dict[str, str]]:
+        """
+        Convert BaseMessage list to message list format
+        
+        Args:
+            messages: List of BaseMessage objects
+            
+        Returns:
+            List[Dict[str, str]]: Message list format
+        """
+        message_list = []
+        
+        for message in messages:
+            role = "system"
+            if isinstance(message, HumanMessage):
+                role = "user"
+            elif isinstance(message, AIMessage):
+                role = "assistant"
+            elif isinstance(message, ToolMessage):
+                role = "tool"
+            
+            message_list.append({
+                "role": role,
+                "content": message.content
+            })
+        
+        return message_list

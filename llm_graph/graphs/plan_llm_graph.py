@@ -8,12 +8,16 @@ of the troubleshooting system using the Strategy Pattern.
 
 import logging
 import asyncio
+import json
 from typing import Dict, List, Any, TypedDict, Optional, Union, Tuple, Set
 from enum import Enum
+from rich.console import Console
+from rich.panel import Panel
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import tools_condition
 from langchain_core.messages import BaseMessage, ToolMessage, HumanMessage, SystemMessage, AIMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 
 from llm_graph.langgraph_interface import LangGraphInterface
@@ -21,8 +25,90 @@ from llm_graph.graph_utility import GraphUtility
 from llm_graph.prompt_managers.plan_prompt_manager import PlanPromptManager
 from phases.llm_factory import LLMFactory
 from phases.utils import handle_exception, generate_basic_fallback_plan
+from tools.core.mcp_adapter import get_mcp_adapter
+from troubleshooting.execute_tool_node import ExecuteToolNode
+from troubleshooting.strategies import ExecutionType
+from knowledge_graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)
+
+# Define hook functions for PlanLLMGraph
+def before_call_tools_hook(tool_name: str, args: Dict[str, Any], call_type: str = "Parallel") -> None:
+    """Hook function called before a tool is executed in Plan Phase.
+    
+    Args:
+        tool_name: Name of the tool being called
+        args: Arguments passed to the tool
+        call_type: Type of call execution ("Parallel" or "Serial")
+    """
+    try:
+        # Format arguments for better readability
+        formatted_args = json.dumps(args, indent=2) if args else "None"
+        
+        # Format the tool usage in a nice way
+        if formatted_args != "None":
+            # Print to console
+            tool_panel = Panel(
+                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n\n"
+                f"[bold yellow]Arguments:[/bold yellow]\n[blue]{formatted_args}[/blue]",
+                title="[bold magenta]Plan Phase Tool",
+                border_style="magenta",
+                safe_box=True
+            )
+            console = Console()
+            console.print(tool_panel)
+        else:
+            # Simple version for tools without arguments
+            tool_panel = Panel(
+                f"[bold yellow]Tool:[/bold yellow] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n\n"
+                f"[bold yellow]Arguments:[/bold yellow] None",
+                title="[bold magenta]Plan Phase Tool",
+                border_style="magenta",
+                safe_box=True
+            )
+            console = Console()
+            console.print(tool_panel)
+
+        # Log to standard logger
+        logger.info(f"Plan Phase executing tool: {tool_name} ({call_type})")
+        logger.info(f"Parameters: {formatted_args}")
+    except Exception as e:
+        logger.error(f"Error in before_call_tools_hook: {e}")
+
+def after_call_tools_hook(tool_name: str, args: Dict[str, Any], result: Any, call_type: str = "Parallel") -> None:
+    """Hook function called after a tool is executed in Plan Phase.
+    
+    Args:
+        tool_name: Name of the tool that was called
+        args: Arguments that were passed to the tool
+        result: Result returned by the tool
+        call_type: Type of call execution ("Parallel" or "Serial")
+    """
+    try:
+        # Format result for better readability
+        if isinstance(result, ToolMessage):
+            result_content = result.content
+            result_status = result.status if hasattr(result, 'status') else 'success'
+            formatted_result = f"Status: {result_status}\nContent: {result_content[:1000]}"
+        else:
+            formatted_result = str(result)[:1000]
+        
+        # Print tool result to console
+        tool_panel = Panel(
+            f"[bold cyan]Tool completed:[/bold cyan] [green]{tool_name}[/green] [bold cyan]({call_type})[/bold cyan]\n"
+            f"[bold cyan]Result:[/bold cyan]\n[yellow]{formatted_result}[/yellow]",
+            title="[bold magenta]Plan Phase Result",
+            border_style="magenta",
+            safe_box=True
+        )
+        console = Console()
+        console.print(tool_panel)
+
+        # Log to standard logger
+        logger.info(f"Plan Phase tool completed: {tool_name} ({call_type})")
+        logger.info(f"Result: {formatted_result}")
+    except Exception as e:
+        logger.error(f"Error in after_call_tools_hook: {e}")
 
 class PlanPhaseState(TypedDict):
     """State for the Plan Phase ReAct graph"""
@@ -34,7 +120,7 @@ class PlanPhaseState(TypedDict):
     pod_name: str  # Pod name for context
     namespace: str  # Namespace for context
     volume_path: str  # Volume path for context
-    knowledge_graph: Optional[Any]  # Knowledge graph for context
+    knowledge_graph: Optional[KnowledgeGraph]  # Knowledge graph for context
 
 class ReActStage(Enum):
     """Stages in the ReAct process"""
@@ -51,12 +137,13 @@ class PlanLLMGraph(LangGraphInterface):
     which generates an Investigation Plan for Phase 1.
     """
     
-    def __init__(self, config_data: Dict[str, Any] = None):
+    def __init__(self, config_data: Dict[str, Any] = None, messages: List[BaseMessage] = None):
         """
         Initialize the Plan LLM Graph
         
         Args:
             config_data: Configuration data for the system
+            messages: Initial messages for the graph (optional)
         """
         self.config_data = config_data or {}
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
@@ -71,6 +158,9 @@ class PlanLLMGraph(LangGraphInterface):
         
         # Maximum iterations to prevent infinite loops
         self.max_iterations = self.config_data.get("max_iterations", 15)
+        
+        # Store initial messages
+        self.init_messages = messages
     
     def _initialize_llm(self):
         """
@@ -102,8 +192,6 @@ class PlanLLMGraph(LangGraphInterface):
         Returns:
             List[BaseTool]: List of MCP tools for the plan phase
         """
-        from tools.core.mcp_adapter import get_mcp_adapter
-        
         # Get MCP adapter
         mcp_adapter = get_mcp_adapter()
         
@@ -211,6 +299,9 @@ class PlanLLMGraph(LangGraphInterface):
         self.logger.info(f"Calling model (iteration {state['iteration_count']})")
         
         try:
+            # Prepare messages if this is the first iteration or if messages need to be initialized
+            state = self._prepare_messages(state)
+            
             # Call the model with tools
             response = None
             if len(self.mcp_tools) != 0:
@@ -246,7 +337,12 @@ class PlanLLMGraph(LangGraphInterface):
         """
         if not self.mcp_tools:
             self.logger.warning("No MCP tools available for ExecuteToolNode")
-            return None
+            # Return empty ExecuteToolNode if no tools available
+            return ExecuteToolNode(
+                tools=[],
+                parallel_tools=set(),
+                serial_tools=set()
+            )
         
         # Get all tool names
         tool_names = {tool.name for tool in self.mcp_tools}
@@ -257,8 +353,31 @@ class PlanLLMGraph(LangGraphInterface):
         
         self.logger.info(f"Configuring ExecuteToolNode with {len(parallel_tools)} parallel tools")
         
-        # Create and return ExecuteToolNode with all tools set to parallel execution
-        return self.graph_utility.create_execute_tool_node(self.mcp_tools, parallel_tools, serial_tools)
+        # Create ExecuteToolNode with all tools set to parallel execution
+        execute_tool_node = ExecuteToolNode(
+            tools=self.mcp_tools,
+            parallel_tools=parallel_tools,
+            serial_tools=serial_tools,
+            handle_tool_errors=True,
+            messages_key="messages"
+        )
+        
+        # Create a hook manager for console output
+        from troubleshooting.hook_manager import HookManager
+        
+        console = Console()
+        file_console = Console(file=open('plan_phase.log', 'a'))
+        hook_manager = HookManager(console=console, file_console=file_console)
+        
+        # Register custom hook functions with the hook manager
+        hook_manager.register_before_call_hook(before_call_tools_hook)
+        hook_manager.register_after_call_hook(after_call_tools_hook)
+        
+        # Register hook manager with the ExecuteToolNode
+        execute_tool_node.register_before_call_hook(hook_manager.run_before_hook)
+        execute_tool_node.register_after_call_hook(hook_manager.run_after_hook)
+        
+        return execute_tool_node
     
     def check_end_conditions(self, state: PlanPhaseState) -> Dict[str, str]:
         """
@@ -297,6 +416,13 @@ class PlanLLMGraph(LangGraphInterface):
         if not content:
             return {"result": "continue"}
         
+        # Check for explicit end markers using LLM
+        llm_end_markers = self._check_explicit_end_markers(content)
+        if llm_end_markers:
+            self.logger.info("Detected end markers from LLM, ending graph")
+            state["plan_complete"] = True
+            return {"result": "end"}
+            
         # Check for explicit end markers in the content
         end_markers = ["[END_GRAPH]", "[END]", "End of graph", "GRAPH END", "Investigation Plan:", "Fix Plan:", "Step by Step"]
         if any(marker in content for marker in end_markers):
@@ -421,6 +547,102 @@ class PlanLLMGraph(LangGraphInterface):
                 "investigation_plan": fallback_plan,
                 "messages": state.get("messages", [])
             }
+    
+    def _prepare_messages(self, state: PlanPhaseState) -> PlanPhaseState:
+        """
+        Prepare messages for the LLM with system prompt and context
+        
+        Args:
+            state: Current state with messages
+            
+        Returns:
+            PlanPhaseState: Updated state with prepared messages
+        """
+        user_messages = []
+        if state["messages"]:
+            if isinstance(state["messages"], list):
+                for msg in state["messages"]:
+                    if not isinstance(msg, SystemMessage) and not isinstance(msg, HumanMessage):
+                        user_messages.append(msg)
+                
+                # Create new message list with system message, context message, and existing user messages
+                state["messages"] = self.init_messages + user_messages
+            else:
+                state["messages"] = [self.init_messages, state["messages"]]
+        else:
+            state["messages"] = self.init_messages
+
+        self.logger.info("Prepared initial messages with system prompt and user query")
+        return state
+    
+    def _check_explicit_end_markers(self, content: str) -> bool:
+        """
+        Use LLM to check if content contains explicit or implicit end markers.
+        
+        Args:
+            content: The content to check for end markers
+            
+        Returns:
+            bool: True if end markers detected, False otherwise
+        """
+        # Create a focused prompt for the LLM
+        system_prompt = """
+        You are an AI assistant tasked with determining if a text contains explicit or implicit markers 
+        indicating the end of a process or conversation. Your task is to analyze the given text and 
+        determine if it contains phrases or markers that suggest completion or termination.
+        
+        Examples of explicit end markers include:
+        - "[END_GRAPH]", "[END]", "End of graph", "GRAPH END"
+        - "This concludes the analysis"
+        - "Final report"
+        - "Step by Step"
+        - "Step XXX: [Description and Reason] | Tool: [tool_name(parameters)] | Expected: [expected]"
+        - "Investigation complete"
+        - " Would you like to"
+        - A question from AI that indicates the end of the process, such as " Would you like to proceed with planning the disk replacement or further investigate filesystem integrity?"
+        - If just a call tools result, then return 'NO'
+
+        Examples of implicit end markers include:
+        - A summary followed by recommendations with no further questions
+        - A conclusion paragraph that wraps up all findings
+        - A complete analysis with all required sections present
+        - A question from AI that indicates the end of the process, such as "Is there anything else I can help you with?" or "Do you have any further questions?"
+        
+        Respond with "YES" if you detect end markers, or "NO" if you don't.
+        """
+        
+        user_prompt = f"""
+        Analyze the following text and determine if it contains explicit or implicit end markers:
+        
+        {content[:1000]}  # Limit content length to avoid token limits
+        
+        Does this text contain markers indicating it's the end of the process? Respond with only YES or NO.
+        """
+        
+        try:
+            # Create messages for the LLM
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt)
+            ]
+            
+            # Call the LLM
+            response = self.llm.invoke(messages)
+            
+            # Check if the response indicates end markers
+            response_text = response.content.strip().upper()
+            
+            # Log the LLM's response
+            logger.info(f"LLM end marker detection response: {response_text}")
+            
+            # Return True if the LLM detected end markers
+            return "YES" in response_text
+        except Exception as e:
+            # Log any errors and fall back to the original behavior
+            logger.error(f"Error in LLM end marker detection: {e}")
+            
+            # Fall back to simple string matching
+            return any(marker in content for marker in ["[END_GRAPH]", "[END]", "End of graph", "GRAPH END", "Fix Plan", "FIX PLAN"])
     
     def get_prompt_manager(self):
         """

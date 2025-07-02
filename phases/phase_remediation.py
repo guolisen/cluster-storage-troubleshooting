@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from tools.core.mcp_adapter import get_mcp_adapter
 from phases.llm_factory import LLMFactory
+from langgraph.graph import StateGraph
 from tools.diagnostics.hardware import xfs_repair_check  # Importing the xfs_repair_check tool
 from phases.utils import format_historical_experiences_from_collected_info, handle_exception
 from llm_graph.graphs.phase2_llm_graph import Phase2LLMGraph

@@ -75,6 +75,9 @@ Run the tests:
 python tests/test_llm_providers.py
 ```
 
+## Example
+![AI Permission](./docs/images/ai_permission_lite.png)
+
 ## License
 
 This project is licensed under the terms of the LICENSE file included in the repository.

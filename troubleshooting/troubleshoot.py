@@ -36,15 +36,19 @@ from phases.chat_mode import ChatMode
 from tools.core.mcp_adapter import initialize_mcp_adapter, get_mcp_adapter
 from rich.logging import RichHandler
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-from rich.panel import Panel
-from rich.table import Table
-from rich.tree import Tree
-from rich import print as rprint
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn # Retained if progress is used elsewhere
+from rich.panel import Panel # Retained for potential direct use if any
+from rich.table import Table # Retained for potential direct use if any
+# from rich.tree import Tree # Not used directly in troubleshoot.py after UI extraction
+from rich import print as rprint # Retained for potential direct use if any
+from .ui import TroubleshootingUI # Import the new UI class
 
 # Initialize rich console
-console = Console()
-file_console = Console(file=open('troubleshoot.log', 'w'))
+console = Console() # Retained for general console output not covered by TroubleshootingUI
+file_console = Console(file=open('troubleshoot.log', 'w')) # Retained for file logging
+
+# Global UI instance
+troubleshooting_ui: Optional[TroubleshootingUI] = None
 
 # Custom filter for internal logging
 class InternalLogFilter(logging.Filter):
@@ -214,428 +218,452 @@ def setup_logging(config_data):
     
     # Configure module-specific loggers
     configure_module_loggers()
-    
-    # Log startup message to file only
-    logging.info("Logging initialized - internal logs redirected to log file only")
 
-async def run_information_collection_phase_wrapper(pod_name: str, namespace: str, volume_path: str) -> Dict[str, Any]:
+    # Log startup message to file only
+    # logging.info("Logging initialized - internal logs redirected to log file only")
+    # This specific message can be removed or kept depending on preference,
+    # RichHandler itself might log its initialization.
+
+# Helper function to initialize UI if not already done
+def _initialize_ui_if_needed():
+    global troubleshooting_ui
+    if troubleshooting_ui is None:
+        # Ensure console and file_console are initialized before this call
+        troubleshooting_ui = TroubleshootingUI(console, file_console)
+
+async def _execute_information_collection_phase(pod_name: str, namespace: str, volume_path: str, results: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """
-    Wrapper for Phase 0: Information Collection from phases module
-    
-    Args:
-        pod_name: Name of the pod with the error
-        namespace: Namespace of the pod
-        volume_path: Path of the volume with I/O error
-        
-    Returns:
-        Dict[str, Any]: Pre-collected diagnostic information
+    Executes Phase 0: Information Collection.
+    Updates results with phase data.
+    Returns collected_info and knowledge_graph.
     """
-    global CONFIG_DATA, KNOWLEDGE_GRAPH
-    
-    # Call the actual implementation from phases module
+    global CONFIG_DATA, KNOWLEDGE_GRAPH, troubleshooting_ui
+    _initialize_ui_if_needed()
+
+    phase_start_time = time.time()
+    troubleshooting_ui.display_initial_banner(pod_name, namespace, volume_path, results["start_time"])
+
     collected_info = await run_information_collection_phase(pod_name, namespace, volume_path, CONFIG_DATA)
     
-    # Update the global knowledge graph
     KNOWLEDGE_GRAPH = collected_info.get('knowledge_graph')
-    
-    # Initialize the Knowledge Graph in the tools module with the one from Phase0
     if KNOWLEDGE_GRAPH:
         from tools.core.knowledge_graph import initialize_knowledge_graph
         initialize_knowledge_graph(KNOWLEDGE_GRAPH)
         logging.info("Knowledge Graph from Phase0 initialized for tools")
     else:
         logging.warning("No Knowledge Graph available from Phase0")
-    
-    return collected_info
 
-async def run_analysis_phase_wrapper(pod_name: str, namespace: str, volume_path: str, 
-                                  collected_info: Dict[str, Any], investigation_plan: str,
-                                  message_list: List[Dict[str, str]] = None) -> Tuple[str, bool, str, List[Dict[str, str]]]:
+    phase_duration = time.time() - phase_start_time
+    results["phases"]["phase_0_collection"] = {
+        "status": "completed",
+        "summary": collected_info.get("knowledge_graph_summary", {}),
+        "duration": phase_duration
+    }
+
+    if "collection_error" in collected_info:
+        results["phases"]["phase_0_collection"]["status"] = "failed"
+        results["phases"]["phase_0_collection"]["error"] = collected_info["collection_error"]
+        troubleshooting_ui.display_error_panel(f"Information Collection Failed: {collected_info['collection_error']}")
+        return None, KNOWLEDGE_GRAPH # Indicate failure
+
+    # Add Knowledge Graph to collected_info for subsequent phases
+    collected_info["knowledge_graph"] = KNOWLEDGE_GRAPH
+    return collected_info, KNOWLEDGE_GRAPH
+
+# _execute_information_collection_phase remains as previously defined.
+# run_information_collection_phase_wrapper remains as previously defined (deprecated).
+
+
+async def _handle_chat_interaction_for_phase(
+    chat_mode: ChatMode,
+    phase_execution_fn: callable,
+    chat_interaction_fn: callable,
+    initial_args: list,
+    initial_message_list: Optional[List[Dict[str, str]]],
+    ui_display_fn: callable,
+    phase_name: str # For logging and error messages
+) -> Tuple[Any, Optional[List[Dict[str, str]]], bool, List[Any]]:
     """
-    Wrapper for Phase 1: ReAct Investigation from phases module
-    
-    Args:
-        pod_name: Name of the pod with the error
-        namespace: Namespace of the pod
-        volume_path: Path of the volume with I/O error
-        collected_info: Pre-collected diagnostic information from Phase 0
-        investigation_plan: Investigation Plan generated by the Plan Phase
-        message_list: Optional message list for chat mode
+    Handles the common loop for chat interaction within a phase.
+    Returns the primary phase result, final message list, exit flag, and other auxiliary results from phase_execution_fn.
+    """
+    global troubleshooting_ui
+    _initialize_ui_if_needed()
+
+    current_message_list = initial_message_list
+    phase_primary_result = None
+    other_results = []
+    exit_flag = False
+
+    while True:
+        phase_fn_args = initial_args + [current_message_list]
+
+        try:
+            returned_values = await phase_execution_fn(*phase_fn_args)
+        except Exception as e:
+            logging.error(f"Error during {phase_name} execution: {e}", exc_info=True)
+            # Return a generic error result, null message list, and no exit
+            # The caller phase function should handle this by setting its own error status
+            return f"{phase_name} execution failed: {e}", current_message_list, False, []
+
+
+        if isinstance(returned_values, tuple):
+            phase_primary_result = returned_values[0]
+            current_message_list = returned_values[-1]
+            other_results = list(returned_values[1:-1])
+        else:
+            phase_primary_result = returned_values
+            # If message_list is not the last item, this needs adjustment or phase_execution_fn needs to conform.
+            # Assuming for now that if not a tuple, it's just the primary result and message list is managed via args.
+
+        ui_display_fn(phase_primary_result)
+
+        # Special handling for analysis summary if present in other_results
+        if phase_name == "Analysis" and len(other_results) >= 2: # skip_flag, summary
+            analysis_summary = other_results[1]
+            if analysis_summary:
+                troubleshooting_ui.display_event_summary(analysis_summary)
         
-    Returns:
-        Tuple[str, bool, List[Dict[str, str]]]: (Analysis result, Skip Phase2 flag, Updated message list)
-    """
-    global CONFIG_DATA
+        chat_args_for_interaction = [current_message_list, phase_primary_result]
+        # Example: chat_after_phase1 might take (message_list, phase1_response)
 
-    # Call the actual implementation from phases module
+        current_message_list, exit_flag = chat_interaction_fn(*chat_args_for_interaction)
+
+        if exit_flag:
+            troubleshooting_ui.display_exit_message(f"Exiting program as requested by user during {phase_name}.")
+            sys.exit(0)
+
+        if not current_message_list or current_message_list[-1].get("role") != "user":
+            return phase_primary_result, current_message_list, exit_flag, other_results
+
+    # Fallback, should ideally not be reached if loop logic is correct
+    return phase_primary_result, current_message_list, exit_flag, other_results
+
+
+async def _execute_plan_phase(pod_name: str, namespace: str, volume_path: str,
+                            collected_info: Dict[str, Any], results: Dict[str, Any]) \
+                            -> Tuple[Optional[str], Optional[List[Dict[str, str]]]]:
+    """
+    Executes the Plan Phase. Updates results. Returns investigation_plan, plan_phase_message_list.
+    """
+    global CONFIG_DATA, troubleshooting_ui
+    _initialize_ui_if_needed()
+
+    plan_phase_start_time = time.time()
+    investigation_plan = None
+    plan_phase_message_list = None # This will be the message list *after* this phase
+
+    results["phases"]["plan_phase"] = { # Initialize results for this phase
+        "status": "pending", "duration": 0, "investigation_plan": None
+    }
+
+    try:
+        chat_mode_enabled = CONFIG_DATA.get('chat_mode', {}).get('enabled', True)
+        plan_phase_chat_enabled = chat_mode_enabled and \
+                                  "plan_phase" in CONFIG_DATA.get('chat_mode', {}).get('entry_points', [])
+
+        if not plan_phase_chat_enabled:
+            investigation_plan, plan_phase_message_list = await run_plan_phase(
+                pod_name, namespace, volume_path, collected_info, CONFIG_DATA, None
+            )
+            troubleshooting_ui.display_investigation_plan(investigation_plan)
+        else:
+            chat_mode = ChatMode()
+            investigation_plan, plan_phase_message_list, _, _ = await _handle_chat_interaction_for_phase(
+                chat_mode=chat_mode,
+                phase_execution_fn=run_plan_phase, # Expected to return: plan_text, message_list
+                chat_interaction_fn=chat_mode.chat_after_plan_phase, # Expected args: message_list, plan_text
+                initial_args=[pod_name, namespace, volume_path, collected_info, CONFIG_DATA],
+                initial_message_list=None, # No prior message list for plan phase start
+                ui_display_fn=troubleshooting_ui.display_investigation_plan,
+                phase_name="Plan Generation"
+            )
+
+        results["phases"]["plan_phase"]["status"] = "completed"
+        results["phases"]["plan_phase"]["investigation_plan"] = investigation_plan[:5000] + "..." if investigation_plan and len(investigation_plan) > 5000 else investigation_plan
+
+    except Exception as e:
+        error_msg = f"Error during Plan Phase: {str(e)}"
+        logging.error(error_msg, exc_info=True)
+        results["phases"]["plan_phase"]["status"] = "failed"
+        results["phases"]["plan_phase"]["error"] = error_msg
+        investigation_plan = f"Fallback Plan (Plan Phase Error): {error_msg}"
+        troubleshooting_ui.display_investigation_plan(investigation_plan)
+
+    results["phases"]["plan_phase"]["duration"] = time.time() - plan_phase_start_time
+    return investigation_plan, plan_phase_message_list
+
+
+async def run_analysis_phase_wrapper(pod_name: str, namespace: str, volume_path: str,
+                                  collected_info: Dict[str, Any], investigation_plan: Optional[str], # Optional
+                                  message_list: List[Dict[str, str]] = None) -> Tuple[str, bool, str, List[Dict[str, str]]]:
+    global CONFIG_DATA
+    if not investigation_plan:
+        # This case should ideally be handled before calling, or run_analysis_phase_with_plan must handle None
+        logging.warning("run_analysis_phase_wrapper called with no investigation_plan.")
+        investigation_plan = "Error: Investigation plan was not generated."
     return await run_analysis_phase_with_plan(
         pod_name, namespace, volume_path, collected_info, investigation_plan, CONFIG_DATA, message_list
     )
 
-async def run_remediation_phase_wrapper(phase1_final_response: str, collected_info: Dict[str, Any], 
+
+async def _execute_analysis_phase(pod_name: str, namespace: str, volume_path: str,
+                                collected_info: Dict[str, Any], investigation_plan: Optional[str],
+                                initial_message_list: Optional[List[Dict[str, str]]],
+                                results: Dict[str, Any]) \
+                                -> Tuple[Optional[str], bool, Optional[List[Dict[str, str]]]]:
+    """
+    Executes Phase 1: ReAct Investigation. Updates results.
+    Returns final response, skip_phase2 flag, and message list for remediation.
+    """
+    global CONFIG_DATA, troubleshooting_ui
+    _initialize_ui_if_needed()
+
+    phase_1_start_time = time.time()
+    phase1_final_response = None
+    skip_phase2 = False
+    phase1_message_list = initial_message_list # Message list *after* this phase
+
+    results["phases"]["phase_1_analysis"] = { # Initialize
+        "status": "pending", "duration": 0, "final_response": None, "skip_phase2": "false"
+    }
+
+    if not investigation_plan:
+        investigation_plan = "No investigation plan available (Plan Phase likely failed or generated no plan)."
+        results["phases"]["phase_1_analysis"]["final_response"] = "Skipped due to missing investigation plan."
+        results["phases"]["phase_1_analysis"]["status"] = "skipped"
+        results["phases"]["phase_1_analysis"]["duration"] = time.time() - phase_1_start_time
+        troubleshooting_ui.display_error_panel("Analysis skipped: Investigation plan not available.", "[bold yellow]ANALYSIS SKIPPED[/bold yellow]")
+        return "Analysis skipped due to missing plan.", True, phase1_message_list
+
+    try:
+        chat_mode_enabled = CONFIG_DATA.get('chat_mode', {}).get('enabled', True)
+        phase1_chat_enabled = chat_mode_enabled and \
+                              "phase1" in CONFIG_DATA.get('chat_mode', {}).get('entry_points', [])
+
+        if not phase1_chat_enabled:
+            # run_analysis_phase_wrapper returns: (Analysis result, Skip Phase2 flag, Summary, Updated message list)
+            phase1_final_response, skip_phase2, analysis_summary, phase1_message_list = await run_analysis_phase_wrapper(
+                pod_name, namespace, volume_path, collected_info, investigation_plan, phase1_message_list
+            )
+            troubleshooting_ui.display_fix_plan(phase1_final_response)
+            if analysis_summary: troubleshooting_ui.display_event_summary(analysis_summary)
+        else:
+            chat_mode = ChatMode()
+            # Expected return from phase_execution_fn (run_analysis_phase_wrapper): response, skip_flag, summary, msg_list
+            # Expected other_results from _handle_chat: [skip_flag, summary]
+            phase1_final_response, phase1_message_list, _, other_results = await _handle_chat_interaction_for_phase(
+                chat_mode=chat_mode,
+                phase_execution_fn=run_analysis_phase_wrapper,
+                chat_interaction_fn=chat_mode.chat_after_phase1, # Expected args: msg_list, phase1_response
+                initial_args=[pod_name, namespace, volume_path, collected_info, investigation_plan],
+                initial_message_list=phase1_message_list,
+                ui_display_fn=troubleshooting_ui.display_fix_plan,
+                phase_name="Analysis"
+            )
+            if other_results and len(other_results) > 0: skip_phase2 = other_results[0] # First item in other_results is skip_flag
+            # analysis_summary is handled by _handle_chat_interaction_for_phase for display
+
+        results["phases"]["phase_1_analysis"]["status"] = "completed"
+        results["phases"]["phase_1_analysis"]["final_response"] = str(phase1_final_response)
+        results["phases"]["phase_1_analysis"]["skip_phase2"] = "true" if skip_phase2 else "false"
+
+    except Exception as e:
+        error_msg = f"Error during Analysis Phase: {str(e)}"
+        logging.error(error_msg, exc_info=True)
+        results["phases"]["phase_1_analysis"]["status"] = "failed"
+        results["phases"]["phase_1_analysis"]["error"] = error_msg
+        results["phases"]["phase_1_analysis"]["skip_phase2"] = "true" # Skip Phase2 if analysis fails
+        phase1_final_response = f"Analysis failed: {error_msg}"
+        troubleshooting_ui.display_error_panel(phase1_final_response, title="[bold red]ANALYSIS FAILED[/bold red]")
+        skip_phase2 = True # Ensure skip_phase2 is true on exception
+
+    results["phases"]["phase_1_analysis"]["duration"] = time.time() - phase_1_start_time
+    return phase1_final_response, skip_phase2, phase1_message_list
+
+
+async def run_remediation_phase_wrapper(phase1_final_response: str, collected_info: Dict[str, Any],
                                       message_list: List[Dict[str, str]] = None) -> Tuple[str, List[Dict[str, str]]]:
-    """
-    Wrapper for Phase 2: Remediation from phases module
-    
-    Args:
-        phase1_final_response: Response from Phase 1 containing root cause and fix plan
-        collected_info: Pre-collected diagnostic information from Phase 0
-        message_list: Optional message list for chat mode
-        
-    Returns:
-        Tuple[str, List[Dict[str, str]]]: (Remediation result, Updated message list)
-    """
     global CONFIG_DATA
-    
-    # Call the actual implementation from phases module
     return await run_remediation_phase(phase1_final_response, collected_info, CONFIG_DATA, message_list)
+
+
+async def _execute_remediation_phase(phase1_final_response: Optional[str],
+                                   collected_info: Dict[str, Any],
+                                   phase1_message_list: Optional[List[Dict[str, str]]],
+                                   results: Dict[str, Any]) -> Optional[str]:
+    """
+    Executes Phase 2: Remediation. Updates results. Returns remediation_result.
+    """
+    global troubleshooting_ui
+    _initialize_ui_if_needed()
+    
+    phase_2_start_time = time.time()
+    remediation_result = "Phase 2: Remediation not initiated or response unavailable." # Default
+
+    results["phases"]["phase_2_remediation"] = { # Initialize
+        "status": "pending", "duration": 0, "result": remediation_result
+    }
+
+    if not phase1_final_response:
+        phase1_final_response = "No analysis response available for remediation."
+        logging.warning(phase1_final_response)
+        # Update results to reflect that remediation cannot proceed meaningfully
+        results["phases"]["phase_2_remediation"]["status"] = "skipped"
+        results["phases"]["phase_2_remediation"]["reason"] = "Missing analysis response from Phase 1."
+        results["phases"]["phase_2_remediation"]["result"] = "Skipped: Missing analysis response."
+        results["phases"]["phase_2_remediation"]["duration"] = time.time() - phase_2_start_time
+        troubleshooting_ui.display_phase2_skipped() # Or a more specific message
+        return results["phases"]["phase_2_remediation"]["result"]
+
+    try:
+        troubleshooting_ui.display_remediation_start_panel()
+
+        # run_remediation_phase_wrapper returns: (Remediation result, Updated message list)
+        remediation_result_tuple = await run_remediation_phase_wrapper(
+            phase1_final_response, collected_info, phase1_message_list
+        )
+        remediation_result = remediation_result_tuple[0]
+
+        current_status = "completed"
+        if "failed" in remediation_result.lower() or \
+           "error" in remediation_result.lower() or \
+           "timed out" in remediation_result.lower():
+            current_status = "failed"
+            troubleshooting_ui.display_remediation_failed(remediation_result)
+        else:
+            troubleshooting_ui.display_remediation_complete()
+
+        results["phases"]["phase_2_remediation"]["status"] = current_status
+        results["phases"]["phase_2_remediation"]["result"] = remediation_result
+        
+    except Exception as e:
+        error_msg = f"Error during Remediation Phase: {str(e)}"
+        logging.error(error_msg, exc_info=True)
+        results["phases"]["phase_2_remediation"]["status"] = "failed"
+        results["phases"]["phase_2_remediation"]["error"] = error_msg
+        results["phases"]["phase_2_remediation"]["result"] = error_msg
+        remediation_result = error_msg # Ensure remediation_result reflects the error
+        troubleshooting_ui.display_remediation_failed(error_msg)
+
+    results["phases"]["phase_2_remediation"]["duration"] = time.time() - phase_2_start_time
+    return remediation_result
+
 
 async def run_comprehensive_troubleshooting(pod_name: str, namespace: str, volume_path: str) -> Dict[str, Any]:
     """
-    Run comprehensive 3-phase troubleshooting
-    
-    Args:
-        pod_name: Name of the pod with the error
-        namespace: Namespace of the pod
-        volume_path: Path of the volume with I/O error
-        
-    Returns:
-        Dict[str, Any]: Complete troubleshooting results
+    Run comprehensive 3-phase troubleshooting.
+    Orchestrates the three main phases: Information Collection, Plan/Analysis, and Remediation.
     """
-    global CONFIG_DATA, KNOWLEDGE_GRAPH
+    global CONFIG_DATA, KNOWLEDGE_GRAPH, troubleshooting_ui
+    _initialize_ui_if_needed()
 
     start_time = time.time()
-    
+    # Initialize results with all expected phase keys for consistent structure
     results = {
-        "pod_name": pod_name,
-        "namespace": namespace,
-        "volume_path": volume_path,
+        "pod_name": pod_name, "namespace": namespace, "volume_path": volume_path,
         "start_time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time)),
-        "phases": {}
+        "phases": {
+            "phase_0_collection": {"status": "pending", "duration": 0, "summary": {}, "error": None},
+            "plan_phase": {"status": "pending", "duration": 0, "investigation_plan": None, "error": None},
+            "phase_1_analysis": {"status": "pending", "duration": 0, "final_response": None, "skip_phase2": "false", "error": None},
+            "phase_2_remediation": {"status": "pending", "duration": 0, "result": "Not run", "reason": None, "error": None},
+        },
+        "total_duration": 0,
+        "status": "pending", # Overall status
+        "error": None # Overall error
     }
+
+    phase1_final_response = "N/A" # Ensure it has a default for display_final_summary
+    remediation_result = "N/A"    # Ensure it has a default
 
     try:
         # Phase 0: Information Collection
-        console.print("\n")
-        console.print(Panel(
-            f"[bold white]Starting troubleshooting for Pod: [green]{namespace}/{pod_name}[/green]\n"
-            f"Volume Path: [blue]{volume_path}[/blue]\n"
-            f"Start Time: [yellow]{results['start_time']}[/yellow]",
-            title="[bold cyan]KUBERNETES VOLUME TROUBLESHOOTING",
-            border_style="cyan",
-            padding=(1, 2)
-        ))
-        
-        collected_info = await run_information_collection_phase_wrapper(pod_name, namespace, volume_path)
-        results["phases"]["phase_0_collection"] = {
-            "status": "completed",
-            "summary": collected_info.get("knowledge_graph_summary", {}),
-            "duration": time.time() - start_time
-        }
-        
-        if "collection_error" in collected_info:
-            results["phases"]["phase_0_collection"]["status"] = "failed"
-            results["phases"]["phase_0_collection"]["error"] = collected_info["collection_error"]
-            return results
-        
-        # Add Knowledge Graph to collected_info for Plan Phase
-        collected_info["knowledge_graph"] = KNOWLEDGE_GRAPH
-        
-        plan_phase_start = time.time()
-        
-        # Plan Phase: Generate Investigation Plan
-        try:
-            # Initialize chat mode
-            chat_mode_enabled = CONFIG_DATA.get('chat_mode', {}).get('enabled', True)
-            chat_mode_entry_points = CONFIG_DATA.get('chat_mode', {}).get('entry_points', ["plan_phase", "phase1"])
-            
-            # Create chat mode instance
-            chat_mode = ChatMode()
-            # Skip chat mode if disabled or plan_phase entry point not enabled
-            if not chat_mode_enabled or "plan_phase" not in chat_mode_entry_points:
-                investigation_plan, plan_phase_message_list = await run_plan_phase(
-                    pod_name, namespace, volume_path, collected_info, CONFIG_DATA
-                )
-                
-                # Print the Investigation Plan to the console
-                console.print("\n")
-                console.print(Panel(
-                    f"[bold white]{investigation_plan}",
-                    title="[bold blue]INVESTIGATION PLAN",
-                    border_style="blue",
-                    padding=(1, 2)
-                ))
-                
-                results["phases"]["plan_phase"] = {
-                    "status": "completed",
-                    "investigation_plan": investigation_plan[:5000] + "..." if len(investigation_plan) > 5000 else investigation_plan,
-                    "duration": time.time() - plan_phase_start
-                }
-            else:
-                # Initialize message list for Plan Phase
-                plan_phase_message_list = None
-                investigation_plan = None
-                exit_flag = False
-                
-                while True:
-                    # Generate or regenerate Investigation Plan
-                    investigation_plan, plan_phase_message_list = await run_plan_phase(
-                        pod_name, namespace, volume_path, collected_info, CONFIG_DATA, plan_phase_message_list
-                    )
-                    
-                    # Print the Investigation Plan to the console
-                    console.print(Panel(
-                        f"[bold white]{investigation_plan}",
-                        title="[bold blue]INVESTIGATION PLAN",
-                        border_style="blue",
-                        padding=(1, 2)
-                    ))
-                    
-                    # Enter chat mode after Plan Phase
-                    plan_phase_message_list, exit_flag = chat_mode.chat_after_plan_phase(
-                        plan_phase_message_list, investigation_plan
-                    )
-                    
-                    # Exit if requested
-                    if exit_flag:
-                        console.print("[bold red]Exiting program as requested by user[/bold red]")
-                        sys.exit(0)
-                    
-                    # Break loop if user approved the plan
-                    if plan_phase_message_list[-1]["role"] != "user":
-                        break
-            
-            results["phases"]["plan_phase"] = {
-                "status": "completed",
-                "investigation_plan": investigation_plan[:5000] + "..." if len(investigation_plan) > 5000 else investigation_plan,  # Truncate for summary
-                "duration": time.time() - plan_phase_start
-            }
-            
-        except Exception as e:
-            error_msg = f"Error during Plan Phase: {str(e)}"
-            logging.error(error_msg)
-            results["phases"]["plan_phase"] = {
-                "status": "failed",
-                "error": error_msg,
-                "duration": time.time() - plan_phase_start
-            }
-            # Use a basic fallback plan
-            investigation_plan = f"""Investigation Plan:
-Target: Pod {namespace}/{pod_name}, Volume Path: {volume_path}
-Generated Steps: 3 fallback steps (Plan Phase failed)
+        collected_info, kg_from_phase0 = await _execute_information_collection_phase(
+            pod_name, namespace, volume_path, results
+        )
+        KNOWLEDGE_GRAPH = kg_from_phase0 # Update global KG
+        if results["phases"]["phase_0_collection"]["status"] == "failed":
+            results["status"] = "failed"
+            results["error"] = results["phases"]["phase_0_collection"].get("error", "Information collection failed.")
+            # Final summary will be displayed in finally block
 
-Step 1: Get all critical issues | Tool: kg_get_all_issues(severity='primary') | Expected: Critical issues in the system
-Step 2: Analyze issue patterns | Tool: kg_analyze_issues() | Expected: Root cause analysis and patterns
-Step 3: Get system overview | Tool: kg_get_summary() | Expected: Overall system health statistics
+        # Plan Phase - only if Phase 0 succeeded
+        investigation_plan = None
+        plan_phase_message_list = None
+        if results["status"] == "pending": # Proceed if no failure yet
+            investigation_plan, plan_phase_message_list = await _execute_plan_phase(
+                pod_name, namespace, volume_path, collected_info, results
+            )
+            if results["phases"]["plan_phase"]["status"] == "failed":
+                logging.warning("Plan phase failed. Analysis may proceed with a fallback or limited plan.")
+                # Overall status is not yet 'failed' unless this is critical.
+                # For now, let analysis decide if it can proceed.
 
-Fallback Steps (if main steps fail):
-Step F1: Print Knowledge Graph | Tool: kg_print_graph(include_details=True, include_issues=True) | Expected: Complete system visualization | Trigger: plan_phase_failed
-"""
-
-        phase_1_start = time.time()
-        
-        # Initialize message list for Phase1
-        phase1_message_list = None
-        phase1_final_response = None
-        exit_flag = False
+        # Phase 1: Analysis - only if Phase 0 succeeded (collected_info is valid)
         skip_phase2 = False
-        
-        # Skip chat mode if disabled or phase1 entry point not enabled
-        if not chat_mode_enabled or "phase1" not in chat_mode_entry_points:
-            # Run Phase1 analysis without chat mode
-            phase1_final_response, skip_phase2, summary, phase1_message_list = await run_analysis_phase_wrapper(
-                pod_name, namespace, volume_path, collected_info, investigation_plan
+        phase1_message_list_for_remediation = plan_phase_message_list # Carry over
+        if results["status"] == "pending" or results["phases"]["plan_phase"]["status"] == "completed": # Allow analysis if plan failed but info collected
+            phase1_final_response, skip_phase2, phase1_message_list_for_remediation = await _execute_analysis_phase(
+                pod_name, namespace, volume_path, collected_info, investigation_plan,
+                plan_phase_message_list, results
             )
-            
-            # Print the Fix Plan to the console
-            console.print("\n")
-            console.print(Panel(
-                f"[bold white]{phase1_final_response}",
-                title="[bold blue]FIX PLAN",
-                border_style="blue",
-                padding=(1, 2)
-            ))
+            if results["phases"]["phase_1_analysis"]["status"] == "failed":
+                logging.warning("Analysis phase failed. Remediation will be skipped.")
+                skip_phase2 = True
+                results["phases"]["phase_2_remediation"]["status"] = "skipped"
+                results["phases"]["phase_2_remediation"]["reason"] = "Analysis phase failed"
+                results["phases"]["phase_2_remediation"]["result"] = "Skipped: Analysis phase failed"
 
-            console.print(Panel(
-                f"[bold white]{summary}",
-                title="[bold magenta]Event Summary",
-                border_style="magenta",
-                padding=(1, 2)
-            ))
 
-            results["phases"]["phase_1_analysis"] = {
-                "status": "completed",
-                "final_response": str(phase1_final_response),
-                "duration": time.time() - phase_1_start,
-                "skip_phase2": "true" if skip_phase2 else "false"
-            }
-        else:
-            # Use chat mode for Phase1
-            while True:
-                # Run Phase1 analysis
-                phase1_final_response, skip_phase2, summary, phase1_message_list = await run_analysis_phase_wrapper(
-                    pod_name, namespace, volume_path, collected_info, investigation_plan, phase1_message_list
+        # Phase 2: Remediation - only if not skipped and previous phases allow
+        if results["status"] == "pending" and not skip_phase2 :
+            if results["phases"]["phase_1_analysis"]["status"] == "completed": # Ensure analysis completed successfully
+                remediation_result = await _execute_remediation_phase(
+                    phase1_final_response, collected_info, phase1_message_list_for_remediation, results
                 )
-                
-                # Print the Fix Plan to the console
-                console.print(Panel(
-                    f"[bold white]{phase1_final_response}",
-                    title="[bold blue]FIX PLAN",
-                    border_style="blue",
-                    padding=(1, 2)
-                ))
+            else: # Analysis did not complete successfully, or was skipped.
+                skip_phase2 = True # Explicitly skip
+                results["phases"]["phase_2_remediation"]["status"] = "skipped"
+                results["phases"]["phase_2_remediation"]["reason"] = "Analysis phase did not complete successfully or was skipped."
+                results["phases"]["phase_2_remediation"]["result"] = "Skipped: Analysis issues."
+                troubleshooting_ui.display_phase2_skipped()
+        elif skip_phase2: # If already marked to skip
+             results["phases"]["phase_2_remediation"]["status"] = "skipped"
+             if not results["phases"]["phase_2_remediation"]["reason"]:
+                results["phases"]["phase_2_remediation"]["reason"] = "Skipped by analysis phase or configuration."
+             results["phases"]["phase_2_remediation"]["result"] = f"Skipped: {results['phases']['phase_2_remediation']['reason']}"
+             troubleshooting_ui.display_phase2_skipped()
 
-                console.print(Panel(
-                    f"[bold white]{summary}",
-                    title="[bold magenta]Event Summary",
-                    border_style="magenta",
-                    padding=(1, 2)
-                ))
-                # Enter chat mode after Phase1
-                phase1_message_list, exit_flag = chat_mode.chat_after_phase1(
-                    phase1_message_list, phase1_final_response
-                )
-                
-                # Exit if requested
-                if exit_flag:
-                    console.print("[bold red]Exiting program as requested by user[/bold red]")
-                    sys.exit(0)
-                
-                # Break loop if user approved the plan
-                if phase1_message_list[-1]["role"] != "user":
-                    break
+
+        # Determine final overall status
+        if results["phases"]["phase_0_collection"]["status"] == "failed" or \
+           results["phases"]["phase_1_analysis"]["status"] == "failed" or \
+           (not skip_phase2 and results["phases"]["phase_2_remediation"]["status"] == "failed") or \
+           results["phases"]["plan_phase"]["status"] == "failed": # Consider plan failure as overall if critical
+            results["status"] = "failed"
+            if not results["error"]: # If a specific phase error wasn't propagated to overall
+                results["error"] = "One or more troubleshooting phases failed."
+        elif results["status"] == "pending": # If no failures, mark as completed
+            results["status"] = "completed"
             
-            results["phases"]["phase_1_analysis"] = {
-                "status": "completed",
-                "final_response": str(phase1_final_response),
-                "duration": time.time() - phase_1_start,
-                "skip_phase2": "true" if skip_phase2 else "false"
-            }
-        
-        # Only proceed to Phase 2 if not skipped
-        remediation_result = None
-        skip_phase2 = True
-        if not skip_phase2:
-            phase_2_start = time.time()
-            
-            remediation_result, _ = await run_remediation_phase_wrapper(phase1_final_response, collected_info, phase1_message_list)
-            
-            results["phases"]["phase_2_remediation"] = {
-                "status": "completed",
-                "result": remediation_result,
-                "duration": time.time() - phase_2_start
-            }
-        else:
-            # Phase 2 skipped - add to results
-            console.print("\n")
-            console.print(Panel(
-                "[bold white]Phase 2 skipped - no remediation needed or manual intervention required",
-                title="[bold yellow]PHASE 2: SKIPPED",
-                border_style="yellow",
-                padding=(1, 2)
-            ))
-            results["phases"]["phase_2_remediation"] = {
-                "status": "skipped",
-                "result": "Phase 2 skipped - no remediation needed or manual intervention required",
-                "reason": "No issues detected or manual intervention required",
-                "duration": 0
-            }
-
-        # Final summary
-        total_duration = time.time() - start_time
-        results["total_duration"] = total_duration
-        results["status"] = "completed"
-
-        # Create a rich formatted summary table
-        summary_table = Table(
-            title="[bold]TROUBLESHOOTING SUMMARY",
-            #show_header=True,
-            header_style="bold cyan",
-            #box=True,
-            border_style="blue",
-            #safe_box=True  # Explicitly set safe_box to True
-        )
-
-        # Add columns
-        summary_table.add_column("Phase", style="dim")
-        summary_table.add_column("Duration", justify="right")
-        summary_table.add_column("Status", justify="center")
-        
-        # Add rows for each phase
-        summary_table.add_row(
-            "Phase 0: Information Collection", 
-            f"{results['phases']['phase_0_collection']['duration']:.2f}s",
-            "[green]Completed"
-        )
-        # Add Plan Phase row
-        plan_phase_status = "[green]Completed" if results["phases"].get("plan_phase", {}).get("status") == "completed" else "[red]Failed"
-        plan_phase_duration = results["phases"].get("plan_phase", {}).get("duration", 0)
-        summary_table.add_row(
-            "Plan Phase: Investigation Plan", 
-            f"{plan_phase_duration:.2f}s",
-            plan_phase_status
-        )
-        summary_table.add_row(
-            "Phase 1: ReAct Investigation", 
-            f"{results['phases']['phase_1_analysis']['duration']:.2f}s",
-            "[green]Completed"
-        )
-        
-        # Add Phase 2 row with appropriate status
-        if results["phases"]["phase_2_remediation"]["status"] == "completed":
-            summary_table.add_row(
-                "Phase 2: Remediation", 
-                f"{results['phases']['phase_2_remediation']['duration']:.2f}s",
-                "[green]Completed"
-            )
-        else:
-            summary_table.add_row(
-                "Phase 2: Remediation", 
-                "0.00s",
-                "[yellow]Skipped"
-            )
-        summary_table.add_row(
-            "Total", 
-            f"{total_duration:.2f}s", 
-            "[bold green]Completed"
-        )
-        # Create root cause and resolution panels - ensure strings for content
-        # Convert values to strings first to avoid 'bool' has no attribute 'substitute' errors
-        root_cause_str = phase1_final_response if phase1_final_response is not None else "Unknown"
-        remediation_result_str = remediation_result if remediation_result is not None else "No result"
-        root_cause_panel = Panel(
-            f"[bold yellow]{root_cause_str}",
-            title="[bold red]Root Cause",
-            border_style="red",
-            padding=(1, 2),
-            safe_box=True  # Explicitly set safe_box to True
-        )
-        resolution_panel = Panel(
-            f"[bold green]{remediation_result_str}",
-            title="[bold blue]Resolution Status",
-            border_style="green",
-            padding=(1, 2),
-            safe_box=True  # Explicitly set safe_box to True
-        )
-
-        try:
-            console.print(summary_table)
-        except Exception as e:
-            console.print(f"Error printing rich summary table: {e}")
-
-        console.print("\n")
-        console.print(root_cause_panel)
-        console.print("\n")
-        console.print(resolution_panel)
-        
-        return results
-        
     except Exception as e:
-        error_msg = f"Critical error during troubleshooting: {str(e)}"
-        logging.error(error_msg)
+        critical_error_msg = f"Critical unhandled error in run_comprehensive_troubleshooting: {str(e)}"
+        logging.critical(critical_error_msg, exc_info=True)
         results["status"] = "failed"
-        results["error"] = error_msg
+        results["error"] = critical_error_msg
+        # Mark all pending phases as failed due to this critical error
+        for phase_key in results["phases"]:
+            if results["phases"][phase_key]["status"] == "pending":
+                results["phases"][phase_key]["status"] = "error_due_to_critical_failure"
+                results["phases"][phase_key]["error"] = critical_error_msg
+    finally:
         results["total_duration"] = time.time() - start_time
+        # Ensure phase1_final_response and remediation_result are strings for the UI
+        ui_phase1_response = str(results["phases"]["phase_1_analysis"].get("final_response", "N/A"))
+        ui_remediation_result = str(results["phases"]["phase_2_remediation"].get("result", "N/A"))
+        troubleshooting_ui.display_final_summary(results, ui_phase1_response, ui_remediation_result)
+
         return results
 
 def parse_arguments():
@@ -692,12 +720,14 @@ async def main():
         try:
             config.load_incluster_config()
             logging.info("Loaded in-cluster Kubernetes configuration")
-        except:
+        except config.ConfigException: # More specific exception
             try:
                 config.load_kube_config()
                 logging.info("Loaded kubeconfig from default location")
-            except Exception as e:
-                logging.error(f"Failed to load Kubernetes configuration: {e}")
+            except Exception as e: # Catch broader exceptions for kube_config loading
+                logging.error(f"Failed to load Kubernetes configuration: {e}", exc_info=True)
+                if troubleshooting_ui:
+                    troubleshooting_ui.display_error_panel(f"Failed to load Kubernetes configuration: {e}")
                 sys.exit(1)
         
         # Run comprehensive troubleshooting
@@ -711,20 +741,30 @@ async def main():
                 with open(args.output, 'w') as f:
                     json.dump(results, f, indent=2)
                 logging.info(f"Results saved to {args.output}")
+                if troubleshooting_ui:
+                    troubleshooting_ui.display_info_panel(f"Results saved to {args.output}")
             except Exception as e:
-                logging.error(f"Failed to save results to {args.output}: {e}")
+                logging.error(f"Failed to save results to {args.output}: {e}", exc_info=True)
+                if troubleshooting_ui:
+                    troubleshooting_ui.display_error_panel(f"Failed to save results to {args.output}: {e}")
         
         # Exit with appropriate code
-        if results["status"] == "completed":
+        if results.get("status") == "completed": # Use .get for safety
             sys.exit(0)
         else:
             sys.exit(1)
             
     except KeyboardInterrupt:
         logging.info("Troubleshooting interrupted by user")
-        sys.exit(130)
+        if troubleshooting_ui:
+            troubleshooting_ui.display_exit_message("Troubleshooting interrupted by user.")
+        sys.exit(130) # Standard exit code for Ctrl+C
     except Exception as e:
-        logging.error(f"Critical error in main: {str(e)}")
+        logging.critical(f"Critical error in main: {str(e)}", exc_info=True) # Use critical for top-level crash
+        if troubleshooting_ui: # Check if UI is available
+             troubleshooting_ui.display_error_panel(f"Critical error in main: {str(e)}", title="[bold red]CRITICAL APPLICATION ERROR[/bold red]")
+        else:
+             console.print(Panel(f"[bold red]CRITICAL ERROR IN MAIN: {str(e)}[/bold red]"))
         sys.exit(1)
     finally:
         # Clean up SSH connections

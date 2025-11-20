@@ -1,0 +1,43 @@
+{
+  "langgraph": {
+    "status": "error",
+    "error": "object of type 'NoneType' has no len()"
+  },
+  "knowledge_graph": [
+    {
+      "name": "kg_get_entity_info",
+      "status": "success",
+      "result": "{\n  \"node_id\": \"gnode:Pod:default/test-pod-1-0\",\n  \"entity_type\": \"Pod\",\n  \"attributes\": {\n    \"entity_type\": \"gnode\",\n    \"gnode_subtype\": \"Pod\",\n    \"name\": \"test-pod-1-0\",\n    \"namespace\": \"default\",\n    \"status\": \"Running\",\n    \"issues\": [\n      {\n        \"node_id\": \"gnode:Pod:default/test-pod-1-0\",\n        \"type\": \"pod_crash\",\n        \"description\": \"Pod is crashing\",\n        \"severity\": \"medium\"\n      }\n    ]\n  },\n  \"incoming_relationships\": [],\n  \"outgoing_relationships\": [\n    {\n      \"target_id\": \"gnode:Node:kind-control-plane\",\n      \"target_type\": \"gnode\",\n      \"target_name\": \"kind-control-plane\",\n      \"relationship\": \"runs_on\",\n      \"attributes\": {}\n    },\n    {\n      \"target_id\": \"gnode:PVC:default/www-1-test-pod-1-0\",\n      \"target_type\": \"gnode\",\n      \"target_name\": \"www-1-test-pod-1-0\",\n      \"relationship\": \"uses\",\n      \"attributes\": {}\n    }\n  ],\n  \"issues\": [\n    {\n      \"node_id\": \"gnode:Pod:default/test-pod-1-0\",\n      \"type\": \"pod_crash\",\n      \"description\": \"Pod is crashing\",\n      \"severity\": \"medium\"\n    }\n  ]\n}"
+    },
+    {
+      "name": "kg_get_related_entities",
+      "status": "success",
+      "result": "{\n  \"source_entity\": {\n    \"node_id\": \"gnode:Pod:default/test-pod-1-0\",\n    \"entity_type\": \"Pod\",\n    \"name\": \"test-pod-1-0\"\n  },\n  \"relationship_filter\": null,\n  \"max_depth\": 1,\n  \"related_entities\": [\n    {\n      \"node_id\": \"gnode:Node:kind-control-plane\",\n      \"entity_type\": \"gnode\",\n      \"name\": \"kind-control-plane\",\n      \"relationship\": {\n        \"type\": \"runs_on\",\n        \"direction\": \"outgoing\",\n        \"from\": \"gnode:Pod:default/test-pod-1-0\"\n      },\n      \"attributes\": {\n        \"gnode_subtype\": \"Node\",\n        \"status\": \"Ready\"\n      },\n      \"issues\": [\n        {\n          \"node_id\": \"gnode:Node:kind-control-plane\",\n          \"type\": \"disk_pressure\",\n          \"description\": \"Node is experiencing disk pressure\",\n          \"severity\": \"high\"\n        }\n      ]\n    },\n    {\n      \"node_id\": \"gnode:PVC:default/www-1-test-pod-1-0\",\n      \"entity_type\": \"gnode\",\n      \"name\": \"www-1-test-pod-1-0\",\n      \"relationship\": {\n        \"type\": \"uses\",\n        \"direction\": \"outgoing\",\n        \"from\": \"gnode:Pod:default/test-pod-1-0\"\n      },\n      \"attributes\": {\n        \"gnode_subtype\": \"PVC\",\n        \"namespace\": \"default\",\n        \"status\": \"Bound\"\n      },\n      \"issues\": []\n    }\n  ],\n  \"total_count\": 2\n}"
+    },
+    {
+      "name": "kg_get_all_issues",
+      "status": "success",
+      "result": "{\n  \"total_issues\": 2,\n  \"severity_filter\": null,\n  \"type_filter\": null,\n  \"issues\": [\n    {\n      \"issue\": {\n        \"node_id\": \"gnode:Node:kind-control-plane\",\n        \"type\": \"disk_pressure\",\n        \"description\": \"Node is experiencing disk pressure\",\n        \"severity\": \"high\"\n      },\n      \"entity\": {\n        \"entity_type\": \"gnode\",\n        \"name\": \"kind-control-plane\",\n        \"attributes\": {\n          \"gnode_subtype\": \"Node\",\n          \"status\": \"Ready\"\n        }\n      }\n    },\n    {\n      \"issue\": {\n        \"node_id\": \"gnode:Pod:default/test-pod-1-0\",\n        \"type\": \"pod_crash\",\n        \"description\": \"Pod is crashing\",\n        \"severity\": \"medium\"\n      },\n      \"entity\": {\n        \"entity_type\": \"gnode\",\n        \"name\": \"test-pod-1-0\",\n        \"attributes\": {\n          \"gnode_subtype\": \"Pod\",\n          \"namespace\": \"default\",\n          \"status\": \"Running\"\n        }\n      }\n    }\n  ]\n}"
+    },
+    {
+      "name": "kg_find_path",
+      "status": "success",
+      "result": "{\"error\": \"Source entity not found: gnode:Pod:gnode:Pod:default/test-pod-1-0\"}"
+    },
+    {
+      "name": "kg_get_summary",
+      "status": "success",
+      "result": "{\n  \"graph_stats\": {\n    \"total_nodes\": 4,\n    \"total_edges\": 3,\n    \"entity_counts\": {\n      \"Pod\": 1,\n      \"PVC\": 1,\n      \"PV\": 1,\n      \"Drive\": 0,\n      \"Node\": 1,\n      \"StorageClass\": 0,\n      \"LVG\": 0,\n      \"AC\": 0,\n      \"Volume\": 0,\n      \"System\": 0,\n      \"ClusterNode\": 0,\n      \"HistoricalExperience\": 0\n    },\n    \"total_issues\": 2,\n    \"critical_issues\": 0,\n    \"high_issues\": 1,\n    \"medium_issues\": 1,\n    \"low_issues\": 0,\n    \"historical_experience_count\": 0\n  },\n  \"issue_types\": {\n    \"pod_crash\": 1,\n    \"disk_pressure\": 1\n  },\n  \"timestamp\": \"2025-06-22 10:29:00\"\n}"
+    },
+    {
+      "name": "kg_analyze_issues",
+      "status": "success",
+      "result": "{\n  \"analysis\": {\n    \"total_issues\": 2,\n    \"issues_by_severity\": {\n      \"critical\": 0,\n      \"high\": 1,\n      \"medium\": 1,\n      \"low\": 0\n    },\n    \"issues_by_type\": {\n      \"pod_crash\": 1,\n      \"disk_pressure\": 1\n    },\n    \"affected_entities\": {\n      \"gnode\": 2\n    },\n    \"potential_root_causes\": [],\n    \"issue_patterns\": []\n  },\n  \"fix_plan\": [],\n  \"timestamp\": \"2025-06-22 10:29:00\"\n}"
+    },
+    {
+      "name": "kg_print_graph",
+      "status": "success",
+      "result": "\n\ud83d\udccb ENTITY BREAKDOWN:\n----------------------------------------\n\ud83d\ude80 Pod: 1\n\ud83d\udcbe PVC: 1\n\ud83d\uddc3\ufe0f PV: 1\n\ud83d\udda5\ufe0f Node: 1\n\n\ud83d\udd0e DETAILED ENTITIES:\n----------------------------------------\n\n\ud83d\ude80 Pods:\n  \u2022 test-pod-1-0 - \u26a0\ufe0f 1 issues\n\n\ud83d\udcbe PVCs:\n  \u2022 www-1-test-pod-1-0 - \u2753 UNKNOWN\n\n\ud83d\uddc3\ufe0f PVs:\n  \u2022 test-pv - \u2753 UNKNOWN\n\n\ud83d\udda5\ufe0f Nodes:\n  \u2022 kind-control-plane - \u2705 Ready\n\n\ud83d\udd17 KEY RELATIONSHIPS:\n----------------------------------------\n\ud83d\udd17 bound_to: 1 connections\n\u2194\ufe0f runs_on: 1 connections\n\ud83d\udd04 uses: 1 connections\n\n\ud83d\udcdd Example Relationships:\n  \u2022 (Pod)test-pod-1-0 --runs_on--> (Node)kind-control-plane\n  \u2022 (Pod)test-pod-1-0 --uses--> (PVC)www-1-test-pod-1-0\n  \u2022 (PVC)www-1-test-pod-1-0 --bound_to--> (PV)test-pv\n\n\u26a0\ufe0f  ISSUES BREAKDOWN:\n----------------------------------------\n\n\ud83d\udfe0 HIGH Issues (1):\n  \u2022 kind-control-plane: Node is experiencing disk pressure\n\n\ud83d\udfe1 MEDIUM Issues (1):\n  \u2022 test-pod-1-0: Pod is crashing\n\n================================================================================"
+    }
+  ]
+}

@@ -20,7 +20,7 @@ llm:
     #api_endpoint: "https://api.openai.com/v1"
     #api_key: 'sk-proj--'
     #model: "gemini-2.5-flash-preview-05-20"
-    api_key: "sk-"
+    api_key: "sk-dummytestkeypleasedonotuse1234567890" # Dummy key for testing
     api_endpoint: "https://api.zhizengzeng.com/v1"
     temperature: 0.7
     max_tokens: 8192
